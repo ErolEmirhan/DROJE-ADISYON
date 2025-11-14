@@ -5,6 +5,8 @@ import ProductGrid from './components/ProductGrid';
 import Cart from './components/Cart';
 import SalesHistory from './components/SalesHistory';
 import PaymentModal from './components/PaymentModal';
+import RoleSplash from './components/RoleSplash';
+import SaleSuccessToast from './components/SaleSuccessToast';
 
 function App() {
   const [currentView, setCurrentView] = useState('pos'); // 'pos' or 'sales'
@@ -13,6 +15,13 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [cart, setCart] = useState([]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [userType, setUserType] = useState('Admin'); // 'Admin' or 'Personel'
+  const [activeRoleSplash, setActiveRoleSplash] = useState(null);
+  const [saleSuccessInfo, setSaleSuccessInfo] = useState(null);
+  const triggerRoleSplash = (role) => {
+    setActiveRoleSplash(role);
+    setTimeout(() => setActiveRoleSplash(null), 1000);
+  };
 
   useEffect(() => {
     loadCategories();
@@ -90,8 +99,7 @@ function App() {
     if (result.success) {
       setShowPaymentModal(false);
       clearCart();
-      // Başarı mesajı göster
-      alert('Satış başarıyla tamamlandı! ✅');
+      setSaleSuccessInfo({ totalAmount, paymentMethod });
     }
   };
 
@@ -104,11 +112,14 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#0f0f1e] via-[#1a1a2e] to-[#16213e] text-white">
+    <div className="min-h-screen bg-gradient-to-br from-[#f0f4ff] via-[#e0e7ff] to-[#fce7f3] text-gray-800">
       <Navbar 
         currentView={currentView} 
         setCurrentView={setCurrentView}
         totalItems={getTotalItems()}
+        userType={userType}
+        setUserType={setUserType}
+        onRoleSplash={triggerRoleSplash}
       />
       
       {currentView === 'pos' ? (
@@ -127,7 +138,7 @@ function App() {
           </div>
 
           {/* Sağ Panel - Sepet */}
-          <div className="w-[420px] bg-gradient-to-b from-purple-900/20 to-pink-900/20 backdrop-blur-xl border-l border-white/10 p-6">
+          <div className="w-[420px] bg-gradient-to-b from-purple-50/80 to-pink-50/80 backdrop-blur-xl border-l border-purple-200 p-6">
             <Cart
               cart={cart}
               onUpdateQuantity={updateCartItemQuantity}
@@ -151,6 +162,12 @@ function App() {
           onClose={() => setShowPaymentModal(false)}
         />
       )}
+
+      {activeRoleSplash && <RoleSplash role={activeRoleSplash} />}
+      <SaleSuccessToast
+        info={saleSuccessInfo}
+        onClose={() => setSaleSuccessInfo(null)}
+      />
     </div>
   );
 }

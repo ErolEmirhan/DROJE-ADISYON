@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 const SalesHistory = () => {
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('recent'); // 'recent' or 'reports'
 
   useEffect(() => {
     loadSales();
@@ -41,18 +42,219 @@ const SalesHistory = () => {
       <div className="flex items-center justify-center h-[calc(100vh-200px)]">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-400">Yükleniyor...</p>
+          <p className="text-gray-600">Yükleniyor...</p>
         </div>
       </div>
     );
   }
+
+  const renderReports = () => {
+    if (sales.length === 0) {
+      return (
+        <div className="text-center py-20">
+          <svg className="w-32 h-32 mx-auto text-purple-200 mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+          <h3 className="text-2xl font-bold text-gray-700 mb-2">Henüz veri yok</h3>
+          <p className="text-gray-600">Satış yapıldıkça raporlar oluşturulacak</p>
+        </div>
+      );
+    }
+
+    // En çok satılan ürünleri hesapla
+    const productStats = {};
+    sales.forEach(sale => {
+      const items = sale.items.split(', ');
+      items.forEach(item => {
+        const match = item.match(/(.+) x(\d+)/);
+        if (match) {
+          const [, productName, quantity] = match;
+          if (!productStats[productName]) {
+            productStats[productName] = { count: 0, revenue: 0 };
+          }
+          productStats[productName].count += parseInt(quantity);
+        }
+      });
+    });
+
+    const topProducts = Object.entries(productStats)
+      .sort(([, a], [, b]) => b.count - a.count)
+      .slice(0, 5);
+
+    // Ödeme yöntemi dağılımı
+    const paymentMethods = {};
+    sales.forEach(sale => {
+      if (!paymentMethods[sale.payment_method]) {
+        paymentMethods[sale.payment_method] = { count: 0, total: 0 };
+      }
+      paymentMethods[sale.payment_method].count++;
+      paymentMethods[sale.payment_method].total += parseFloat(sale.total_amount);
+    });
+
+    const totalRevenue = sales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
+
+    return (
+      <div className="space-y-6">
+        {/* Genel İstatistikler */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="card-glass p-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-gray-600">Toplam Ciro</p>
+              <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <p className="text-3xl font-bold bg-gradient-to-r from-green-500 to-emerald-500 bg-clip-text text-transparent">
+              ₺{totalRevenue.toFixed(2)}
+            </p>
+          </div>
+
+          <div className="card-glass p-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-gray-600">Toplam Satış</p>
+              <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <p className="text-3xl font-bold text-gray-900">{sales.length}</p>
+          </div>
+
+          <div className="card-glass p-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-gray-600">Ortalama Sepet</p>
+              <svg className="w-8 h-8 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+            </div>
+            <p className="text-3xl font-bold bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">
+              ₺{(totalRevenue / sales.length).toFixed(2)}
+            </p>
+          </div>
+
+          <div className="card-glass p-6">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-gray-600">En Yüksek Satış</p>
+              <svg className="w-8 h-8 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+            </div>
+            <p className="text-3xl font-bold text-gray-900">
+              ₺{Math.max(...sales.map(s => parseFloat(s.total_amount))).toFixed(2)}
+            </p>
+          </div>
+        </div>
+
+        {/* En Çok Satılan Ürünler */}
+        <div className="card-glass p-6">
+          <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center space-x-2">
+            <svg className="w-6 h-6 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+            </svg>
+            <span>En Çok Satılan Ürünler</span>
+          </h3>
+          <div className="space-y-3">
+            {topProducts.map(([product, stats], index) => (
+              <div key={product} className="flex items-center justify-between p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl">
+                <div className="flex items-center space-x-4">
+                  <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                    {index + 1}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900">{product}</p>
+                    <p className="text-sm text-gray-600">{stats.count} adet satıldı</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="w-full bg-gray-200 rounded-full h-2 mb-1">
+                    <div 
+                      className="bg-gradient-to-r from-purple-500 to-pink-500 h-2 rounded-full"
+                      style={{ width: `${(stats.count / topProducts[0][1].count) * 100}%` }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Ödeme Yöntemi Dağılımı */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="card-glass p-6">
+            <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center space-x-2">
+              <svg className="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              <span>Ödeme Yöntemleri</span>
+            </h3>
+            <div className="space-y-4">
+              {Object.entries(paymentMethods).map(([method, data]) => (
+                <div key={method} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-gray-700">{method}</span>
+                    <span className="text-sm text-gray-600">
+                      {data.count} satış ({((data.count / sales.length) * 100).toFixed(1)}%)
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-3">
+                    <div 
+                      className={`h-3 rounded-full ${method === 'Nakit' ? 'bg-gradient-to-r from-emerald-500 to-lime-500' : 'bg-gradient-to-r from-sky-500 to-indigo-500'}`}
+                      style={{ width: `${(data.count / sales.length) * 100}%` }}
+                    ></div>
+                  </div>
+                  <p className="text-sm text-gray-600">Toplam: ₺{data.total.toFixed(2)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card-glass p-6">
+            <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center space-x-2">
+              <svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              <span>Performans Özeti</span>
+            </h3>
+            <div className="space-y-4">
+              <div className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl">
+                <p className="text-sm text-gray-600 mb-1">En Karlı Gün</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {(() => {
+                    const dateRevenues = sales.reduce((acc, sale) => {
+                      const date = sale.sale_date;
+                      if (!acc[date]) acc[date] = 0;
+                      acc[date] += parseFloat(sale.total_amount);
+                      return acc;
+                    }, {});
+                    const maxDate = Object.keys(dateRevenues).reduce((a, b) => 
+                      dateRevenues[a] > dateRevenues[b] ? a : b, Object.keys(dateRevenues)[0]
+                    );
+                    return `${maxDate} (₺${dateRevenues[maxDate]?.toFixed(2) || '0.00'})`;
+                  })()}
+                </p>
+              </div>
+              <div className="p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl">
+                <p className="text-sm text-gray-600 mb-1">Toplam İşlem Sayısı</p>
+                <p className="text-2xl font-bold text-gray-900">{sales.length} işlem</p>
+              </div>
+              <div className="p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl">
+                <p className="text-sm text-gray-600 mb-1">Bugünkü Satışlar</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {sales.filter(s => s.sale_date === new Date().toLocaleDateString('tr-TR')).length} adet
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-4xl font-bold gradient-text mb-2">Satış Detayları</h1>
-          <p className="text-gray-400">Tüm satış işlemlerinizi görüntüleyin</p>
+          <p className="text-gray-600">Tüm satış işlemlerinizi görüntüleyin</p>
         </div>
         <button
           onClick={loadSales}
@@ -67,13 +269,50 @@ const SalesHistory = () => {
         </button>
       </div>
 
-      {sales.length === 0 ? (
+      {/* Sekme Butonları */}
+      <div className="flex items-center space-x-4 mb-8">
+        <button
+          onClick={() => setActiveTab('recent')}
+          className={`px-8 py-4 rounded-2xl font-semibold text-lg transition-all duration-300 ${
+            activeTab === 'recent'
+              ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-2xl transform scale-105'
+              : 'bg-white/70 text-gray-600 hover:bg-white hover:shadow-lg hover:scale-102'
+          }`}
+        >
+          <div className="flex items-center space-x-3">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <span>Son Satışlar</span>
+          </div>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('reports')}
+          className={`px-8 py-4 rounded-2xl font-semibold text-lg transition-all duration-300 ${
+            activeTab === 'reports'
+              ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-2xl transform scale-105'
+              : 'bg-white/70 text-gray-600 hover:bg-white hover:shadow-lg hover:scale-102'
+          }`}
+        >
+          <div className="flex items-center space-x-3">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            <span>Detaylı Raporlama</span>
+          </div>
+        </button>
+      </div>
+
+      {/* İçerik */}
+      {activeTab === 'recent' ? (
+        sales.length === 0 ? (
         <div className="text-center py-20">
-          <svg className="w-32 h-32 mx-auto text-white/10 mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-32 h-32 mx-auto text-purple-200 mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
-          <h3 className="text-2xl font-bold text-gray-300 mb-2">Henüz satış yok</h3>
-          <p className="text-gray-500">İlk satışınızı yapmak için Satış Yap bölümüne gidin</p>
+          <h3 className="text-2xl font-bold text-gray-700 mb-2">Henüz satış yok</h3>
+          <p className="text-gray-600">İlk satışınızı yapmak için Satış Yap bölümüne gidin</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -94,7 +333,7 @@ const SalesHistory = () => {
                     </div>
                   </div>
 
-                  <div className="flex items-center space-x-6 text-sm text-gray-400 mb-3">
+                  <div className="flex items-center space-x-6 text-sm text-gray-600 mb-3">
                     <div className="flex items-center space-x-2">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -109,14 +348,14 @@ const SalesHistory = () => {
                     </div>
                   </div>
 
-                  <div className="bg-white/5 rounded-lg p-3">
-                    <p className="text-sm text-gray-400 mb-1">Ürünler:</p>
-                    <p className="text-white">{sale.items}</p>
+                  <div className="bg-purple-50 rounded-lg p-3 border border-purple-100">
+                    <p className="text-sm text-gray-600 mb-1">Ürünler:</p>
+                    <p className="text-gray-800 font-medium">{sale.items}</p>
                   </div>
                 </div>
 
                 <div className="text-right ml-6">
-                  <p className="text-sm text-gray-400 mb-1">Toplam Tutar</p>
+                  <p className="text-sm text-gray-600 mb-1">Toplam Tutar</p>
                   <p className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
                     ₺{parseFloat(sale.total_amount).toFixed(2)}
                   </p>
@@ -125,23 +364,24 @@ const SalesHistory = () => {
             </div>
           ))}
         </div>
-      )}
+      )
+      ) : renderReports()}
 
-      {sales.length > 0 && (
-        <div className="mt-8 p-6 bg-gradient-to-r from-purple-500/10 to-pink-500/10 backdrop-blur-xl rounded-2xl border border-white/10">
+      {activeTab === 'recent' && sales.length > 0 && (
+        <div className="mt-8 p-6 bg-white/70 backdrop-blur-xl rounded-2xl border border-purple-200 shadow-lg">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="text-center">
-              <p className="text-gray-400 mb-2">Toplam Satış</p>
-              <p className="text-3xl font-bold text-white">{sales.length}</p>
+              <p className="text-gray-600 mb-2">Toplam Satış</p>
+              <p className="text-3xl font-bold text-gray-900">{sales.length}</p>
             </div>
             <div className="text-center">
-              <p className="text-gray-400 mb-2">Toplam Gelir</p>
+              <p className="text-gray-600 mb-2">Toplam Gelir</p>
               <p className="text-3xl font-bold bg-gradient-to-r from-green-400 to-emerald-400 bg-clip-text text-transparent">
                 ₺{sales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0).toFixed(2)}
               </p>
             </div>
             <div className="text-center">
-              <p className="text-gray-400 mb-2">Ortalama Satış</p>
+              <p className="text-gray-600 mb-2">Ortalama Satış</p>
               <p className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
                 ₺{(sales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0) / sales.length).toFixed(2)}
               </p>

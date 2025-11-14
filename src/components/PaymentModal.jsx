@@ -2,11 +2,11 @@ import React from 'react';
 
 const PaymentModal = ({ totalAmount, onSelectPayment, onClose }) => {
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
-      <div className="bg-gradient-to-br from-purple-900/90 to-pink-900/90 backdrop-blur-xl border border-white/20 rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl">
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
+      <div className="bg-white backdrop-blur-xl border border-purple-200 rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl">
         <div className="text-center mb-8">
           <h2 className="text-3xl font-bold mb-2 gradient-text">Ödeme Yöntemi Seçin</h2>
-          <p className="text-gray-300">Toplam Tutar</p>
+          <p className="text-gray-600">Toplam Tutar</p>
           <p className="text-4xl font-bold mt-2 bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
             ₺{totalAmount.toFixed(2)}
           </p>
@@ -40,7 +40,7 @@ const PaymentModal = ({ totalAmount, onSelectPayment, onClose }) => {
 
         <button
           onClick={onClose}
-          className="w-full py-3 bg-white/10 hover:bg-white/20 rounded-xl text-gray-300 hover:text-white font-medium transition-all duration-300"
+          className="w-full py-3 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-600 hover:text-gray-800 font-medium transition-all duration-300"
         >
           İptal
         </button>

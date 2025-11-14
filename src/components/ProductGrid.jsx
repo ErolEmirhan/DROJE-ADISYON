@@ -19,18 +19,18 @@ const ProductGrid = ({ products, onAddToCart }) => {
                 />
               ) : (
                 <div className="text-center">
-                  <svg className="w-16 h-16 mx-auto text-white/30 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-16 h-16 mx-auto text-purple-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                   </svg>
-                  <p className="text-xs text-white/50">Ürün Görseli</p>
+                  <p className="text-xs text-purple-400">Ürün Görseli</p>
                 </div>
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center pb-4">
+              <div className="absolute inset-0 bg-gradient-to-t from-purple-600/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center pb-4">
                 <span className="text-white font-medium">Sepete Ekle +</span>
               </div>
             </div>
             
-            <h3 className="font-semibold text-white mb-2 truncate">{product.name}</h3>
+            <h3 className="font-semibold text-gray-800 mb-2 truncate">{product.name}</h3>
             <div className="flex items-center justify-between">
               <span className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
                 ₺{product.price.toFixed(2)}

@@ -9,7 +9,7 @@
   
   body {
     @apply m-0 p-0 font-sans antialiased;
-    background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 100%);
+    background: linear-gradient(135deg, #f0f4ff 0%, #e0e7ff 50%, #fce7f3 100%);
   }
 
   #root {
@@ -23,7 +23,7 @@
   }
 
   .card-glass {
-    @apply backdrop-blur-md bg-white/10 border border-white/20 rounded-2xl shadow-xl;
+    @apply backdrop-blur-md bg-white/80 border border-purple-200 rounded-2xl shadow-xl;
   }
 
   .category-btn {
@@ -35,7 +35,7 @@
   }
 
   .category-btn-inactive {
-    @apply bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white;
+    @apply bg-white text-gray-700 hover:bg-purple-50 hover:text-purple-700 shadow-md;
   }
 
   .product-card {
@@ -43,7 +43,7 @@
   }
 
   .cart-item {
-    @apply flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/10 mb-2 transition-all hover:bg-white/10;
+    @apply flex items-center justify-between p-4 rounded-xl bg-white border border-purple-100 mb-2 transition-all hover:shadow-md;
   }
 
   .scrollbar-custom::-webkit-scrollbar {
@@ -51,7 +51,7 @@
   }
 
   .scrollbar-custom::-webkit-scrollbar-track {
-    @apply bg-white/5 rounded-full;
+    @apply bg-purple-100 rounded-full;
   }
 
   .scrollbar-custom::-webkit-scrollbar-thumb {
@@ -93,5 +93,66 @@
   100% {
     transform: translateX(100%);
   }
+}
+
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  10%, 30%, 50%, 70%, 90% {
+    transform: translateX(-8px);
+  }
+  20%, 40%, 60%, 80% {
+    transform: translateX(8px);
+  }
+}
+
+@keyframes scale-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translateY(-20px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-shake {
+  animation: shake 0.5s ease-in-out;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.3s ease-out;
+}
+
+@keyframes toast-slide-down {
+  0% {
+    opacity: 0;
+    transform: translateY(-40px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes toast-slide-up {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+}
+
+.animate-toast-slide-down {
+  animation: toast-slide-down 0.35s ease forwards;
+}
+
+.animate-toast-slide-up {
+  animation: toast-slide-up 0.2s ease forwards;
 }
 
