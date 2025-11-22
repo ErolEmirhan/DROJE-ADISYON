@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, webContents } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -10,6 +10,8 @@ let db = {
   products: [],
   sales: [],
   saleItems: [],
+  tableOrders: [],
+  tableOrderItems: [],
   settings: {
     adminPin: '1234'
   }
@@ -35,6 +37,8 @@ function initDatabase() {
       if (!db.products) db.products = [];
       if (!db.sales) db.sales = [];
       if (!db.saleItems) db.saleItems = [];
+      if (!db.tableOrders) db.tableOrders = [];
+      if (!db.tableOrderItems) db.tableOrderItems = [];
     } catch (error) {
       console.error('Veritabanı yüklenemedi, yeni oluşturuluyor:', error);
       initDefaultData();
@@ -94,6 +98,8 @@ function initDefaultData() {
 
   db.sales = [];
   db.saleItems = [];
+  db.tableOrders = [];
+  db.tableOrderItems = [];
   db.settings = {
     adminPin: '1234'
   };
@@ -231,6 +237,119 @@ ipcMain.handle('get-sale-details', (event, saleId) => {
   const items = db.saleItems.filter(si => si.sale_id === saleId);
   
   return { sale, items };
+});
+
+// Table Order IPC Handlers
+ipcMain.handle('create-table-order', (event, orderData) => {
+  const { items, totalAmount, tableId, tableName, tableType } = orderData;
+  
+  const now = new Date();
+  const orderDate = now.toLocaleDateString('tr-TR');
+  const orderTime = now.toLocaleTimeString('tr-TR');
+
+  // Yeni sipariş ID'si
+  const orderId = db.tableOrders.length > 0 
+    ? Math.max(...db.tableOrders.map(o => o.id)) + 1 
+    : 1;
+
+  // Sipariş ekle
+  db.tableOrders.push({
+    id: orderId,
+    table_id: tableId,
+    table_name: tableName,
+    table_type: tableType,
+    total_amount: totalAmount,
+    order_date: orderDate,
+    order_time: orderTime,
+    status: 'pending' // 'pending', 'completed', 'cancelled'
+  });
+
+  // Sipariş itemlarını ekle
+  items.forEach(item => {
+    const itemId = db.tableOrderItems.length > 0 
+      ? Math.max(...db.tableOrderItems.map(oi => oi.id)) + 1 
+      : 1;
+      
+    db.tableOrderItems.push({
+      id: itemId,
+      order_id: orderId,
+      product_id: item.id,
+      product_name: item.name,
+      quantity: item.quantity,
+      price: item.price
+    });
+  });
+
+  saveDatabase();
+  return { success: true, orderId };
+});
+
+ipcMain.handle('get-table-orders', (event, tableId) => {
+  if (tableId) {
+    // Belirli bir masa için siparişler
+    return db.tableOrders.filter(o => o.table_id === tableId);
+  }
+  // Tüm masa siparişleri
+  return db.tableOrders;
+});
+
+ipcMain.handle('get-table-order-items', (event, orderId) => {
+  return db.tableOrderItems.filter(oi => oi.order_id === orderId);
+});
+
+ipcMain.handle('complete-table-order', (event, orderId) => {
+  const order = db.tableOrders.find(o => o.id === orderId);
+  if (!order) {
+    return { success: false, error: 'Sipariş bulunamadı' };
+  }
+
+  if (order.status !== 'pending') {
+    return { success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' };
+  }
+
+  // Sipariş durumunu tamamlandı olarak işaretle
+  order.status = 'completed';
+
+  // Satış geçmişine ekle (nakit olarak)
+  const now = new Date();
+  const saleDate = now.toLocaleDateString('tr-TR');
+  const saleTime = now.toLocaleTimeString('tr-TR');
+
+  // Yeni satış ID'si
+  const saleId = db.sales.length > 0 
+    ? Math.max(...db.sales.map(s => s.id)) + 1 
+    : 1;
+
+  // Satış ekle
+  db.sales.push({
+    id: saleId,
+    total_amount: order.total_amount,
+    payment_method: 'Nakit',
+    sale_date: saleDate,
+    sale_time: saleTime,
+    table_name: order.table_name,
+    table_type: order.table_type
+  });
+
+  // Satış itemlarını ekle
+  const orderItems = db.tableOrderItems.filter(oi => oi.order_id === orderId);
+  orderItems.forEach(item => {
+    const itemId = db.saleItems.length > 0 
+      ? Math.max(...db.saleItems.map(si => si.id)) + 1 
+      : 1;
+      
+    db.saleItems.push({
+      id: itemId,
+      sale_id: saleId,
+      product_id: item.product_id,
+      product_name: item.product_name,
+      quantity: item.quantity,
+      price: item.price
+    });
+  });
+
+  saveDatabase();
+  return { success: true, saleId };
 });
 
 // Settings IPC Handlers
@@ -487,6 +606,206 @@ ipcMain.handle('install-update', () => {
   // isForceRunAfter: true = Yüklemeden sonra otomatik çalıştır
   autoUpdater.quitAndInstall(true, true);
 });
+
+// Print Receipt Handler
+ipcMain.handle('print-receipt', async (event, receiptData) => {
+  try {
+    if (!mainWindow) {
+      return { success: false, error: 'Ana pencere bulunamadı' };
+    }
+
+    // Fiş içeriğini HTML olarak oluştur
+    const receiptHTML = generateReceiptHTML(receiptData);
+
+    // Gizli bir pencere oluştur ve fiş içeriğini yükle
+    const printWindow = new BrowserWindow({
+      show: false,
+      width: 220, // 58mm ≈ 220px (72 DPI'da)
+      height: 800,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+
+    // HTML içeriğini data URL olarak yükle
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(receiptHTML)}`);
+
+    // İçerik yüklendikten sonra yazdır
+    printWindow.webContents.once('did-finish-load', () => {
+      // Kısa bir gecikme ekle (içerik tam yüklensin)
+      setTimeout(() => {
+        printWindow.webContents.print({
+          silent: false, // Yazıcı seçim dialog'unu göster
+          printBackground: true,
+          deviceName: '', // Varsayılan yazıcı (Xprinter otomatik seçilecek)
+          pageSize: 'A4', // Varsayılan sayfa boyutu
+          margins: {
+            marginType: 'none' // Kenar boşluğu yok
+          },
+          landscape: false, // Dikey yönlendirme
+          scaleFactor: 100,
+          pagesPerSheet: 1,
+          collate: false,
+          color: false, // Siyah-beyaz (termal yazıcılar için)
+          copies: 1,
+          duplex: 'none'
+        }, (success, errorType) => {
+          if (!success) {
+            console.error('Yazdırma hatası:', errorType);
+          } else {
+            console.log('Fiş başarıyla yazdırıldı');
+          }
+          // Yazdırma işlemi tamamlandıktan sonra pencereyi kapat
+          setTimeout(() => {
+            printWindow.close();
+          }, 500);
+        });
+      }, 500);
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Fiş yazdırma hatası:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Fiş HTML içeriğini oluştur
+function generateReceiptHTML(receiptData) {
+  const itemsHTML = receiptData.items.map(item => {
+    const itemTotal = item.price * item.quantity;
+    return `
+      <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #ccc;">
+        <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 4px;">
+          <span>${item.name}</span>
+          <span>₺${itemTotal.toFixed(2)}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 10px; color: #666;">
+          <span>${item.quantity} adet × ₺${item.price.toFixed(2)}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        @media print {
+          @page {
+            size: 58mm auto;
+            margin: 0;
+          }
+          body {
+            margin: 0;
+            padding: 10px;
+          }
+        }
+        body {
+          font-family: 'Courier New', monospace;
+          width: 58mm;
+          padding: 10px;
+          margin: 0;
+          font-size: 12px;
+        }
+        .header {
+          text-align: center;
+          margin-bottom: 10px;
+        }
+        .header h3 {
+          font-size: 16px;
+          font-weight: bold;
+          margin: 5px 0;
+        }
+        .info {
+          border-top: 1px solid #000;
+          border-bottom: 1px solid #000;
+          padding: 8px 0;
+          margin: 10px 0;
+          font-size: 10px;
+        }
+        .info div {
+          display: flex;
+          justify-content: space-between;
+          margin: 3px 0;
+        }
+        .items {
+          margin: 10px 0;
+        }
+        .total {
+          border-top: 2px solid #000;
+          padding-top: 8px;
+          margin-top: 10px;
+          font-weight: bold;
+        }
+        .total div {
+          display: flex;
+          justify-content: space-between;
+          margin: 3px 0;
+        }
+        .footer {
+          text-align: center;
+          margin-top: 15px;
+          padding-top: 10px;
+          border-top: 1px solid #000;
+          font-size: 10px;
+          color: #666;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h3>MAKARA</h3>
+        <p style="font-size: 10px; margin: 0;">Satış Fişi</p>
+      </div>
+      
+      <div class="info">
+        <div>
+          <span>Tarih:</span>
+          <span style="font-weight: bold;">${receiptData.sale_date || new Date().toLocaleDateString('tr-TR')}</span>
+        </div>
+        <div>
+          <span>Saat:</span>
+          <span style="font-weight: bold;">${receiptData.sale_time || new Date().toLocaleTimeString('tr-TR')}</span>
+        </div>
+        ${receiptData.sale_id ? `
+        <div>
+          <span>Fiş No:</span>
+          <span style="font-weight: bold;">#${receiptData.sale_id}</span>
+        </div>
+        ` : ''}
+      </div>
+
+      <div class="items">
+        <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 5px; padding-bottom: 5px; border-bottom: 1px solid #000;">
+          <span>Ürün</span>
+          <span>Toplam</span>
+        </div>
+        ${itemsHTML}
+      </div>
+
+      <div class="total">
+        <div>
+          <span>TOPLAM:</span>
+          <span>₺${receiptData.totalAmount.toFixed(2)}</span>
+        </div>
+        <div style="font-size: 10px; color: #666; font-weight: normal;">
+          <span>Ödeme:</span>
+          <span>${receiptData.paymentMethod || 'Nakit'}</span>
+        </div>
+      </div>
+
+      <div class="footer">
+        <p style="margin: 5px 0;">Teşekkür ederiz!</p>
+        <p style="margin: 5px 0;">İyi günler dileriz</p>
+      </div>
+    </body>
+    </html>
+  `;
+}
 
 app.whenReady().then(() => {
   initDatabase();

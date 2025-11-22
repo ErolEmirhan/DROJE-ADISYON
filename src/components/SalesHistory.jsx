@@ -323,10 +323,18 @@ const SalesHistory = () => {
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
-                  <div className="flex items-center space-x-3 mb-3">
+                  <div className="flex items-center space-x-3 mb-3 flex-wrap">
                     <span className="px-4 py-1 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-full text-sm font-medium">
                       Satış #{sale.id}
                     </span>
+                    {sale.table_name && (
+                      <span className="px-4 py-1 bg-gradient-to-r from-blue-500/20 to-cyan-500/20 rounded-full text-sm font-medium flex items-center space-x-1">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                        </svg>
+                        <span>{sale.table_name}</span>
+                      </span>
+                    )}
                     <div className={`px-4 py-1 bg-gradient-to-r ${getPaymentMethodColor(sale.payment_method)} rounded-full text-sm font-medium flex items-center space-x-1`}>
                       {getPaymentMethodIcon(sale.payment_method)}
                       <span>{sale.payment_method}</span>

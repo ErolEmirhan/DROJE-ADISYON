@@ -36,6 +36,18 @@ const PaymentModal = ({ totalAmount, onSelectPayment, onClose }) => {
               <span>Kredi Kartı</span>
             </div>
           </button>
+
+          <button
+            onClick={() => onSelectPayment('split')}
+            className="w-full p-6 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 rounded-2xl text-white font-bold text-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95"
+          >
+            <div className="flex items-center justify-center space-x-3">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+              </svg>
+              <span>Ayrı Ödemeler Al</span>
+            </div>
+          </button>
         </div>
 
         <button

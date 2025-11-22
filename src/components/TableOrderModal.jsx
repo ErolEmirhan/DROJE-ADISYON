@@ -1,0 +1,158 @@
+import React, { useState, useEffect } from 'react';
+
+const TableOrderModal = ({ order, items, onClose, onCompleteTable }) => {
+  const [sessionDuration, setSessionDuration] = useState('');
+
+  if (!order) return null;
+
+  // Oturum süresini canlı olarak hesapla
+  useEffect(() => {
+    const calculateSessionDuration = () => {
+      // Türkçe tarih formatını parse et
+      const [day, month, year] = order.order_date.split('.');
+      const [orderHours, orderMinutes, orderSeconds] = order.order_time.split(':');
+      const orderDateTime = new Date(year, month - 1, day, orderHours, orderMinutes, orderSeconds || 0);
+      const now = new Date();
+      const diffMs = now - orderDateTime;
+      
+      if (diffMs < 0) return '0 dakika';
+      
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMins / 60);
+      const diffMinutes = diffMins % 60;
+      
+      if (diffHours > 0) {
+        return `${diffHours} saat ${diffMinutes} dakika`;
+      }
+      return `${diffMinutes} dakika`;
+    };
+
+    // İlk hesaplama
+    setSessionDuration(calculateSessionDuration());
+
+    // Her saniye güncelle
+    const interval = setInterval(() => {
+      setSessionDuration(calculateSessionDuration());
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [order.order_date, order.order_time]);
+
+  const totalAmount = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
+      <div className="bg-white backdrop-blur-xl border border-purple-200 rounded-3xl p-8 max-w-2xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-3xl font-bold gradient-text">Masa Sipariş Detayları</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700 transition-colors p-2 hover:bg-gray-100 rounded-lg"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="space-y-6">
+          {/* Masa Bilgileri */}
+          <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-2xl p-6 border border-purple-200">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm text-gray-500 mb-1">Masa</p>
+                <p className="text-xl font-bold text-gray-800">{order.table_name}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500 mb-1">Masa Tipi</p>
+                <p className="text-xl font-bold text-gray-800">
+                  {order.table_type === 'inside' ? 'İç Masa' : 'Dış Masa'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500 mb-1">Sipariş Tarihi</p>
+                <p className="text-lg font-semibold text-gray-800">{order.order_date}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500 mb-1">Sipariş Saati</p>
+                <p className="text-lg font-semibold text-gray-800">{order.order_time}</p>
+              </div>
+              <div className="col-span-2">
+                <p className="text-sm text-gray-500 mb-1">Oturum Süresi</p>
+                <p className="text-lg font-semibold text-blue-600">{sessionDuration}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Ürünler */}
+          <div>
+            <h3 className="text-xl font-bold mb-4 gradient-text">Ürünler</h3>
+            <div className="space-y-3">
+              {items.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-200 hover:bg-gray-100 transition-colors"
+                >
+                  <div className="flex-1">
+                    <p className="font-semibold text-gray-800">{item.product_name}</p>
+                    <p className="text-sm text-gray-500">
+                      {item.quantity} adet × ₺{item.price.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-lg text-purple-600">
+                      ₺{(item.price * item.quantity).toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Toplam */}
+          <div className="border-t border-purple-200 pt-6">
+            <div className="flex justify-between items-center">
+              <span className="text-xl font-semibold text-gray-700">Toplam Tutar</span>
+              <span className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+                ₺{totalAmount.toFixed(2)}
+              </span>
+            </div>
+          </div>
+
+          {/* Masayı Sonlandır Butonu */}
+          {order.status === 'pending' && (
+            <div className="flex items-center justify-center pt-4">
+              <button
+                onClick={onCompleteTable}
+                className="px-8 py-4 bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white font-bold text-lg rounded-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95"
+              >
+                <div className="flex items-center space-x-2">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span>Masayı Sonlandır</span>
+                </div>
+              </button>
+            </div>
+          )}
+
+          {/* Durum */}
+          {order.status !== 'pending' && (
+            <div className="flex items-center justify-center">
+              <span className={`px-4 py-2 rounded-full font-semibold ${
+                order.status === 'completed'
+                  ? 'bg-green-100 text-green-800'
+                  : 'bg-red-100 text-red-800'
+              }`}>
+                {order.status === 'completed' ? 'Tamamlandı' : 'İptal Edildi'}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default TableOrderModal;
+

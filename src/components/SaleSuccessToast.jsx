@@ -4,6 +4,8 @@ import { createPortal } from 'react-dom';
 const paymentColors = {
   Nakit: 'from-emerald-500 to-lime-500',
   'Kredi Kartı': 'from-sky-500 to-indigo-500',
+  'Masaya Kaydedildi': 'from-blue-500 to-cyan-500',
+  'Ayrı Ödemeler': 'from-orange-500 to-amber-500',
 };
 
 const SaleSuccessToast = ({ info, onClose, autoHideDuration = 2500 }) => {
@@ -41,8 +43,13 @@ const SaleSuccessToast = ({ info, onClose, autoHideDuration = 2500 }) => {
               </svg>
             </div>
             <div className="flex-1">
-              <p className="text-xs text-gray-500 uppercase tracking-[0.3em]">SATIŞ TAMAMLANDI</p>
-              <h3 className="text-lg font-semibold text-gray-900">₺{info.totalAmount.toFixed(2)} · {info.paymentMethod}</h3>
+              <p className="text-xs text-gray-500 uppercase tracking-[0.3em]">
+                {info.tableName ? 'SİPARİŞ KAYDEDİLDİ' : info.splitPayment ? 'AYRI ÖDEMELER TAMAMLANDI' : 'SATIŞ TAMAMLANDI'}
+              </p>
+              <h3 className="text-lg font-semibold text-gray-900">
+                ₺{info.totalAmount.toFixed(2)} · {info.paymentMethod}
+                {info.tableName && <span className="block text-sm text-gray-600 mt-1">{info.tableName}</span>}
+              </h3>
             </div>
             <button
               onClick={handleClose}

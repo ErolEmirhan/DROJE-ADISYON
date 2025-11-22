@@ -6,6 +6,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createSale: (saleData) => ipcRenderer.invoke('create-sale', saleData),
   getSales: () => ipcRenderer.invoke('get-sales'),
   getSaleDetails: (saleId) => ipcRenderer.invoke('get-sale-details', saleId),
+  // Table Order API
+  createTableOrder: (orderData) => ipcRenderer.invoke('create-table-order', orderData),
+  getTableOrders: (tableId) => ipcRenderer.invoke('get-table-orders', tableId),
+  getTableOrderItems: (orderId) => ipcRenderer.invoke('get-table-order-items', orderId),
+  completeTableOrder: (orderId) => ipcRenderer.invoke('complete-table-order', orderId),
   // Settings API
   changePassword: (currentPin, newPin) => ipcRenderer.invoke('change-password', currentPin, newPin),
   getAdminPin: () => ipcRenderer.invoke('get-admin-pin'),
@@ -21,6 +26,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (event, info) => callback(info)),
   onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (event, info) => callback(info)),
   onUpdateError: (callback) => ipcRenderer.on('update-error', (event, error) => callback(error)),
-  onUpdateProgress: (callback) => ipcRenderer.on('update-download-progress', (event, progress) => callback(progress))
+  onUpdateProgress: (callback) => ipcRenderer.on('update-download-progress', (event, progress) => callback(progress)),
+  // Print API
+  printReceipt: (receiptData) => ipcRenderer.invoke('print-receipt', receiptData)
 });
 
