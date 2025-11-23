@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import TableOrderModal from './TableOrderModal';
+import TablePartialPaymentModal from './TablePartialPaymentModal';
 
-const TablePanel = ({ onSelectTable, refreshTrigger }) => {
+const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
   const [selectedType, setSelectedType] = useState('inside'); // 'inside' or 'outside'
   const [tableOrders, setTableOrders] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [orderItems, setOrderItems] = useState([]);
   const [showModal, setShowModal] = useState(false);
+  const [showPartialPaymentModal, setShowPartialPaymentModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
   const insideTables = Array.from({ length: 20 }, (_, i) => ({
@@ -122,6 +124,89 @@ const TablePanel = ({ onSelectTable, refreshTrigger }) => {
     }
   };
 
+  // Kısmi ödeme modal'ını aç
+  const handlePartialPayment = () => {
+    setShowModal(false);
+    setShowPartialPaymentModal(true);
+  };
+
+  // Kısmi ödemeyi tamamla
+  const handleCompletePartialPayment = async (payments) => {
+    if (!selectedOrder || !window.electronAPI) {
+      console.error('API mevcut değil');
+      return;
+    }
+
+    try {
+      console.log('window.electronAPI:', window.electronAPI);
+      console.log('updateTableOrderAmount fonksiyonu var mı?', typeof window.electronAPI.updateTableOrderAmount);
+      
+      const paidAmount = payments.reduce((sum, p) => sum + p.amount, 0);
+      const paymentDetails = payments.map(p => `${p.method}: ₺${p.amount.toFixed(2)}`).join(', ');
+
+      // Masa siparişi tutarını güncelle
+      if (!window.electronAPI.updateTableOrderAmount) {
+        alert('Hata: updateTableOrderAmount API fonksiyonu bulunamadı. Lütfen uygulamayı yeniden başlatın.');
+        return;
+      }
+      
+      const result = await window.electronAPI.updateTableOrderAmount(selectedOrder.id, paidAmount);
+      
+      if (result.success) {
+        // Kısmi ödeme için satış kaydı oluştur
+        const saleData = {
+          orderId: selectedOrder.id,
+          totalAmount: paidAmount,
+          paymentMethod: `Kısmi Ödeme (${paymentDetails})`,
+          tableName: selectedOrder.table_name,
+          tableType: selectedOrder.table_type,
+          items: orderItems
+        };
+
+        const saleResult = await window.electronAPI.createPartialPaymentSale(saleData);
+        
+        if (saleResult.success) {
+          // Kısmi ödeme için fiş oluştur
+          const receiptData = {
+            sale_id: saleResult.saleId,
+            order_id: selectedOrder.id,
+            totalAmount: paidAmount,
+            paymentMethod: `Kısmi Ödeme (${paymentDetails})`,
+            sale_date: new Date().toLocaleDateString('tr-TR'),
+            sale_time: new Date().toLocaleTimeString('tr-TR'),
+            items: orderItems,
+            tableName: selectedOrder.table_name,
+            tableType: selectedOrder.table_type,
+            isPartialPayment: true
+          };
+
+          // Fiş modal'ını göster
+          if (onShowReceipt) {
+            onShowReceipt(receiptData);
+          }
+        } else {
+          alert('Kısmi ödeme satış kaydı oluşturulamadı: ' + (saleResult.error || 'Bilinmeyen hata'));
+        }
+
+        // Modal'ı kapat ve siparişleri yenile
+        setShowPartialPaymentModal(false);
+        await loadTableOrders();
+        
+        // Sipariş detaylarını yeniden yükle
+        const updatedItems = await window.electronAPI.getTableOrderItems(selectedOrder.id);
+        setOrderItems(updatedItems || []);
+        
+        // Modal'ı tekrar aç
+        setShowModal(true);
+      } else {
+        alert('Kısmi ödeme kaydedilemedi: ' + (result.error || 'Bilinmeyen hata'));
+      }
+    } catch (error) {
+      console.error('Kısmi ödeme kaydedilirken hata:', error);
+      alert('Kısmi ödeme kaydedilemedi: ' + error.message);
+    }
+  };
+
   return (
     <div className="mb-6">
       <h2 className="text-2xl font-bold mb-4 gradient-text">Masalar</h2>
@@ -219,6 +304,21 @@ const TablePanel = ({ onSelectTable, refreshTrigger }) => {
             loadTableOrders(); // Siparişleri yenile
           }}
           onCompleteTable={handleCompleteTable}
+          onPartialPayment={handlePartialPayment}
+        />
+      )}
+
+      {/* Kısmi Ödeme Modal */}
+      {showPartialPaymentModal && selectedOrder && (
+        <TablePartialPaymentModal
+          order={selectedOrder}
+          items={orderItems}
+          totalAmount={selectedOrder.total_amount}
+          onClose={() => {
+            setShowPartialPaymentModal(false);
+            setShowModal(true);
+          }}
+          onComplete={handleCompletePartialPayment}
         />
       )}
 

@@ -352,6 +352,73 @@ ipcMain.handle('complete-table-order', (event, orderId) => {
   return { success: true, saleId };
 });
 
+// Kısmi ödeme için masa siparişi tutarını güncelle ve satış kaydı oluştur
+ipcMain.handle('update-table-order-amount', async (event, orderId, paidAmount) => {
+  const order = db.tableOrders.find(o => o.id === orderId);
+  if (!order) {
+    return { success: false, error: 'Sipariş bulunamadı' };
+  }
+
+  if (order.status !== 'pending') {
+    return { success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' };
+  }
+
+  // Masa siparişi tutarını güncelle (kısmi ödeme düşülür)
+  order.total_amount = Math.max(0, order.total_amount - paidAmount);
+
+  // Eğer tutar 0 veya negatifse siparişi tamamlandı olarak işaretle
+  if (order.total_amount <= 0.01) {
+    order.status = 'completed';
+  }
+
+  saveDatabase();
+  return { success: true, remainingAmount: order.total_amount };
+});
+
+// Kısmi ödeme için satış kaydı oluştur
+ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
+  const now = new Date();
+  const saleDate = now.toLocaleDateString('tr-TR');
+  const saleTime = now.toLocaleTimeString('tr-TR');
+
+  // Yeni satış ID'si
+  const saleId = db.sales.length > 0 
+    ? Math.max(...db.sales.map(s => s.id)) + 1 
+    : 1;
+
+  // Satış ekle
+  db.sales.push({
+    id: saleId,
+    total_amount: saleData.totalAmount,
+    payment_method: saleData.paymentMethod,
+    sale_date: saleDate,
+    sale_time: saleTime,
+    table_name: saleData.tableName,
+    table_type: saleData.tableType
+  });
+
+  // Satış itemlarını ekle (kısmi ödeme için tüm ürünleri göster, sadece ödeme yöntemi farklı)
+  const orderItems = db.tableOrderItems.filter(oi => oi.order_id === saleData.orderId);
+  
+  orderItems.forEach(item => {
+    const itemId = db.saleItems.length > 0 
+      ? Math.max(...db.saleItems.map(si => si.id)) + 1 
+      : 1;
+    
+    db.saleItems.push({
+      id: itemId,
+      sale_id: saleId,
+      product_id: item.product_id,
+      product_name: item.product_name,
+      quantity: item.quantity,
+      price: item.price
+    });
+  });
+
+  saveDatabase();
+  return { success: true, saleId };
+});
+
 // Settings IPC Handlers
 ipcMain.handle('change-password', (event, currentPin, newPin) => {
   try {
@@ -609,19 +676,29 @@ ipcMain.handle('install-update', () => {
 
 // Print Receipt Handler
 ipcMain.handle('print-receipt', async (event, receiptData) => {
+  let printWindow = null;
+  
   try {
+    console.log('print-receipt handler çağrıldı');
+    console.log('receiptData:', receiptData);
+    
     if (!mainWindow) {
+      console.error('Ana pencere bulunamadı');
       return { success: false, error: 'Ana pencere bulunamadı' };
     }
 
+    // Varsayılan yazıcı otomatik olarak kullanılacak (deviceName belirtilmediğinde)
+    console.log('Varsayılan yazıcıya yazdırma yapılacak');
+
     // Fiş içeriğini HTML olarak oluştur
     const receiptHTML = generateReceiptHTML(receiptData);
+    console.log('Fiş HTML içeriği oluşturuldu');
 
     // Gizli bir pencere oluştur ve fiş içeriğini yükle
-    const printWindow = new BrowserWindow({
+    printWindow = new BrowserWindow({
       show: false,
       width: 220, // 58mm ≈ 220px (72 DPI'da)
-      height: 800,
+      height: 3000, // Yüksekliği daha da artırdık - tüm içeriğin kesinlikle görünmesi için
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true
@@ -629,17 +706,61 @@ ipcMain.handle('print-receipt', async (event, receiptData) => {
     });
 
     // HTML içeriğini data URL olarak yükle
-    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(receiptHTML)}`);
+    console.log('Yazdırma penceresi oluşturuldu, HTML yükleniyor...');
+    
+    // Yazdırma işlemini Promise ile sarmalıyoruz
+    let printResolve, printReject;
+    const printPromise = new Promise((resolve, reject) => {
+      printResolve = resolve;
+      printReject = reject;
+    });
 
-    // İçerik yüklendikten sonra yazdır
-    printWindow.webContents.once('did-finish-load', () => {
-      // Kısa bir gecikme ekle (içerik tam yüklensin)
-      setTimeout(() => {
-        printWindow.webContents.print({
-          silent: false, // Yazıcı seçim dialog'unu göster
+    // Hem did-finish-load hem de dom-ready event'lerini dinle
+    let printStarted = false;
+    const startPrint = () => {
+      if (printStarted) return;
+      printStarted = true;
+      
+      console.log('İçerik yüklendi, yazdırma başlatılıyor...');
+      
+      // İçeriğin tamamen render edilmesi için daha uzun bir bekleme
+      setTimeout(async () => {
+        console.log('Yazdırma komutu gönderiliyor (varsayılan yazıcıya)...');
+        
+        // İçeriğin tamamen render edildiğinden emin olmak için scroll yüksekliğini kontrol et ve pencere boyutunu ayarla
+        try {
+          const scrollHeight = await printWindow.webContents.executeJavaScript(`
+            (function() {
+              document.body.style.minHeight = 'auto';
+              document.body.style.height = 'auto';
+              document.documentElement.style.height = 'auto';
+              const height = Math.max(
+                document.body.scrollHeight, 
+                document.body.offsetHeight,
+                document.documentElement.scrollHeight,
+                document.documentElement.offsetHeight
+              );
+              return height;
+            })();
+          `);
+          
+          console.log('Sayfa yüksekliği:', scrollHeight, 'px');
+          
+          // Pencere yüksekliğini içeriğe göre ayarla (en az 2000px, içerik daha uzunsa onu kullan)
+          const windowHeight = Math.max(3000, scrollHeight + 200);
+          printWindow.setSize(220, windowHeight);
+          console.log('Pencere yüksekliği ayarlandı:', windowHeight, 'px');
+          
+          // Ekstra bir kısa bekleme - pencere boyutu değişikliğinin uygulanması için
+          await new Promise(resolve => setTimeout(resolve, 200));
+        } catch (error) {
+          console.log('Yükseklik kontrolü hatası:', error);
+        }
+        
+        // Varsayılan yazıcıya yazdır (deviceName belirtilmediğinde otomatik varsayılan kullanılır)
+        const printOptions = {
+          silent: true, // Dialog gösterme, direkt varsayılan yazıcıya yazdır
           printBackground: true,
-          deviceName: '', // Varsayılan yazıcı (Xprinter otomatik seçilecek)
-          pageSize: 'A4', // Varsayılan sayfa boyutu
           margins: {
             marginType: 'none' // Kenar boşluğu yok
           },
@@ -650,23 +771,69 @@ ipcMain.handle('print-receipt', async (event, receiptData) => {
           color: false, // Siyah-beyaz (termal yazıcılar için)
           copies: 1,
           duplex: 'none'
-        }, (success, errorType) => {
+          // deviceName belirtilmedi - varsayılan yazıcı otomatik kullanılacak
+        };
+
+        printWindow.webContents.print(printOptions, (success, errorType) => {
+          console.log('Yazdırma callback çağrıldı - success:', success, 'errorType:', errorType);
+          
           if (!success) {
             console.error('Yazdırma hatası:', errorType);
+            console.error('Hata tipi:', errorType);
+            printReject(new Error(errorType || 'Yazdırma başarısız'));
           } else {
-            console.log('Fiş başarıyla yazdırıldı');
+            console.log('✓ Fiş başarıyla yazdırıldı');
+            printResolve(true);
           }
+          
           // Yazdırma işlemi tamamlandıktan sonra pencereyi kapat
           setTimeout(() => {
-            printWindow.close();
-          }, 500);
+            console.log('Yazdırma penceresi kapatılıyor...');
+            if (printWindow && !printWindow.isDestroyed()) {
+              printWindow.close();
+              printWindow = null;
+            }
+          }, 1000);
         });
-      }, 500);
+        }, 2000); // 2 saniye bekle - içeriğin tamamen render edilmesi için
+    };
+
+    printWindow.webContents.once('did-finish-load', () => {
+      console.log('did-finish-load event tetiklendi');
+      startPrint();
     });
 
+    printWindow.webContents.once('dom-ready', () => {
+      console.log('dom-ready event tetiklendi');
+      startPrint();
+    });
+
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(receiptHTML)}`);
+    console.log('HTML URL yüklendi');
+
+    // Fallback: Eğer 3 saniye içinde hiçbir event tetiklenmezse yine de yazdır
+    setTimeout(() => {
+      console.log('Fallback timeout: Yazdırma zorla başlatılıyor...');
+      startPrint();
+    }, 3000);
+
+    // Yazdırma işleminin tamamlanmasını bekle (max 10 saniye)
+    await Promise.race([
+      printPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Yazdırma timeout')), 10000))
+    ]);
+
+    console.log('print-receipt handler başarıyla tamamlandı');
     return { success: true };
   } catch (error) {
     console.error('Fiş yazdırma hatası:', error);
+    console.error('Hata detayı:', error.stack);
+    
+    // Hata durumunda pencereyi temizle
+    if (printWindow && !printWindow.isDestroyed()) {
+      printWindow.close();
+    }
+    
     return { success: false, error: error.message };
   }
 });
@@ -677,11 +844,11 @@ function generateReceiptHTML(receiptData) {
     const itemTotal = item.price * item.quantity;
     return `
       <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #ccc;">
-        <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 4px;">
+        <div style="display: flex; justify-content: space-between; font-weight: 900; font-style: italic; margin-bottom: 4px; font-family: 'Montserrat', sans-serif;">
           <span>${item.name}</span>
           <span>₺${itemTotal.toFixed(2)}</span>
         </div>
-        <div style="display: flex; justify-content: space-between; font-size: 10px; color: #666;">
+        <div style="display: flex; justify-content: space-between; font-size: 10px; color: #000; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">
           <span>${item.quantity} adet × ₺${item.price.toFixed(2)}</span>
         </div>
       </div>
@@ -693,32 +860,77 @@ function generateReceiptHTML(receiptData) {
     <html>
     <head>
       <meta charset="UTF-8">
+      <link rel="preconnect" href="https://fonts.googleapis.com">
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+      <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@900&display=swap" rel="stylesheet">
       <style>
         @media print {
           @page {
             size: 58mm auto;
             margin: 0;
+            min-height: 100%;
           }
           body {
             margin: 0;
-            padding: 10px;
+            padding: 10px 10px 20px 10px;
+            height: auto;
+            min-height: 100%;
+            color: #000 !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          * {
+            color: #000 !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
           }
         }
+        * {
+          box-sizing: border-box;
+          font-family: 'Montserrat', sans-serif;
+          font-weight: 900;
+          font-style: italic;
+        }
+        p, span, div {
+          color: #000;
+          font-family: 'Montserrat', sans-serif;
+          font-weight: 900;
+          font-style: italic;
+        }
         body {
-          font-family: 'Courier New', monospace;
+          font-family: 'Montserrat', sans-serif;
           width: 58mm;
-          padding: 10px;
+          max-width: 58mm;
+          padding: 10px 10px 25px 10px;
           margin: 0;
           font-size: 12px;
+          font-weight: 900;
+          font-style: italic;
+          min-height: 100%;
+          height: auto;
+          overflow: visible;
+          color: #000;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+          text-rendering: optimizeLegibility;
+        }
+        html {
+          height: auto;
+          min-height: 100%;
         }
         .header {
           text-align: center;
           margin-bottom: 10px;
+          font-family: 'Montserrat', sans-serif;
+          font-weight: 900;
+          font-style: italic;
         }
         .header h3 {
           font-size: 16px;
-          font-weight: bold;
+          font-weight: 900;
+          font-style: italic;
           margin: 5px 0;
+          font-family: 'Montserrat', sans-serif;
         }
         .info {
           border-top: 1px solid #000;
@@ -726,6 +938,10 @@ function generateReceiptHTML(receiptData) {
           padding: 8px 0;
           margin: 10px 0;
           font-size: 10px;
+          color: #000;
+          font-weight: 900;
+          font-style: italic;
+          font-family: 'Montserrat', sans-serif;
         }
         .info div {
           display: flex;
@@ -734,53 +950,89 @@ function generateReceiptHTML(receiptData) {
         }
         .items {
           margin: 10px 0;
+          font-family: 'Montserrat', sans-serif;
+          font-weight: 900;
+          font-style: italic;
         }
         .total {
-          border-top: 2px solid #000;
-          padding-top: 8px;
-          margin-top: 10px;
-          font-weight: bold;
+          border-top: 3px solid #000;
+          padding-top: 10px;
+          margin-top: 15px;
+          margin-bottom: 10px;
+          font-weight: 900;
+          font-style: italic;
+          color: #000;
+          font-family: 'Montserrat', sans-serif;
         }
         .total div {
           display: flex;
           justify-content: space-between;
-          margin: 3px 0;
+          margin: 4px 0;
+          font-weight: 900;
+          font-style: italic;
+          color: #000;
+          font-family: 'Montserrat', sans-serif;
         }
         .footer {
           text-align: center;
-          margin-top: 15px;
-          padding-top: 10px;
-          border-top: 1px solid #000;
-          font-size: 10px;
-          color: #666;
+          margin-top: 20px;
+          margin-bottom: 15px;
+          padding-top: 15px;
+          padding-bottom: 15px;
+          border-top: 3px solid #000;
+          font-size: 12px;
+          font-weight: 900;
+          font-style: italic;
+          color: #000;
+          page-break-inside: avoid;
+          display: block;
+          font-family: 'Montserrat', sans-serif;
+        }
+        .header {
+          page-break-inside: avoid;
+        }
+        .total {
+          page-break-inside: avoid;
         }
       </style>
     </head>
     <body>
       <div class="header">
         <h3>MAKARA</h3>
-        <p style="font-size: 10px; margin: 0;">Satış Fişi</p>
+        <p style="font-size: 10px; margin: 0; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">${receiptData.tableName ? 'Masa Siparişi' : 'Satış Fişi'}</p>
       </div>
       
       <div class="info">
+        ${receiptData.tableName ? `
+        <div>
+          <span>Masa:</span>
+          <span style="font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">${receiptData.tableName}</span>
+        </div>
+        ` : ''}
         <div>
           <span>Tarih:</span>
-          <span style="font-weight: bold;">${receiptData.sale_date || new Date().toLocaleDateString('tr-TR')}</span>
+          <span style="font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">${receiptData.sale_date || new Date().toLocaleDateString('tr-TR')}</span>
         </div>
         <div>
           <span>Saat:</span>
-          <span style="font-weight: bold;">${receiptData.sale_time || new Date().toLocaleTimeString('tr-TR')}</span>
+          <span style="font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">${receiptData.sale_time || new Date().toLocaleTimeString('tr-TR')}</span>
         </div>
         ${receiptData.sale_id ? `
         <div>
           <span>Fiş No:</span>
-          <span style="font-weight: bold;">#${receiptData.sale_id}</span>
+          <span style="font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">#${receiptData.sale_id}</span>
+        </div>
+        ` : ''}
+        ${receiptData.order_id ? `
+        <div>
+          <span>Sipariş No:</span>
+          <span style="font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">#${receiptData.order_id}</span>
         </div>
         ` : ''}
       </div>
 
       <div class="items">
-        <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 5px; padding-bottom: 5px; border-bottom: 1px solid #000;">
+        <div style="display: flex; justify-content: space-between; font-weight: 900; font-style: italic; margin-bottom: 5px; padding-bottom: 5px; border-bottom: 1px solid #000; font-family: 'Montserrat', sans-serif;">
           <span>Ürün</span>
           <span>Toplam</span>
         </div>
@@ -792,15 +1044,15 @@ function generateReceiptHTML(receiptData) {
           <span>TOPLAM:</span>
           <span>₺${receiptData.totalAmount.toFixed(2)}</span>
         </div>
-        <div style="font-size: 10px; color: #666; font-weight: normal;">
+        <div style="font-size: 11px; color: #000; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">
           <span>Ödeme:</span>
           <span>${receiptData.paymentMethod || 'Nakit'}</span>
         </div>
       </div>
 
       <div class="footer">
-        <p style="margin: 5px 0;">Teşekkür ederiz!</p>
-        <p style="margin: 5px 0;">İyi günler dileriz</p>
+        <p style="margin: 8px 0; font-weight: 900; font-style: italic; color: #000; font-size: 12px; font-family: 'Montserrat', sans-serif;">Teşekkür ederiz!</p>
+        <p style="margin: 8px 0; font-weight: 900; font-style: italic; color: #000; font-size: 12px; font-family: 'Montserrat', sans-serif;">İyi günler dileriz</p>
       </div>
     </body>
     </html>
@@ -865,5 +1117,14 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   saveDatabase();
+});
+
+// Uygulamayı kapat
+ipcMain.handle('quit-app', () => {
+  saveDatabase();
+  setTimeout(() => {
+    app.quit();
+  }, 500);
+  return { success: true };
 });
 

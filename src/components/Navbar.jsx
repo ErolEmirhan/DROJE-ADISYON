@@ -1,13 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import PinModal from './PinModal';
 import SettingsModal from './SettingsModal';
 import SettingsSplash from './SettingsSplash';
 
-const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType, onRoleSplash, onProductsUpdated }) => {
+const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType, onRoleSplash, onProductsUpdated, onExit }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showSettingsSplash, setShowSettingsSplash] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
   const menuRef = useRef(null);
 
   // Dışarı tıklayınca menüyü kapat
@@ -225,7 +227,56 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
             </div>
           )}
         </div>
+
+        {/* Çıkış Butonu - Sağ Üst */}
+        <button
+          onClick={() => setShowExitConfirm(true)}
+          className="p-4 rounded-xl hover:bg-red-50 transition-all duration-300 hover:scale-110 active:scale-95 shadow-lg hover:shadow-xl"
+          title="Çıkış Yap"
+        >
+          <svg className="w-10 h-10 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+        </button>
       </div>
+
+      {/* Çıkış Onay Modal */}
+      {showExitConfirm && createPortal(
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-start justify-center pt-8 z-[9999] animate-fade-in" style={{ zIndex: 9999 }}>
+          <div className="bg-white/95 backdrop-blur-xl border-2 border-red-200 rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl animate-scale-in">
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-red-500 to-pink-500 flex items-center justify-center">
+                <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-800 mb-2">Çıkış Yap</h3>
+              <p className="text-gray-600">Uygulamayı kapatmak istediğinize emin misiniz?</p>
+            </div>
+            
+            <div className="flex space-x-4">
+              <button
+                onClick={() => setShowExitConfirm(false)}
+                className="flex-1 py-4 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-600 hover:text-gray-800 font-semibold text-lg transition-all duration-300"
+              >
+                İptal
+              </button>
+              <button
+                onClick={() => {
+                  setShowExitConfirm(false);
+                  if (onExit) {
+                    onExit();
+                  }
+                }}
+                className="flex-1 py-4 bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 rounded-xl text-white font-bold text-lg transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95"
+              >
+                Evet, Çık
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* PIN Modal */}
       {showPinModal && (

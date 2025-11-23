@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 
-const SplitPaymentModal = ({ cart, totalAmount, onCompleteSplitPayment, onClose }) => {
-  const [payments, setPayments] = useState([]); // [{ amount: 50, method: 'Nakit' }, ...]
+const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComplete }) => {
+  const [payments, setPayments] = useState([]);
   const [currentPaymentMethod, setCurrentPaymentMethod] = useState('Nakit');
   const [currentAmount, setCurrentAmount] = useState('');
   const [remainingAmount, setRemainingAmount] = useState(totalAmount);
 
   useEffect(() => {
-    // Kalan tutarı hesapla
     const paidAmount = payments.reduce((sum, payment) => sum + payment.amount, 0);
     setRemainingAmount(totalAmount - paidAmount);
   }, [payments, totalAmount]);
@@ -25,13 +24,11 @@ const SplitPaymentModal = ({ cart, totalAmount, onCompleteSplitPayment, onClose 
       return;
     }
 
-    // Yeni ödeme ekle
     setPayments(prev => [...prev, {
       amount: amount,
       method: currentPaymentMethod
     }]);
 
-    // Formu temizle
     setCurrentAmount('');
   };
 
@@ -40,18 +37,12 @@ const SplitPaymentModal = ({ cart, totalAmount, onCompleteSplitPayment, onClose 
   };
 
   const handleComplete = () => {
-    if (remainingAmount > 0.01) { // Kuruş farkı için tolerans
-      alert(`Kalan tutar (₺${remainingAmount.toFixed(2)}) ödenmemiş!`);
-      return;
-    }
-
     if (payments.length === 0) {
       alert('Lütfen en az bir ödeme ekleyin!');
       return;
     }
 
-    // Ödemeleri doğrudan gönder (App.jsx'te işlenecek)
-    onCompleteSplitPayment(payments);
+    onComplete(payments);
   };
 
   const paidAmount = payments.reduce((sum, payment) => sum + payment.amount, 0);
@@ -60,7 +51,7 @@ const SplitPaymentModal = ({ cart, totalAmount, onCompleteSplitPayment, onClose 
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
       <div className="bg-white backdrop-blur-xl border border-purple-200 rounded-3xl p-8 max-w-2xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-3xl font-bold gradient-text">Parçalı Ödeme</h2>
+          <h2 className="text-3xl font-bold gradient-text">Kısmi Ödeme</h2>
           <button
             onClick={onClose}
             className="text-gray-500 hover:text-gray-700 transition-colors p-2 hover:bg-gray-100 rounded-lg"
@@ -69,6 +60,12 @@ const SplitPaymentModal = ({ cart, totalAmount, onCompleteSplitPayment, onClose 
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
+        </div>
+
+        {/* Masa Bilgisi */}
+        <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-2xl p-4 mb-6 border border-purple-200">
+          <p className="text-sm text-gray-600 mb-1">Masa</p>
+          <p className="text-xl font-bold text-purple-600">{order.table_name}</p>
         </div>
 
         {/* Toplam ve Kalan Tutar */}
@@ -218,14 +215,14 @@ const SplitPaymentModal = ({ cart, totalAmount, onCompleteSplitPayment, onClose 
           </button>
           <button
             onClick={handleComplete}
-            disabled={payments.length === 0 || remainingAmount > 0.01}
+            disabled={payments.length === 0}
             className="flex-1 py-4 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed rounded-xl text-white font-bold text-lg transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95"
           >
             <div className="flex items-center justify-center space-x-2">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
-              <span>Ödemeleri Tamamla</span>
+              <span>Ödemeyi Tamamla</span>
             </div>
           </button>
         </div>
@@ -234,4 +231,5 @@ const SplitPaymentModal = ({ cart, totalAmount, onCompleteSplitPayment, onClose 
   );
 };
 
-export default SplitPaymentModal;
+export default TablePartialPaymentModal;
+

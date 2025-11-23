@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const TableOrderModal = ({ order, items, onClose, onCompleteTable }) => {
+const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPayment }) => {
   const [sessionDuration, setSessionDuration] = useState('');
 
   if (!order) return null;
@@ -38,7 +38,12 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable }) => {
     return () => clearInterval(interval);
   }, [order.order_date, order.order_time]);
 
-  const totalAmount = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  // Başlangıç toplam tutarı (tüm ürünlerin toplamı)
+  const originalTotalAmount = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  // Şu anki kalan tutar (order.total_amount)
+  const remainingAmount = order.total_amount || 0;
+  // Ödenen kısmi ödeme tutarı
+  const paidAmount = originalTotalAmount - remainingAmount;
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
@@ -109,19 +114,55 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable }) => {
             </div>
           </div>
 
-          {/* Toplam */}
-          <div className="border-t border-purple-200 pt-6">
+          {/* Toplam ve Kısmi Ödeme Bilgileri */}
+          <div className="border-t border-purple-200 pt-6 space-y-4">
+            {/* Ödenen Kısmi Ödeme */}
+            {paidAmount > 0.01 && (
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
+                <p className="text-sm text-gray-600 mb-1">Ödenen Kısmi Ödeme</p>
+                <p className="text-xl font-bold text-green-600">
+                  ₺{paidAmount.toFixed(2)}
+                </p>
+              </div>
+            )}
+
+            {/* Toplam Tutar (Başlangıç) */}
             <div className="flex justify-between items-center">
               <span className="text-xl font-semibold text-gray-700">Toplam Tutar</span>
-              <span className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                ₺{totalAmount.toFixed(2)}
+              <span className={`text-3xl font-bold ${
+                paidAmount > 0.01 
+                  ? 'text-gray-400 line-through' 
+                  : 'bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent'
+              }`}>
+                ₺{originalTotalAmount.toFixed(2)}
               </span>
             </div>
+
+            {/* Kalan Tutar */}
+            {paidAmount > 0.01 && (
+              <div className="flex justify-between items-center pt-2 border-t border-purple-200">
+                <span className="text-xl font-semibold text-orange-600">Kalan Tutar</span>
+                <span className="text-3xl font-bold text-orange-600">
+                  ₺{remainingAmount.toFixed(2)}
+                </span>
+              </div>
+            )}
           </div>
 
-          {/* Masayı Sonlandır Butonu */}
+          {/* Masayı Sonlandır ve Kısmi Ödeme Butonları */}
           {order.status === 'pending' && (
-            <div className="flex items-center justify-center pt-4">
+            <div className="flex items-center justify-center gap-4 pt-4">
+              <button
+                onClick={onPartialPayment}
+                className="px-8 py-4 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold text-lg rounded-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95"
+              >
+                <div className="flex items-center space-x-2">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Kısmi Ödeme Al</span>
+                </div>
+              </button>
               <button
                 onClick={onCompleteTable}
                 className="px-8 py-4 bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white font-bold text-lg rounded-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95"

@@ -11,6 +11,7 @@ import ReceiptModal from './components/ReceiptModal';
 import RoleSplash from './components/RoleSplash';
 import SaleSuccessToast from './components/SaleSuccessToast';
 import SplashScreen from './components/SplashScreen';
+import ExitSplash from './components/ExitSplash';
 import UpdateModal from './components/UpdateModal';
 
 function App() {
@@ -31,6 +32,7 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState(null);
   const [updateDownloadProgress, setUpdateDownloadProgress] = useState(null);
   const [tableRefreshTrigger, setTableRefreshTrigger] = useState(0);
+  const [showExitSplash, setShowExitSplash] = useState(false);
   const triggerRoleSplash = (role) => {
     setActiveRoleSplash(role);
     setTimeout(() => setActiveRoleSplash(null), 1000);
@@ -174,6 +176,22 @@ function App() {
       const result = await window.electronAPI.createTableOrder(orderData);
       
       if (result.success) {
+        // Masa siparişi fişi için receiptData oluştur
+        const tableReceiptData = {
+          order_id: result.orderId,
+          totalAmount,
+          paymentMethod: `Masaya Kaydedildi (${selectedTable.name})`,
+          sale_date: new Date().toLocaleDateString('tr-TR'),
+          sale_time: new Date().toLocaleTimeString('tr-TR'),
+          items: cart,
+          tableName: selectedTable.name,
+          tableType: selectedTable.type
+        };
+        
+        // Fiş modal'ını göster
+        setReceiptData(tableReceiptData);
+        setShowReceiptModal(true);
+        
         clearCart();
         setSaleSuccessInfo({ 
           totalAmount, 
@@ -229,42 +247,41 @@ function App() {
     }
   };
 
-  const completeSplitPayment = async (splitPayments) => {
-    // Her ürün için ayrı satış kaydı oluştur
-    let successCount = 0;
-    let totalAmount = 0;
+  const completeSplitPayment = async (payments) => {
+    // Parçalı ödeme için tek bir satış oluştur (tüm ürünler bir arada)
+    const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    
+    // Ödeme yöntemlerini birleştir (örn: "Nakit + Kredi Kartı")
+    const paymentMethods = [...new Set(payments.map(p => p.method))];
+    const paymentMethodString = paymentMethods.join(' + ');
 
-    for (const item of splitPayments) {
-      const itemTotal = item.price * item.quantity;
-      totalAmount += itemTotal;
+    // Ödeme detaylarını string olarak oluştur
+    const paymentDetails = payments.map(p => `${p.method}: ₺${p.amount.toFixed(2)}`).join(', ');
 
-      const saleData = {
-        items: [{ ...item, quantity: item.quantity }],
-        totalAmount: itemTotal,
-        paymentMethod: item.paymentMethod
-      };
+    const saleData = {
+      items: cart,
+      totalAmount,
+      paymentMethod: `Parçalı Ödeme (${paymentDetails})`
+    };
 
-      const result = await window.electronAPI.createSale(saleData);
-      if (result.success) {
-        successCount++;
-      }
-    }
-
-    if (successCount === splitPayments.length) {
+    const result = await window.electronAPI.createSale(saleData);
+    
+    if (result.success) {
       setShowSplitPaymentModal(false);
-      // Fiş modal'ını göster (tüm ürünler için birleşik fiş)
+      // Fiş modal'ını göster
       setReceiptData({
+        sale_id: result.saleId,
         totalAmount,
-        paymentMethod: 'Ayrı Ödemeler',
+        paymentMethod: `Parçalı Ödeme (${paymentDetails})`,
         sale_date: new Date().toLocaleDateString('tr-TR'),
         sale_time: new Date().toLocaleTimeString('tr-TR'),
-        items: splitPayments
+        items: cart
       });
       setShowReceiptModal(true);
       clearCart();
       setSaleSuccessInfo({ 
         totalAmount, 
-        paymentMethod: 'Ayrı Ödemeler',
+        paymentMethod: `Parçalı Ödeme (${paymentDetails})`,
         splitPayment: true
       });
     }
@@ -278,10 +295,28 @@ function App() {
     return cart.reduce((sum, item) => sum + item.quantity, 0);
   };
 
+  const handleExit = () => {
+    setShowExitSplash(true);
+  };
+
+  const handleExitComplete = async () => {
+    // Veritabanını kaydet ve uygulamayı kapat
+    if (window.electronAPI && window.electronAPI.quitApp) {
+      await window.electronAPI.quitApp();
+    } else {
+      // Fallback
+      window.close();
+    }
+  };
+
   return (
     <>
       {showSplash && (
         <SplashScreen onComplete={() => setShowSplash(false)} />
+      )}
+
+      {showExitSplash && (
+        <ExitSplash onComplete={handleExitComplete} />
       )}
       <div className="min-h-screen bg-gradient-to-br from-[#f0f4ff] via-[#e0e7ff] to-[#fce7f3] text-gray-800">
         <Navbar 
@@ -299,6 +334,7 @@ function App() {
         setUserType={setUserType}
         onRoleSplash={triggerRoleSplash}
         onProductsUpdated={refreshProducts}
+        onExit={handleExit}
       />
       
       {currentView === 'tables' ? (
@@ -306,6 +342,10 @@ function App() {
           <TablePanel 
             onSelectTable={handleTableSelect}
             refreshTrigger={tableRefreshTrigger}
+            onShowReceipt={(receiptData) => {
+              setReceiptData(receiptData);
+              setShowReceiptModal(true);
+            }}
           />
         </div>
       ) : currentView === 'pos' ? (
@@ -388,9 +428,29 @@ function App() {
             setReceiptData(null);
           }}
           onPrint={async () => {
+            console.log('Yazdır butonuna tıklandı');
+            console.log('receiptData:', receiptData);
+            console.log('window.electronAPI:', window.electronAPI);
+            
             if (window.electronAPI && window.electronAPI.printReceipt) {
-              await window.electronAPI.printReceipt(receiptData);
+              console.log('printReceipt fonksiyonu bulundu, yazdırma başlatılıyor...');
+              try {
+                // Yazdırma işlemini başlat (arka planda ama sonucu bekle)
+                const result = await window.electronAPI.printReceipt(receiptData);
+                console.log('Yazdırma sonucu:', result);
+                
+                if (!result.success) {
+                  console.error('Yazdırma başarısız:', result.error);
+                  alert('Yazdırma hatası: ' + (result.error || 'Bilinmeyen hata'));
+                } else {
+                  console.log('✓ Yazdırma başarıyla tamamlandı');
+                }
+              } catch (err) {
+                console.error('Yazdırma hatası:', err);
+                alert('Yazdırma hatası: ' + (err.message || err));
+              }
             } else {
+              console.warn('electronAPI veya printReceipt bulunamadı, fallback kullanılıyor');
               // Fallback: window.print()
               window.print();
             }

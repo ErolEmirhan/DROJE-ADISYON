@@ -28,6 +28,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateError: (callback) => ipcRenderer.on('update-error', (event, error) => callback(error)),
   onUpdateProgress: (callback) => ipcRenderer.on('update-download-progress', (event, progress) => callback(progress)),
   // Print API
-  printReceipt: (receiptData) => ipcRenderer.invoke('print-receipt', receiptData)
+  printReceipt: (receiptData) => ipcRenderer.invoke('print-receipt', receiptData),
+  // Table Order Partial Payment API
+  updateTableOrderAmount: (orderId, paidAmount) => ipcRenderer.invoke('update-table-order-amount', orderId, paidAmount),
+  createPartialPaymentSale: (saleData) => ipcRenderer.invoke('create-partial-payment-sale', saleData),
+  // Exit API
+  quitApp: () => ipcRenderer.invoke('quit-app')
 });
 
