@@ -14,7 +14,8 @@ let db = {
   tableOrderItems: [],
   settings: {
     adminPin: '1234'
-  }
+  },
+  printerAssignments: [] // { printerName, printerType, category_id }
 };
 
 function initDatabase() {
@@ -39,6 +40,7 @@ function initDatabase() {
       if (!db.saleItems) db.saleItems = [];
       if (!db.tableOrders) db.tableOrders = [];
       if (!db.tableOrderItems) db.tableOrderItems = [];
+      if (!db.printerAssignments) db.printerAssignments = [];
     } catch (error) {
       console.error('Veritabanı yüklenemedi, yeni oluşturuluyor:', error);
       initDefaultData();
@@ -166,6 +168,38 @@ ipcMain.handle('get-categories', () => {
   return db.categories.sort((a, b) => a.order_index - b.order_index);
 });
 
+ipcMain.handle('create-category', (event, categoryData) => {
+  const { name } = categoryData;
+  
+  if (!name || name.trim() === '') {
+    return { success: false, error: 'Kategori adı boş olamaz' };
+  }
+  
+  // Aynı isimde kategori var mı kontrol et
+  const existingCategory = db.categories.find(c => c.name.toLowerCase().trim() === name.toLowerCase().trim());
+  if (existingCategory) {
+    return { success: false, error: 'Bu isimde bir kategori zaten mevcut' };
+  }
+  
+  const newId = db.categories.length > 0 
+    ? Math.max(...db.categories.map(c => c.id)) + 1 
+    : 1;
+  
+  const maxOrderIndex = db.categories.length > 0
+    ? Math.max(...db.categories.map(c => c.order_index || 0))
+    : -1;
+  
+  const newCategory = {
+    id: newId,
+    name: name.trim(),
+    order_index: maxOrderIndex + 1
+  };
+  
+  db.categories.push(newCategory);
+  saveDatabase();
+  return { success: true, category: newCategory };
+});
+
 ipcMain.handle('get-products', (event, categoryId) => {
   if (categoryId) {
     return db.products.filter(p => p.category_id === categoryId);
@@ -174,7 +208,7 @@ ipcMain.handle('get-products', (event, categoryId) => {
 });
 
 ipcMain.handle('create-sale', (event, saleData) => {
-  const { items, totalAmount, paymentMethod } = saleData;
+  const { items, totalAmount, paymentMethod, orderNote } = saleData;
   
   const now = new Date();
   const saleDate = now.toLocaleDateString('tr-TR');
@@ -241,7 +275,7 @@ ipcMain.handle('get-sale-details', (event, saleId) => {
 
 // Table Order IPC Handlers
 ipcMain.handle('create-table-order', (event, orderData) => {
-  const { items, totalAmount, tableId, tableName, tableType } = orderData;
+  const { items, totalAmount, tableId, tableName, tableType, orderNote } = orderData;
   
   const now = new Date();
   const orderDate = now.toLocaleDateString('tr-TR');
@@ -261,7 +295,8 @@ ipcMain.handle('create-table-order', (event, orderData) => {
     total_amount: totalAmount,
     order_date: orderDate,
     order_time: orderTime,
-    status: 'pending' // 'pending', 'completed', 'cancelled'
+    status: 'pending', // 'pending', 'completed', 'cancelled'
+    order_note: orderNote || null
   });
 
   // Sipariş itemlarını ekle
@@ -1038,6 +1073,13 @@ function generateReceiptHTML(receiptData) {
         </div>
         ${itemsHTML}
       </div>
+      
+      ${receiptData.orderNote ? `
+      <div style="margin: 10px 0; padding: 8px; background-color: #fef3c7; border: 1px solid #fbbf24; border-radius: 4px;">
+        <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #d97706; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu:</p>
+        <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #92400e; margin: 0; font-family: 'Montserrat', sans-serif;">${receiptData.orderNote}</p>
+      </div>
+      ` : ''}
 
       <div class="total">
         <div>
@@ -1120,6 +1162,109 @@ app.on('before-quit', () => {
 });
 
 // Uygulamayı kapat
+// Printer Management IPC Handlers
+ipcMain.handle('get-printers', async () => {
+  try {
+    if (!mainWindow) {
+      return { success: false, error: 'Ana pencere bulunamadı' };
+    }
+    
+    const printers = mainWindow.webContents.getPrinters();
+    
+    // Yazıcıları USB ve Ethernet olarak kategorize et
+    const usbPrinters = [];
+    const networkPrinters = [];
+    
+    printers.forEach(printer => {
+      const printerInfo = {
+        name: printer.name,
+        displayName: printer.displayName || printer.name,
+        description: printer.description || '',
+        status: printer.status || 0,
+        isDefault: printer.isDefault || false
+      };
+      
+      // Basit bir kontrol: network veya IP içeriyorsa network yazıcı
+      const isNetwork = printer.name.toLowerCase().includes('network') || 
+                       printer.name.toLowerCase().includes('ethernet') ||
+                       printer.name.toLowerCase().includes('tcp') ||
+                       printer.name.toLowerCase().includes('ip') ||
+                       printer.description?.toLowerCase().includes('network') ||
+                       printer.description?.toLowerCase().includes('ethernet');
+      
+      if (isNetwork) {
+        networkPrinters.push(printerInfo);
+      } else {
+        usbPrinters.push(printerInfo);
+      }
+    });
+    
+    return {
+      success: true,
+      printers: {
+        usb: usbPrinters,
+        network: networkPrinters,
+        all: printers.map(p => ({
+          name: p.name,
+          displayName: p.displayName || p.name,
+          description: p.description || '',
+          status: p.status || 0,
+          isDefault: p.isDefault || false
+        }))
+      }
+    };
+  } catch (error) {
+    console.error('Yazıcı listeleme hatası:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('assign-category-to-printer', (event, assignmentData) => {
+  const { printerName, printerType, category_id } = assignmentData;
+  
+  if (!printerName || !printerType) {
+    return { success: false, error: 'Yazıcı adı ve tipi gerekli' };
+  }
+  
+  // Mevcut atamayı bul veya yeni oluştur
+  const existingIndex = db.printerAssignments.findIndex(
+    a => a.printerName === printerName && a.printerType === printerType
+  );
+  
+  const assignment = {
+    printerName,
+    printerType,
+    category_id: category_id || null
+  };
+  
+  if (existingIndex >= 0) {
+    db.printerAssignments[existingIndex] = assignment;
+  } else {
+    db.printerAssignments.push(assignment);
+  }
+  
+  saveDatabase();
+  return { success: true, assignment };
+});
+
+ipcMain.handle('get-printer-assignments', () => {
+  return db.printerAssignments;
+});
+
+ipcMain.handle('remove-printer-assignment', (event, printerName, printerType) => {
+  const index = db.printerAssignments.findIndex(
+    a => a.printerName === printerName && a.printerType === printerType
+  );
+  
+  if (index >= 0) {
+    db.printerAssignments.splice(index, 1);
+    saveDatabase();
+    return { success: true };
+  }
+  
+  return { success: false, error: 'Atama bulunamadı' };
+});
+
 ipcMain.handle('quit-app', () => {
   saveDatabase();
   setTimeout(() => {

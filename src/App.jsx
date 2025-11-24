@@ -13,14 +13,22 @@ import SaleSuccessToast from './components/SaleSuccessToast';
 import SplashScreen from './components/SplashScreen';
 import ExitSplash from './components/ExitSplash';
 import UpdateModal from './components/UpdateModal';
+import VirtualKeyboard from './components/VirtualKeyboard';
+import { useVirtualKeyboard } from './hooks/useVirtualKeyboard';
 
 function App() {
+  const virtualKeyboardHook = useVirtualKeyboard();
+  const activeInput = virtualKeyboardHook?.activeInput || null;
+  const keyboardVisible = virtualKeyboardHook?.keyboardVisible || false;
+  const closeKeyboard = virtualKeyboardHook?.closeKeyboard || (() => {});
+  const handleInput = virtualKeyboardHook?.handleInput || (() => {});
   const [showSplash, setShowSplash] = useState(true);
   const [currentView, setCurrentView] = useState('pos'); // 'pos', 'sales', or 'tables'
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [cart, setCart] = useState([]);
+  const [orderNote, setOrderNote] = useState('');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showSplitPaymentModal, setShowSplitPaymentModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
@@ -141,6 +149,7 @@ function App() {
 
   const clearCart = () => {
     setCart([]);
+    setOrderNote('');
     setSelectedTable(null); // Sepet temizlendiğinde masa seçimini de temizle
   };
 
@@ -169,7 +178,8 @@ function App() {
       totalAmount,
       tableId: selectedTable.id,
       tableName: selectedTable.name,
-      tableType: selectedTable.type
+      tableType: selectedTable.type,
+      orderNote: orderNote || null
     };
 
     try {
@@ -185,7 +195,8 @@ function App() {
           sale_time: new Date().toLocaleTimeString('tr-TR'),
           items: cart,
           tableName: selectedTable.name,
-          tableType: selectedTable.type
+          tableType: selectedTable.type,
+          orderNote: orderNote || null
         };
         
         // Fiş modal'ını göster
@@ -225,7 +236,8 @@ function App() {
     const saleData = {
       items: cart,
       totalAmount,
-      paymentMethod
+      paymentMethod,
+      orderNote: orderNote || null
     };
 
     const result = await window.electronAPI.createSale(saleData);
@@ -239,9 +251,11 @@ function App() {
         paymentMethod,
         sale_date: new Date().toLocaleDateString('tr-TR'),
         sale_time: new Date().toLocaleTimeString('tr-TR'),
-        items: cart
+        items: cart,
+        orderNote: orderNote || null
       });
       setShowReceiptModal(true);
+      const currentNote = orderNote;
       clearCart();
       setSaleSuccessInfo({ totalAmount, paymentMethod });
     }
@@ -261,7 +275,8 @@ function App() {
     const saleData = {
       items: cart,
       totalAmount,
-      paymentMethod: `Parçalı Ödeme (${paymentDetails})`
+      paymentMethod: `Parçalı Ödeme (${paymentDetails})`,
+      orderNote: orderNote || null
     };
 
     const result = await window.electronAPI.createSale(saleData);
@@ -275,7 +290,8 @@ function App() {
         paymentMethod: `Parçalı Ödeme (${paymentDetails})`,
         sale_date: new Date().toLocaleDateString('tr-TR'),
         sale_time: new Date().toLocaleTimeString('tr-TR'),
-        items: cart
+        items: cart,
+        orderNote: orderNote || null
       });
       setShowReceiptModal(true);
       clearCart();
@@ -393,6 +409,8 @@ function App() {
               onSaveToTable={completeTableOrder}
               totalAmount={getTotalAmount()}
               selectedTable={selectedTable}
+              orderNote={orderNote}
+              onOrderNoteChange={setOrderNote}
             />
           </div>
         </div>
@@ -481,6 +499,15 @@ function App() {
             setUpdateInfo(null);
             setUpdateDownloadProgress(null);
           }}
+        />
+      )}
+
+      {/* Virtual Keyboard */}
+      {keyboardVisible && (
+        <VirtualKeyboard
+          targetInput={activeInput}
+          onClose={closeKeyboard}
+          onInput={handleInput}
         />
       )}
       </div>

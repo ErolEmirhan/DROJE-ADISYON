@@ -3,14 +3,14 @@ import React from 'react';
 const ProductGrid = ({ products, onAddToCart }) => {
   return (
     <div className="flex-1 overflow-y-auto scrollbar-custom">
-      <div className="grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 pb-4">
+      <div className="grid grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 pb-4">
         {products.map((product) => (
           <div
             key={product.id}
             onClick={() => onAddToCart(product)}
             className="product-card animate-fade-in"
           >
-            <div className="aspect-square bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-xl mb-3 flex items-center justify-center overflow-hidden relative group">
+            <div className="aspect-[4/3] bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-xl mb-2 flex items-center justify-center overflow-hidden relative group">
               {product.image ? (
                 <img 
                   src={product.image} 
@@ -30,13 +30,13 @@ const ProductGrid = ({ products, onAddToCart }) => {
               </div>
             </div>
             
-            <h3 className="font-semibold text-gray-800 mb-2 truncate">{product.name}</h3>
+            <h3 className="font-semibold text-gray-800 mb-1 truncate text-sm">{product.name}</h3>
             <div className="flex items-center justify-between">
-              <span className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+              <span className="text-lg font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
                 ₺{product.price.toFixed(2)}
               </span>
-              <button className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center hover:scale-110 transition-transform">
-                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <button className="w-7 h-7 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center hover:scale-110 transition-transform">
+                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                 </svg>
               </button>

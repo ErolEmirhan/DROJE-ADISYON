@@ -1,6 +1,23 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
-const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, onSaveToTable, totalAmount, selectedTable }) => {
+const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, onSaveToTable, totalAmount, selectedTable, orderNote, onOrderNoteChange }) => {
+  const [showNoteModal, setShowNoteModal] = useState(false);
+  const [noteText, setNoteText] = useState(orderNote || '');
+  const textareaRef = useRef(null);
+  
+  useEffect(() => {
+    setNoteText(orderNote || '');
+  }, [orderNote]);
+  
+  useEffect(() => {
+    if (showNoteModal && textareaRef.current) {
+      // Modal açıldığında textarea'ya focus et
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 100);
+    }
+  }, [showNoteModal]);
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-6">
@@ -102,6 +119,26 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
           </span>
         </div>
 
+        {/* Order Note Button */}
+        {cart.length > 0 && (
+          <button
+            onClick={() => setShowNoteModal(true)}
+            className="w-full py-2 px-3 rounded-lg text-sm font-medium transition-all duration-300 bg-amber-50 hover:bg-amber-100 border border-amber-200 hover:border-amber-300 text-amber-700 flex items-center justify-between"
+          >
+            <div className="flex items-center space-x-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              <span>{orderNote ? 'Not Düzenle' : 'Not Ekle'}</span>
+            </div>
+            {orderNote && (
+              <span className="px-2 py-0.5 bg-amber-200 rounded-full text-xs font-bold">
+                ✓
+              </span>
+            )}
+          </button>
+        )}
+
         {selectedTable ? (
           <button
             onClick={onSaveToTable}
@@ -138,6 +175,87 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
           </button>
         )}
       </div>
+
+      {/* Order Note Modal */}
+      {showNoteModal && createPortal(
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-lg flex items-center justify-center z-[999] animate-fade-in px-4">
+          <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl transform animate-scale-in relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500"></div>
+            
+            <button
+              onClick={() => {
+                setShowNoteModal(false);
+                setNoteText(orderNote || '');
+              }}
+              className="absolute top-6 right-6 w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all hover:rotate-90"
+            >
+              <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-orange-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </div>
+              <h2 className="text-2xl font-bold gradient-text mb-2">Sipariş Notu</h2>
+              <p className="text-sm text-gray-500">Sipariş içeriği ile ilgili not ekleyin</p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Not (Örn: Sütü az olacak, Ekstra peynir, vs.)
+                </label>
+                <textarea
+                  ref={textareaRef}
+                  value={noteText}
+                  onChange={(e) => {
+                    const newValue = e.target.value;
+                    setNoteText(newValue);
+                  }}
+                  onInput={(e) => {
+                    // Dokunmatik klavye için input event'ini handle et
+                    const newValue = e.target.value;
+                    setNoteText(newValue);
+                  }}
+                  className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-amber-500 focus:outline-none transition-all resize-none"
+                  placeholder="Sipariş notunuzu buraya yazın..."
+                  rows="4"
+                  maxLength={200}
+                />
+                <p className="text-xs text-gray-400 mt-1 text-right">{noteText.length}/200</p>
+              </div>
+
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => {
+                    setShowNoteModal(false);
+                    setNoteText(orderNote || '');
+                  }}
+                  className="flex-1 px-6 py-3 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-all"
+                >
+                  İptal
+                </button>
+                <button
+                  onClick={() => {
+                    if (onOrderNoteChange) {
+                      onOrderNoteChange(noteText.trim());
+                    }
+                    setShowNoteModal(false);
+                  }}
+                  className="flex-1 px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all transform hover:scale-105"
+                >
+                  Kaydet
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

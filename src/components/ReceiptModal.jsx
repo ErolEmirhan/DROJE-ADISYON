@@ -131,6 +131,13 @@ const ReceiptModal = ({ saleInfo, items, onClose, onPrint }) => {
             ))}
           </div>
 
+          {saleInfo.orderNote && (
+            <div className="mb-3 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+              <p className="text-xs font-semibold text-amber-700 mb-1">📝 Sipariş Notu:</p>
+              <p className="text-xs text-amber-800">{saleInfo.orderNote}</p>
+            </div>
+          )}
+
           <div className="border-t-2 border-gray-400 pt-2 mt-3">
             <div className="flex justify-between text-sm font-bold mb-1">
               <span>TOPLAM:</span>

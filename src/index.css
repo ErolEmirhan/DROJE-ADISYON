@@ -39,7 +39,7 @@
   }
 
   .product-card {
-    @apply card-glass p-4 cursor-pointer transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95;
+    @apply card-glass p-2.5 cursor-pointer transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95;
   }
 
   .cart-item {
@@ -185,5 +185,26 @@
 .exit-text-char {
   animation: glow 2.5s ease-in-out infinite alternate;
   text-shadow: 0 0 20px rgba(255,255,255,0.6), 0 0 40px rgba(255,255,255,0.4);
+}
+
+@keyframes slide-up {
+  0% {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+/* Touch optimization */
+.touch-manipulation {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 

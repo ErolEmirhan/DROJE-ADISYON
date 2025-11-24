@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 const SettingsModal = ({ onClose, onProductsUpdated }) => {
-  const [activeTab, setActiveTab] = useState('password'); // 'password' or 'products'
+  const [activeTab, setActiveTab] = useState('password'); // 'password', 'products', or 'printers'
+  const [printerSubTab, setPrinterSubTab] = useState('usb'); // 'usb' or 'network'
   
   // Password change state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -25,6 +26,16 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const categoryDropdownRef = useRef(null);
   const [deleteConfirmModal, setDeleteConfirmModal] = useState(null); // { productId, productName }
+  const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [categoryError, setCategoryError] = useState('');
+  
+  // Printer management state
+  const [printers, setPrinters] = useState({ usb: [], network: [], all: [] });
+  const [printerAssignments, setPrinterAssignments] = useState([]);
+  const [selectedPrinter, setSelectedPrinter] = useState(null);
+  const [showCategoryAssignModal, setShowCategoryAssignModal] = useState(false);
+  const [assigningCategory, setAssigningCategory] = useState(null);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -45,7 +56,11 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
   useEffect(() => {
     loadCategories();
     loadAllProducts();
-  }, []);
+    if (activeTab === 'printers') {
+      loadPrinters();
+      loadPrinterAssignments();
+    }
+  }, [activeTab]);
 
   const loadCategories = async () => {
     const cats = await window.electronAPI.getCategories();
@@ -59,6 +74,59 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
   const loadAllProducts = async () => {
     const prods = await window.electronAPI.getProducts();
     setProducts(prods);
+  };
+
+  const loadPrinters = async () => {
+    try {
+      const result = await window.electronAPI.getPrinters();
+      if (result && result.success) {
+        setPrinters(result.printers);
+      }
+    } catch (error) {
+      console.error('Yazıcı yükleme hatası:', error);
+    }
+  };
+
+  const loadPrinterAssignments = async () => {
+    try {
+      const assignments = await window.electronAPI.getPrinterAssignments();
+      setPrinterAssignments(assignments || []);
+    } catch (error) {
+      console.error('Yazıcı atamaları yükleme hatası:', error);
+    }
+  };
+
+  const handleAssignCategory = async (printerName, printerType) => {
+    setSelectedPrinter({ name: printerName, type: printerType });
+    setShowCategoryAssignModal(true);
+  };
+
+  const confirmCategoryAssignment = async (categoryId) => {
+    if (!selectedPrinter) return;
+    
+    setAssigningCategory(categoryId);
+    
+    try {
+      const result = await window.electronAPI.assignCategoryToPrinter({
+        printerName: selectedPrinter.name,
+        printerType: selectedPrinter.type,
+        category_id: categoryId
+      });
+      
+      if (result && result.success) {
+        await loadPrinterAssignments();
+        setShowCategoryAssignModal(false);
+        setSelectedPrinter(null);
+        setAssigningCategory(null);
+      } else {
+        alert(result?.error || 'Kategori atanamadı');
+        setAssigningCategory(null);
+      }
+    } catch (error) {
+      console.error('Kategori atama hatası:', error);
+      alert('Kategori atanamadı: ' + error.message);
+      setAssigningCategory(null);
+    }
   };
 
   const handlePasswordChange = async () => {
@@ -194,6 +262,56 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
     setProductForm({ name: '', category_id: selectedCategory?.id || '', price: '', image: '' });
   };
 
+  const handleAddCategory = async () => {
+    setCategoryError('');
+    
+    if (!newCategoryName || newCategoryName.trim() === '') {
+      setCategoryError('Kategori adı boş olamaz');
+      return;
+    }
+
+    // API kontrolü
+    if (!window.electronAPI) {
+      setCategoryError('Electron API yüklenemedi. Lütfen uygulamayı yeniden başlatın.');
+      console.error('window.electronAPI bulunamadı');
+      return;
+    }
+    
+    if (typeof window.electronAPI.createCategory !== 'function') {
+      setCategoryError('Kategori ekleme özelliği yüklenemedi. Lütfen uygulamayı tamamen kapatıp yeniden başlatın.');
+      console.error('window.electronAPI.createCategory fonksiyonu bulunamadı. Mevcut API fonksiyonları:', Object.keys(window.electronAPI || {}));
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.createCategory({ name: newCategoryName.trim() });
+      
+      if (result && result.success) {
+        // Kategorileri yenile
+        await loadCategories();
+        // Yeni eklenen kategoriyi seç
+        if (result.category) {
+          setSelectedCategory(result.category);
+          setProductForm(prev => ({ ...prev, category_id: result.category.id }));
+        }
+        // Modal'ı kapat ve formu temizle
+        setShowAddCategoryModal(false);
+        setNewCategoryName('');
+        setCategoryError('');
+        
+        // Ana uygulamayı yenile
+        if (onProductsUpdated) {
+          onProductsUpdated();
+        }
+      } else {
+        setCategoryError(result?.error || 'Kategori eklenemedi');
+      }
+    } catch (error) {
+      console.error('Kategori ekleme hatası:', error);
+      setCategoryError('Bir hata oluştu: ' + (error.message || 'Bilinmeyen hata'));
+    }
+  };
+
   const filteredProducts = selectedCategory
     ? products.filter(p => p.category_id === selectedCategory.id)
     : products;
@@ -243,6 +361,16 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
             }`}
           >
             📦 Ürün Yönetimi
+          </button>
+          <button
+            onClick={() => setActiveTab('printers')}
+            className={`px-6 py-3 font-medium transition-all ${
+              activeTab === 'printers'
+                ? 'text-purple-600 border-b-2 border-purple-600'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            🖨️ Adisyon Yönetimi
           </button>
         </div>
 
@@ -573,6 +701,17 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                           </div>
                         </button>
                       ))}
+                      <button
+                        onClick={() => setShowAddCategoryModal(true)}
+                        className="px-4 py-2.5 rounded-xl font-medium transition-all duration-300 transform hover:scale-105 bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg hover:shadow-xl border-2 border-green-400"
+                      >
+                        <div className="flex items-center space-x-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                          </svg>
+                          <span>Kategori Ekle</span>
+                        </div>
+                      </button>
                     </div>
                     {selectedCategory && (
                       <div className="mt-3 pt-3 border-t border-purple-200">
@@ -632,8 +771,257 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
               </div>
             </div>
           )}
+
+          {activeTab === 'printers' && (
+            <div className="space-y-6">
+              <h3 className="text-xl font-bold text-gray-800 mb-4">Yazıcı Yönetimi</h3>
+              
+              {/* Sub Tabs */}
+              <div className="flex space-x-3 mb-6">
+                <button
+                  onClick={() => setPrinterSubTab('usb')}
+                  className={`px-6 py-3 rounded-xl font-medium transition-all ${
+                    printerSubTab === 'usb'
+                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg'
+                      : 'bg-white text-gray-700 hover:bg-purple-50 border-2 border-gray-200'
+                  }`}
+                >
+                  🔌 USB ile Bağlı Yazıcılar
+                </button>
+                <button
+                  onClick={() => setPrinterSubTab('network')}
+                  className={`px-6 py-3 rounded-xl font-medium transition-all ${
+                    printerSubTab === 'network'
+                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg'
+                      : 'bg-white text-gray-700 hover:bg-purple-50 border-2 border-gray-200'
+                  }`}
+                >
+                  🌐 Ethernet Yazıcılar
+                </button>
+              </div>
+
+              {/* Printer List */}
+              <div className="space-y-3 max-h-96 overflow-y-auto scrollbar-custom">
+                {(printerSubTab === 'usb' ? printers.usb : printers.network).map((printer) => {
+                  const assignment = printerAssignments.find(
+                    a => a.printerName === printer.name && a.printerType === printerSubTab
+                  );
+                  const assignedCategory = assignment 
+                    ? categories.find(c => c.id === assignment.category_id)
+                    : null;
+
+                  return (
+                    <div
+                      key={printer.name}
+                      className="bg-white rounded-xl p-4 border border-gray-200 hover:shadow-md transition-all flex items-center justify-between"
+                    >
+                      <div className="flex items-center space-x-4 flex-1">
+                        <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-blue-200 to-purple-200 flex items-center justify-center">
+                          <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                          </svg>
+                        </div>
+                        <div className="flex-1">
+                          <h4 className="font-semibold text-gray-800">{printer.displayName || printer.name}</h4>
+                          <p className="text-sm text-gray-500">{printer.description || 'Açıklama yok'}</p>
+                          {assignedCategory ? (
+                            <div className="mt-1">
+                              <span className="inline-flex items-center px-2 py-1 rounded-lg bg-purple-100 text-purple-700 text-xs font-medium">
+                                📋 {assignedCategory.name}
+                              </span>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-gray-400 mt-1">Kategori atanmamış</p>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleAssignCategory(printer.name, printerSubTab)}
+                        className="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:shadow-lg transition-all font-medium"
+                      >
+                        Kategori Ayla
+                      </button>
+                    </div>
+                  );
+                })}
+                
+                {(printerSubTab === 'usb' ? printers.usb : printers.network).length === 0 && (
+                  <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                    <svg className="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                    </svg>
+                    <p className="text-gray-500 font-medium">
+                      {printerSubTab === 'usb' ? 'USB' : 'Ethernet'} yazıcı bulunamadı
+                    </p>
+                    <p className="text-sm text-gray-400 mt-2">Yazıcılarınızı kontrol edin</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Category Assignment Modal */}
+      {showCategoryAssignModal && selectedPrinter && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-lg flex items-center justify-center z-[1000] animate-fade-in px-4">
+          <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl transform animate-scale-in relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-purple-500 via-pink-500 to-blue-500"></div>
+            
+            <button
+              onClick={() => {
+                setShowCategoryAssignModal(false);
+                setSelectedPrinter(null);
+                setAssigningCategory(null);
+              }}
+              className="absolute top-6 right-6 w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+            >
+              <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-800 mb-2">Kategori Ata</h3>
+              <p className="text-gray-600 mb-2">
+                <span className="font-semibold text-purple-600">{selectedPrinter.name}</span>
+              </p>
+              <p className="text-sm text-gray-500">Bu yazıcıya kategori atayın</p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Kategori Seçin
+                </label>
+                <div className="space-y-2 max-h-60 overflow-y-auto scrollbar-custom">
+                  <button
+                    onClick={() => confirmCategoryAssignment(null)}
+                    className={`w-full px-4 py-3 rounded-xl text-left transition-all ${
+                      assigningCategory === null
+                        ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2">
+                      <span>❌ Kategori Atamasını Kaldır</span>
+                    </div>
+                  </button>
+                  {categories.map(category => (
+                    <button
+                      key={category.id}
+                      onClick={() => confirmCategoryAssignment(category.id)}
+                      className={`w-full px-4 py-3 rounded-xl text-left transition-all ${
+                        assigningCategory === category.id
+                          ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <div className={`w-2 h-2 rounded-full ${
+                          assigningCategory === category.id ? 'bg-white' : 'bg-purple-500'
+                        }`}></div>
+                        <span className="font-medium">{category.name}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Category Modal */}
+      {showAddCategoryModal && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-lg flex items-center justify-center z-[1000] animate-fade-in px-4">
+          <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl transform animate-scale-in relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-green-500 via-emerald-500 to-green-500"></div>
+            
+            <button
+              onClick={() => {
+                setShowAddCategoryModal(false);
+                setNewCategoryName('');
+                setCategoryError('');
+              }}
+              className="absolute top-6 right-6 w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+            >
+              <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 bg-gradient-to-br from-green-500 to-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-800 mb-2">Yeni Kategori Ekle</h3>
+              <p className="text-gray-600">Yeni bir ürün kategorisi oluşturun</p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Kategori Adı
+                </label>
+                <input
+                  type="text"
+                  value={newCategoryName}
+                  onChange={(e) => {
+                    setNewCategoryName(e.target.value);
+                    setCategoryError('');
+                  }}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      handleAddCategory();
+                    }
+                  }}
+                  className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-green-500 focus:outline-none transition-all"
+                  placeholder="Kategori adını girin"
+                  autoFocus
+                />
+              </div>
+
+              {categoryError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+                  {categoryError}
+                </div>
+              )}
+
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => {
+                    setShowAddCategoryModal(false);
+                    setNewCategoryName('');
+                    setCategoryError('');
+                  }}
+                  className="flex-1 px-6 py-3 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-all transform hover:scale-105"
+                >
+                  İptal
+                </button>
+                <button
+                  onClick={handleAddCategory}
+                  className="flex-1 px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all transform hover:scale-105"
+                >
+                  <div className="flex items-center justify-center space-x-2">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>Ekle</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmModal && (

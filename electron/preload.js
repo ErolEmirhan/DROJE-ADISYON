@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getCategories: () => ipcRenderer.invoke('get-categories'),
+  createCategory: (categoryData) => ipcRenderer.invoke('create-category', categoryData),
   getProducts: (categoryId) => ipcRenderer.invoke('get-products', categoryId),
   createSale: (saleData) => ipcRenderer.invoke('create-sale', saleData),
   getSales: () => ipcRenderer.invoke('get-sales'),
@@ -29,6 +30,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateProgress: (callback) => ipcRenderer.on('update-download-progress', (event, progress) => callback(progress)),
   // Print API
   printReceipt: (receiptData) => ipcRenderer.invoke('print-receipt', receiptData),
+  // Printer Management API
+  getPrinters: () => ipcRenderer.invoke('get-printers'),
+  assignCategoryToPrinter: (assignmentData) => ipcRenderer.invoke('assign-category-to-printer', assignmentData),
+  getPrinterAssignments: () => ipcRenderer.invoke('get-printer-assignments'),
+  removePrinterAssignment: (printerName, printerType) => ipcRenderer.invoke('remove-printer-assignment', printerName, printerType),
   // Table Order Partial Payment API
   updateTableOrderAmount: (orderId, paidAmount) => ipcRenderer.invoke('update-table-order-amount', orderId, paidAmount),
   createPartialPaymentSale: (saleData) => ipcRenderer.invoke('create-partial-payment-sale', saleData),
