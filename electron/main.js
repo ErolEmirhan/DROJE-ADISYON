@@ -3,9 +3,18 @@ const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
+const express = require('express');
+const cors = require('cors');
+const http = require('http');
+const { Server } = require('socket.io');
+const QRCode = require('qrcode');
+const os = require('os');
 
 let mainWindow;
 let dbPath;
+let apiServer = null;
+let io = null;
+let serverPort = 3000;
 let db = {
   categories: [],
   products: [],
@@ -347,47 +356,106 @@ ipcMain.handle('get-sale-details', (event, saleId) => {
 ipcMain.handle('create-table-order', (event, orderData) => {
   const { items, totalAmount, tableId, tableName, tableType, orderNote } = orderData;
   
-  const now = new Date();
-  const orderDate = now.toLocaleDateString('tr-TR');
-  const orderTime = now.toLocaleTimeString('tr-TR');
+  // Bu masada pending durumunda bir sipariş var mı kontrol et
+  const existingOrder = db.tableOrders.find(
+    o => o.table_id === tableId && o.status === 'pending'
+  );
 
-  // Yeni sipariş ID'si
-  const orderId = db.tableOrders.length > 0 
-    ? Math.max(...db.tableOrders.map(o => o.id)) + 1 
-    : 1;
+  let orderId;
+  let isNewOrder = false;
 
-  // Sipariş ekle
-  db.tableOrders.push({
-    id: orderId,
-    table_id: tableId,
-    table_name: tableName,
-    table_type: tableType,
-    total_amount: totalAmount,
-    order_date: orderDate,
-    order_time: orderTime,
-    status: 'pending', // 'pending', 'completed', 'cancelled'
-    order_note: orderNote || null
-  });
+  if (existingOrder) {
+    // Mevcut siparişe ekle
+    orderId = existingOrder.id;
+    console.log(`📦 [Electron] Mevcut siparişe ekleniyor: Order ID ${orderId}, Masa: ${tableName}`);
+    
+    // Mevcut item'ları kontrol et ve yeni item'ları ekle veya miktarı güncelle
+    items.forEach(newItem => {
+      // Aynı ürün zaten siparişte var mı?
+      const existingItem = db.tableOrderItems.find(
+        oi => oi.order_id === orderId && 
+              oi.product_id === newItem.id && 
+              oi.isGift === (newItem.isGift || false)
+      );
 
-  // Sipariş itemlarını ekle
-  items.forEach(item => {
-    const itemId = db.tableOrderItems.length > 0 
-      ? Math.max(...db.tableOrderItems.map(oi => oi.id)) + 1 
-      : 1;
-      
-    db.tableOrderItems.push({
-      id: itemId,
-      order_id: orderId,
-      product_id: item.id,
-      product_name: item.name,
-      quantity: item.quantity,
-      price: item.price,
-      isGift: item.isGift || false
+      if (existingItem) {
+        // Mevcut item'ın miktarını artır
+        existingItem.quantity += newItem.quantity;
+        console.log(`   ✓ "${newItem.name}" miktarı güncellendi: ${existingItem.quantity}`);
+      } else {
+        // Yeni item ekle
+        const itemId = db.tableOrderItems.length > 0 
+          ? Math.max(...db.tableOrderItems.map(oi => oi.id)) + 1 
+          : 1;
+          
+        db.tableOrderItems.push({
+          id: itemId,
+          order_id: orderId,
+          product_id: newItem.id,
+          product_name: newItem.name,
+          quantity: newItem.quantity,
+          price: newItem.price,
+          isGift: newItem.isGift || false
+        });
+        console.log(`   + "${newItem.name}" eklendi: ${newItem.quantity} adet`);
+      }
     });
-  });
+
+    // Toplam tutarı güncelle (mevcut tutar + yeni tutar)
+    const existingTotal = existingOrder.total_amount || 0;
+    existingOrder.total_amount = existingTotal + totalAmount;
+    
+    // Order note'u güncelle (varsa)
+    if (orderNote) {
+      existingOrder.order_note = existingOrder.order_note 
+        ? `${existingOrder.order_note}\n${orderNote}` 
+        : orderNote;
+    }
+  } else {
+    // Yeni sipariş oluştur
+    isNewOrder = true;
+    const now = new Date();
+    const orderDate = now.toLocaleDateString('tr-TR');
+    const orderTime = now.toLocaleTimeString('tr-TR');
+
+    orderId = db.tableOrders.length > 0 
+      ? Math.max(...db.tableOrders.map(o => o.id)) + 1 
+      : 1;
+
+    db.tableOrders.push({
+      id: orderId,
+      table_id: tableId,
+      table_name: tableName,
+      table_type: tableType,
+      total_amount: totalAmount,
+      order_date: orderDate,
+      order_time: orderTime,
+      status: 'pending', // 'pending', 'completed', 'cancelled'
+      order_note: orderNote || null
+    });
+
+    // Sipariş itemlarını ekle
+    items.forEach(item => {
+      const itemId = db.tableOrderItems.length > 0 
+        ? Math.max(...db.tableOrderItems.map(oi => oi.id)) + 1 
+        : 1;
+        
+      db.tableOrderItems.push({
+        id: itemId,
+        order_id: orderId,
+        product_id: item.id,
+        product_name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+        isGift: item.isGift || false
+      });
+    });
+    
+    console.log(`✨ [Electron] Yeni sipariş oluşturuldu: Order ID ${orderId}, Masa: ${tableName}`);
+  }
 
   saveDatabase();
-  return { success: true, orderId };
+  return { success: true, orderId, isNewOrder };
 });
 
 ipcMain.handle('get-table-orders', (event, tableId) => {
@@ -1748,9 +1816,716 @@ function generateReceiptHTML(receiptData) {
   `;
 }
 
+// Mobil uygulama HTML'i oluştur
+function generateMobileHTML(serverURL) {
+  return `<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>MAKARA - Mobil Sipariş</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
+    .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 20px; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+    h1 { text-align: center; color: #667eea; margin-bottom: 20px; font-size: 24px; }
+    .table-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px; }
+    .table-btn { padding: 20px; border: 2px solid #e0e0e0; border-radius: 15px; background: white; font-size: 18px; font-weight: bold; color: #333; cursor: pointer; transition: all 0.3s; position: relative; }
+    .table-btn:active { border-color: #667eea; background: #f0f4ff; transform: scale(1.05); }
+    .table-btn.selected { border-color: #667eea; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .table-btn.has-order { border-color: #4caf50; background: #e8f5e9; }
+    .table-btn.has-order.selected { border-color: #4caf50; background: linear-gradient(135deg, #4caf50 0%, #45a049 100%); color: white; }
+    .table-btn.has-order::before { content: '●'; position: absolute; top: 5px; right: 5px; color: #4caf50; font-size: 12px; }
+    .table-btn.has-order.selected::before { color: white; }
+    .category-tabs { display: flex; gap: 10px; margin-bottom: 20px; overflow-x: auto; padding-bottom: 10px; }
+    .category-tab { padding: 10px 20px; border: 2px solid #e0e0e0; border-radius: 25px; background: white; font-size: 14px; white-space: nowrap; cursor: pointer; transition: all 0.3s; }
+    .category-tab.active { border-color: #667eea; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px; max-height: 400px; overflow-y: auto; }
+    .product-card { padding: 15px; border: 2px solid #e0e0e0; border-radius: 15px; background: white; cursor: pointer; transition: all 0.3s; }
+    .product-card:active { border-color: #667eea; transform: scale(1.02); }
+    .product-name { font-weight: bold; margin-bottom: 5px; font-size: 16px; }
+    .product-price { color: #667eea; font-weight: bold; font-size: 18px; }
+    .cart { position: fixed; bottom: 0; left: 0; right: 0; background: white; padding: 20px; border-top: 3px solid #667eea; box-shadow: 0 -5px 20px rgba(0,0,0,0.2); max-height: 50vh; overflow-y: auto; }
+    .cart-items { max-height: 200px; overflow-y: auto; margin-bottom: 15px; }
+    .cart-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #e0e0e0; }
+    .cart-item-controls { display: flex; align-items: center; gap: 10px; }
+    .qty-btn { width: 30px; height: 30px; border: 2px solid #667eea; border-radius: 50%; background: white; color: #667eea; font-weight: bold; cursor: pointer; }
+    .send-btn { width: 100%; padding: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 15px; font-size: 18px; font-weight: bold; cursor: pointer; }
+    .loading { text-align: center; padding: 20px; color: #667eea; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📱 MAKARA Mobil Sipariş</h1>
+    <div id="tableSelection">
+      <h2 style="margin-bottom: 15px; font-size: 18px;">Masa Seçin</h2>
+      <div class="table-grid" id="tablesGrid"></div>
+    </div>
+    <div id="orderSection" style="display: none;">
+      <div class="category-tabs" id="categoryTabs"></div>
+      <div class="products-grid" id="productsGrid"></div>
+    </div>
+  </div>
+  <div class="cart" id="cart" style="display: none;">
+    <div class="cart-items" id="cartItems"></div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+      <span style="font-size: 20px; font-weight: bold;">Toplam: <span id="cartTotal">0</span> ₺</span>
+    </div>
+    <button class="send-btn" onclick="sendOrder()">📤 Siparişi Gönder</button>
+  </div>
+  <script>
+    const API_URL = '${serverURL}/api';
+    let selectedTable = null;
+    let categories = [];
+    let products = [];
+    let cart = [];
+    let selectedCategoryId = null;
+    async function loadData() {
+      try {
+        const [catsRes, prodsRes] = await Promise.all([
+          fetch(API_URL + '/categories'),
+          fetch(API_URL + '/products')
+        ]);
+        categories = await catsRes.json();
+        products = await prodsRes.json();
+        const tablesRes = await fetch(API_URL + '/tables');
+        const tables = await tablesRes.json();
+        renderTables(tables);
+        renderCategories();
+      } catch (error) {
+        console.error('Veri yükleme hatası:', error);
+        document.getElementById('tablesGrid').innerHTML = '<div class="loading">❌ Bağlantı hatası</div>';
+      }
+    }
+    function renderTables(tables) {
+      const grid = document.getElementById('tablesGrid');
+      grid.innerHTML = tables.map(table => {
+        // table.id string olabilir (inside-1, outside-1 gibi), bu yüzden tırnak içine al
+        const tableIdStr = typeof table.id === 'string' ? '\\'' + table.id + '\\'' : table.id;
+        const nameStr = table.name.replace(/'/g, "\\'");
+        const typeStr = table.type.replace(/'/g, "\\'");
+        const hasOrderClass = table.hasOrder ? ' has-order' : '';
+        return '<button class="table-btn' + hasOrderClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')">' + table.name + '</button>';
+      }).join('');
+    }
+    function selectTable(id, name, type) {
+      selectedTable = { id, name, type };
+      document.querySelectorAll('.table-btn').forEach(btn => btn.classList.remove('selected'));
+      event.target.classList.add('selected');
+      document.getElementById('tableSelection').style.display = 'none';
+      document.getElementById('orderSection').style.display = 'block';
+      document.getElementById('cart').style.display = 'block';
+      if (categories.length > 0) selectCategory(categories[0].id);
+    }
+    function renderCategories() {
+      const tabs = document.getElementById('categoryTabs');
+      tabs.innerHTML = categories.map(cat => 
+        '<button class="category-tab ' + (selectedCategoryId === cat.id ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')">' + cat.name + '</button>'
+      ).join('');
+    }
+    function selectCategory(categoryId) {
+      selectedCategoryId = categoryId;
+      renderCategories();
+      renderProducts();
+    }
+    function renderProducts() {
+      const filtered = products.filter(p => p.category_id === selectedCategoryId);
+      const grid = document.getElementById('productsGrid');
+      grid.innerHTML = filtered.map(prod => 
+        '<div class="product-card" onclick="addToCart(' + prod.id + ', \\'' + prod.name.replace(/'/g, "\\'") + '\\', ' + prod.price + ')">' +
+          '<div class="product-name">' + prod.name + '</div>' +
+          '<div class="product-price">' + prod.price.toFixed(2) + ' ₺</div>' +
+        '</div>'
+      ).join('');
+    }
+    function addToCart(productId, name, price) {
+      const existing = cart.find(item => item.id === productId);
+      if (existing) existing.quantity++;
+      else cart.push({ id: productId, name, price, quantity: 1 });
+      updateCart();
+    }
+    function updateCart() {
+      const itemsDiv = document.getElementById('cartItems');
+      const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+      itemsDiv.innerHTML = cart.map(item => 
+        '<div class="cart-item">' +
+          '<div><div style="font-weight: bold;">' + item.name + '</div><div style="color: #667eea;">' + item.price.toFixed(2) + ' ₺ x ' + item.quantity + '</div></div>' +
+          '<div class="cart-item-controls">' +
+            '<button class="qty-btn" onclick="changeQuantity(' + item.id + ', -1)">-</button>' +
+            '<span style="min-width: 30px; text-align: center;">' + item.quantity + '</span>' +
+            '<button class="qty-btn" onclick="changeQuantity(' + item.id + ', 1)">+</button>' +
+            '<button class="qty-btn" onclick="removeFromCart(' + item.id + ')" style="background: #ff4444; color: white; border-color: #ff4444;">×</button>' +
+          '</div>' +
+        '</div>'
+      ).join('');
+      document.getElementById('cartTotal').textContent = total.toFixed(2);
+    }
+    function changeQuantity(productId, delta) {
+      const item = cart.find(item => item.id === productId);
+      if (item) { item.quantity += delta; if (item.quantity <= 0) removeFromCart(productId); else updateCart(); }
+    }
+    function removeFromCart(productId) { cart = cart.filter(item => item.id !== productId); updateCart(); }
+    async function sendOrder() {
+      if (!selectedTable || cart.length === 0) { alert('Lütfen masa seçin ve ürün ekleyin'); return; }
+      const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+      try {
+        const response = await fetch(API_URL + '/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: cart, totalAmount, tableId: selectedTable.id, tableName: selectedTable.name, tableType: selectedTable.type })
+        });
+        const result = await response.json();
+        if (result.success) {
+          const message = result.isNewOrder 
+            ? '✅ Yeni sipariş başarıyla oluşturuldu!' 
+            : '✅ Sipariş mevcut siparişe eklendi!';
+          alert(message);
+          cart = []; selectedTable = null; updateCart();
+          document.getElementById('tableSelection').style.display = 'block';
+          document.getElementById('orderSection').style.display = 'none';
+          document.getElementById('cart').style.display = 'none';
+          // Masaları yeniden yükle (aktif durumları güncellenmiş olabilir)
+          loadData();
+        } else alert('❌ Hata: ' + (result.error || 'Sipariş gönderilemedi'));
+      } catch (error) { console.error('Sipariş gönderme hatası:', error); alert('❌ Bağlantı hatası'); }
+    }
+    loadData();
+  </script>
+</body>
+</html>`;
+}
+
+// HTTP Server ve API Setup
+function startAPIServer() {
+  const appExpress = express();
+  appExpress.use(cors());
+  appExpress.use(express.json());
+
+  const server = http.createServer(appExpress);
+  io = new Server(server, {
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"]
+    }
+  });
+
+  // IP adresini al
+  function getLocalIP() {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          return iface.address;
+        }
+      }
+    }
+    return 'localhost';
+  }
+
+  const localIP = getLocalIP();
+  const serverURL = `http://${localIP}:${serverPort}`;
+
+  // API Endpoints
+  // Kategorileri getir
+  appExpress.get('/api/categories', (req, res) => {
+    res.json(db.categories.sort((a, b) => a.order_index - b.order_index));
+  });
+
+  // Ürünleri getir
+  appExpress.get('/api/products', (req, res) => {
+    const categoryId = req.query.category_id;
+    if (categoryId) {
+      res.json(db.products.filter(p => p.category_id === Number(categoryId)));
+    } else {
+      res.json(db.products);
+    }
+  });
+
+  // Masaları getir (TablePanel ile uyumlu format + sipariş durumu)
+  appExpress.get('/api/tables', (req, res) => {
+    // TablePanel'deki masa formatına uygun olarak döndür
+    // inside-1, inside-2, ... inside-20, outside-1, ... outside-20
+    const tables = [];
+    
+    // İç masalar (1-20)
+    for (let i = 1; i <= 20; i++) {
+      const tableId = `inside-${i}`;
+      const hasPendingOrder = db.tableOrders.some(
+        o => o.table_id === tableId && o.status === 'pending'
+      );
+      
+      tables.push({
+        id: tableId,
+        number: i,
+        type: 'inside',
+        name: `İç Masa ${i}`,
+        hasOrder: hasPendingOrder
+      });
+    }
+    
+    // Dış masalar (1-20)
+    for (let i = 1; i <= 20; i++) {
+      const tableId = `outside-${i}`;
+      const hasPendingOrder = db.tableOrders.some(
+        o => o.table_id === tableId && o.status === 'pending'
+      );
+      
+      tables.push({
+        id: tableId,
+        number: i,
+        type: 'outside',
+        name: `Dış Masa ${i}`,
+        hasOrder: hasPendingOrder
+      });
+    }
+    
+    res.json(tables);
+  });
+
+  // PWA Manifest
+  appExpress.get('/manifest.json', (req, res) => {
+    const manifest = {
+      name: 'MAKARA Mobil Sipariş',
+      short_name: 'MAKARA',
+      description: 'Makara POS Mobil Sipariş Uygulaması',
+      start_url: '/mobile',
+      display: 'standalone',
+      background_color: '#667eea',
+      theme_color: '#667eea',
+      orientation: 'portrait',
+      icons: [
+        {
+          src: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iNDAiIGZpbGw9InVybCgjZ3JhZGllbnQwX2xpbmVhcl8xXzEpIi8+CjxwYXRoIGQ9Ik05NiA1MEM4NS41IDUwIDc3IDU4LjUgNzcgNjlWMTIzQzc3IDEzMy41IDg1LjUgMTQyIDk2IDE0MkMxMDYuNSAxNDIgMTE1IDEzMy41IDExNSAxMjNWNjlDMTE1IDU4LjUgMTA2LjUgNTAgOTYgNTBaIiBmaWxsPSJ3aGl0ZSIvPgo8cGF0aCBkPSJNMTE1IDk2SDE0MkMxNTIuNSA5NiAxNjEgMTA0LjUgMTYxIDExNUMxNjEgMTI1LjUgMTUyLjUgMTM0IDE0MiAxMzRIMTE1Vjk2WiIgZmlsbD0id2hpdGUiLz4KPHBhdGggZD0iTTc3IDk2SDUwQzM5LjUgOTYgMzEgMTA0LjUgMzEgMTE1QzMxIDEyNS41IDM5LjUgMTM0IDUwIDEzNEg3N1Y5NloiIGZpbGw9IndoaXRlIi8+CjxkZWZzPgo8bGluZWFyR3JhZGllbnQgaWQ9ImdyYWRpZW50MF9saW5lYXJfMV8xIiB4MT0iMCIgeTE9IjAiIHgyPSIxOTIiIHkyPSIxOTIiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj4KPHN0b3Agc3RvcC1jb2xvcj0iIzY2N2VlYSIvPgo8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiM3NjRiYTIiLz4KPC9saW5lYXJHcmFkaWVudD4KPC9kZWZzPgo8L3N2Zz4K',
+          sizes: '192x192',
+          type: 'image/svg+xml',
+          purpose: 'any maskable'
+        }
+      ]
+    };
+    res.json(manifest);
+  });
+
+  // Service Worker
+  appExpress.get('/sw.js', (req, res) => {
+    const serviceWorker = `
+// MAKARA Mobil Sipariş Service Worker
+const CACHE_NAME = 'makara-mobile-v1';
+const urlsToCache = [
+  '/mobile',
+  '/api/categories',
+  '/api/products',
+  '/api/tables'
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(urlsToCache))
+  );
+});
+
+self.addEventListener('fetch', (event) => {
+  event.respondWith(
+    caches.match(event.request)
+      .then((response) => {
+        // Cache'den döndür veya network'ten al
+        return response || fetch(event.request);
+      })
+  );
+});
+`;
+    res.setHeader('Content-Type', 'application/javascript');
+    res.send(serviceWorker);
+  });
+
+  // Mobil uygulama sayfası
+  appExpress.get('/mobile', (req, res) => {
+    // PWA destekli mobil HTML sayfası
+    const mobileHTML = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#667eea">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MAKARA">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📱</text></svg>">
+  <title>MAKARA - Mobil Sipariş</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
+    .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 20px; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+    h1 { text-align: center; color: #667eea; margin-bottom: 20px; font-size: 24px; }
+    .table-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px; }
+    .table-btn { padding: 20px; border: 2px solid #e0e0e0; border-radius: 15px; background: white; font-size: 18px; font-weight: bold; color: #333; cursor: pointer; transition: all 0.3s; position: relative; }
+    .table-btn:active { border-color: #667eea; background: #f0f4ff; transform: scale(1.05); }
+    .table-btn.selected { border-color: #667eea; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .table-btn.has-order { border-color: #4caf50; background: #e8f5e9; }
+    .table-btn.has-order.selected { border-color: #4caf50; background: linear-gradient(135deg, #4caf50 0%, #45a049 100%); color: white; }
+    .table-btn.has-order::before { content: '●'; position: absolute; top: 5px; right: 5px; color: #4caf50; font-size: 12px; }
+    .table-btn.has-order.selected::before { color: white; }
+    .category-tabs { display: flex; gap: 10px; margin-bottom: 20px; overflow-x: auto; padding-bottom: 10px; }
+    .category-tab { padding: 10px 20px; border: 2px solid #e0e0e0; border-radius: 25px; background: white; font-size: 14px; white-space: nowrap; cursor: pointer; transition: all 0.3s; }
+    .category-tab.active { border-color: #667eea; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px; max-height: 400px; overflow-y: auto; }
+    .product-card { padding: 15px; border: 2px solid #e0e0e0; border-radius: 15px; background: white; cursor: pointer; transition: all 0.3s; }
+    .product-card:active { border-color: #667eea; transform: scale(1.02); }
+    .product-name { font-weight: bold; margin-bottom: 5px; font-size: 16px; }
+    .product-price { color: #667eea; font-weight: bold; font-size: 18px; }
+    .cart { position: fixed; bottom: 0; left: 0; right: 0; background: white; padding: 20px; border-top: 3px solid #667eea; box-shadow: 0 -5px 20px rgba(0,0,0,0.2); max-height: 50vh; overflow-y: auto; }
+    .cart-items { max-height: 200px; overflow-y: auto; margin-bottom: 15px; }
+    .cart-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #e0e0e0; }
+    .cart-item-controls { display: flex; align-items: center; gap: 10px; }
+    .qty-btn { width: 30px; height: 30px; border: 2px solid #667eea; border-radius: 50%; background: white; color: #667eea; font-weight: bold; cursor: pointer; }
+    .send-btn { width: 100%; padding: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 15px; font-size: 18px; font-weight: bold; cursor: pointer; }
+    .loading { text-align: center; padding: 20px; color: #667eea; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📱 MAKARA Mobil Sipariş</h1>
+    <div id="tableSelection">
+      <h2 style="margin-bottom: 15px; font-size: 18px;">Masa Seçin</h2>
+      <div class="table-grid" id="tablesGrid"></div>
+    </div>
+    <div id="orderSection" style="display: none;">
+      <div class="category-tabs" id="categoryTabs"></div>
+      <div class="products-grid" id="productsGrid"></div>
+    </div>
+  </div>
+  <div class="cart" id="cart" style="display: none;">
+    <div class="cart-items" id="cartItems"></div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+      <span style="font-size: 20px; font-weight: bold;">Toplam: <span id="cartTotal">0</span> ₺</span>
+    </div>
+    <button class="send-btn" onclick="sendOrder()">📤 Siparişi Gönder</button>
+  </div>
+  <script>
+    const API_URL = '${serverURL}/api';
+    let selectedTable = null;
+    let categories = [];
+    let products = [];
+    let cart = [];
+    let selectedCategoryId = null;
+    async function loadData() {
+      try {
+        const [catsRes, prodsRes] = await Promise.all([
+          fetch(API_URL + '/categories'),
+          fetch(API_URL + '/products')
+        ]);
+        categories = await catsRes.json();
+        products = await prodsRes.json();
+        const tablesRes = await fetch(API_URL + '/tables');
+        const tables = await tablesRes.json();
+        renderTables(tables);
+        renderCategories();
+      } catch (error) {
+        console.error('Veri yükleme hatası:', error);
+        document.getElementById('tablesGrid').innerHTML = '<div class="loading">❌ Bağlantı hatası</div>';
+      }
+    }
+    function renderTables(tables) {
+      const grid = document.getElementById('tablesGrid');
+      grid.innerHTML = tables.map(table => {
+        // table.id string olabilir (inside-1, outside-1 gibi), bu yüzden tırnak içine al
+        const tableIdStr = typeof table.id === 'string' ? '\\'' + table.id + '\\'' : table.id;
+        const nameStr = table.name.replace(/'/g, "\\'");
+        const typeStr = table.type.replace(/'/g, "\\'");
+        const hasOrderClass = table.hasOrder ? ' has-order' : '';
+        return '<button class="table-btn' + hasOrderClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')">' + table.name + '</button>';
+      }).join('');
+    }
+    function selectTable(id, name, type) {
+      selectedTable = { id, name, type };
+      document.querySelectorAll('.table-btn').forEach(btn => btn.classList.remove('selected'));
+      event.target.classList.add('selected');
+      document.getElementById('tableSelection').style.display = 'none';
+      document.getElementById('orderSection').style.display = 'block';
+      document.getElementById('cart').style.display = 'block';
+      if (categories.length > 0) selectCategory(categories[0].id);
+    }
+    function renderCategories() {
+      const tabs = document.getElementById('categoryTabs');
+      tabs.innerHTML = categories.map(cat => 
+        '<button class="category-tab ' + (selectedCategoryId === cat.id ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')">' + cat.name + '</button>'
+      ).join('');
+    }
+    function selectCategory(categoryId) {
+      selectedCategoryId = categoryId;
+      renderCategories();
+      renderProducts();
+    }
+    function renderProducts() {
+      const filtered = products.filter(p => p.category_id === selectedCategoryId);
+      const grid = document.getElementById('productsGrid');
+      grid.innerHTML = filtered.map(prod => 
+        '<div class="product-card" onclick="addToCart(' + prod.id + ', \\'' + prod.name.replace(/'/g, "\\'") + '\\', ' + prod.price + ')">' +
+          '<div class="product-name">' + prod.name + '</div>' +
+          '<div class="product-price">' + prod.price.toFixed(2) + ' ₺</div>' +
+        '</div>'
+      ).join('');
+    }
+    function addToCart(productId, name, price) {
+      const existing = cart.find(item => item.id === productId);
+      if (existing) existing.quantity++;
+      else cart.push({ id: productId, name, price, quantity: 1 });
+      updateCart();
+    }
+    function updateCart() {
+      const itemsDiv = document.getElementById('cartItems');
+      const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+      itemsDiv.innerHTML = cart.map(item => 
+        '<div class="cart-item">' +
+          '<div><div style="font-weight: bold;">' + item.name + '</div><div style="color: #667eea;">' + item.price.toFixed(2) + ' ₺ x ' + item.quantity + '</div></div>' +
+          '<div class="cart-item-controls">' +
+            '<button class="qty-btn" onclick="changeQuantity(' + item.id + ', -1)">-</button>' +
+            '<span style="min-width: 30px; text-align: center;">' + item.quantity + '</span>' +
+            '<button class="qty-btn" onclick="changeQuantity(' + item.id + ', 1)">+</button>' +
+            '<button class="qty-btn" onclick="removeFromCart(' + item.id + ')" style="background: #ff4444; color: white; border-color: #ff4444;">×</button>' +
+          '</div>' +
+        '</div>'
+      ).join('');
+      document.getElementById('cartTotal').textContent = total.toFixed(2);
+    }
+    function changeQuantity(productId, delta) {
+      const item = cart.find(item => item.id === productId);
+      if (item) { item.quantity += delta; if (item.quantity <= 0) removeFromCart(productId); else updateCart(); }
+    }
+    function removeFromCart(productId) { cart = cart.filter(item => item.id !== productId); updateCart(); }
+    async function sendOrder() {
+      if (!selectedTable || cart.length === 0) { alert('Lütfen masa seçin ve ürün ekleyin'); return; }
+      const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+      try {
+        const response = await fetch(API_URL + '/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: cart, totalAmount, tableId: selectedTable.id, tableName: selectedTable.name, tableType: selectedTable.type })
+        });
+        const result = await response.json();
+        if (result.success) {
+          const message = result.isNewOrder 
+            ? '✅ Yeni sipariş başarıyla oluşturuldu!' 
+            : '✅ Sipariş mevcut siparişe eklendi!';
+          alert(message);
+          cart = []; selectedTable = null; updateCart();
+          document.getElementById('tableSelection').style.display = 'block';
+          document.getElementById('orderSection').style.display = 'none';
+          document.getElementById('cart').style.display = 'none';
+          // Masaları yeniden yükle (aktif durumları güncellenmiş olabilir)
+          loadData();
+        } else alert('❌ Hata: ' + (result.error || 'Sipariş gönderilemedi'));
+      } catch (error) { console.error('Sipariş gönderme hatası:', error); alert('❌ Bağlantı hatası'); }
+    }
+    loadData();
+    
+    // PWA Install Prompt
+    let deferredPrompt;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      console.log('📱 Uygulama yükleme hazır');
+    });
+    
+    // Service Worker kayıt
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((registration) => {
+            console.log('✅ Service Worker kaydedildi:', registration.scope);
+          })
+          .catch((error) => {
+            console.log('❌ Service Worker kayıt hatası:', error);
+          });
+      });
+    }
+  </script>
+</body>
+</html>`;
+    res.send(mobileHTML);
+  });
+
+  // Sipariş oluştur veya mevcut siparişe ekle
+  appExpress.post('/api/orders', async (req, res) => {
+    try {
+      const { items, totalAmount, tableId, tableName, tableType, orderNote } = req.body;
+      
+      // Bu masada pending durumunda bir sipariş var mı kontrol et
+      const existingOrder = db.tableOrders.find(
+        o => o.table_id === tableId && o.status === 'pending'
+      );
+
+      let orderId;
+      let isNewOrder = false;
+
+      if (existingOrder) {
+        // Mevcut siparişe ekle
+        orderId = existingOrder.id;
+        console.log(`📦 Mevcut siparişe ekleniyor: Order ID ${orderId}, Masa: ${tableName}`);
+        
+        // Mevcut item'ları kontrol et ve yeni item'ları ekle veya miktarı güncelle
+        items.forEach(newItem => {
+          // Aynı ürün zaten siparişte var mı?
+          const existingItem = db.tableOrderItems.find(
+            oi => oi.order_id === orderId && 
+                  oi.product_id === newItem.id && 
+                  oi.isGift === (newItem.isGift || false)
+          );
+
+          if (existingItem) {
+            // Mevcut item'ın miktarını artır
+            existingItem.quantity += newItem.quantity;
+            console.log(`   ✓ "${newItem.name}" miktarı güncellendi: ${existingItem.quantity}`);
+          } else {
+            // Yeni item ekle
+            const itemId = db.tableOrderItems.length > 0 
+              ? Math.max(...db.tableOrderItems.map(oi => oi.id)) + 1 
+              : 1;
+              
+            db.tableOrderItems.push({
+              id: itemId,
+              order_id: orderId,
+              product_id: newItem.id,
+              product_name: newItem.name,
+              quantity: newItem.quantity,
+              price: newItem.price,
+              isGift: newItem.isGift || false
+            });
+            console.log(`   + "${newItem.name}" eklendi: ${newItem.quantity} adet`);
+          }
+        });
+
+        // Toplam tutarı güncelle (mevcut tutar + yeni tutar)
+        const existingTotal = existingOrder.total_amount || 0;
+        existingOrder.total_amount = existingTotal + totalAmount;
+        
+        // Order note'u güncelle (varsa)
+        if (orderNote) {
+          existingOrder.order_note = existingOrder.order_note 
+            ? `${existingOrder.order_note}\n${orderNote}` 
+            : orderNote;
+        }
+      } else {
+        // Yeni sipariş oluştur
+        isNewOrder = true;
+        const now = new Date();
+        const orderDate = now.toLocaleDateString('tr-TR');
+        const orderTime = now.toLocaleTimeString('tr-TR');
+
+        orderId = db.tableOrders.length > 0 
+          ? Math.max(...db.tableOrders.map(o => o.id)) + 1 
+          : 1;
+
+        db.tableOrders.push({
+          id: orderId,
+          table_id: tableId,
+          table_name: tableName,
+          table_type: tableType,
+          total_amount: totalAmount,
+          order_date: orderDate,
+          order_time: orderTime,
+          status: 'pending',
+          order_note: orderNote || null
+        });
+
+        items.forEach(item => {
+          const itemId = db.tableOrderItems.length > 0 
+            ? Math.max(...db.tableOrderItems.map(oi => oi.id)) + 1 
+            : 1;
+            
+          db.tableOrderItems.push({
+            id: itemId,
+            order_id: orderId,
+            product_id: item.id,
+            product_name: item.name,
+            quantity: item.quantity,
+            price: item.price,
+            isGift: item.isGift || false
+          });
+        });
+        
+        console.log(`✨ Yeni sipariş oluşturuldu: Order ID ${orderId}, Masa: ${tableName}`);
+      }
+
+      saveDatabase();
+
+      // Final tutarı al (mevcut siparişe eklendiyse güncellenmiş tutar)
+      const finalTotalAmount = db.tableOrders.find(o => o.id === orderId)?.total_amount || totalAmount;
+      
+      // WebSocket ile Electron uygulamasına bildir
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('new-order-created', { 
+          orderId, 
+          tableId,
+          tableName, 
+          tableType,
+          totalAmount: finalTotalAmount,
+          isNewOrder
+        });
+      }
+      
+      // WebSocket üzerinden de bildir (eğer bağlı client varsa)
+      if (io) {
+        io.emit('new-order', {
+          orderId,
+          tableId,
+          tableName,
+          tableType,
+          totalAmount: finalTotalAmount,
+          isNewOrder
+        });
+      }
+
+      // Yazdırma işlemini tetikle
+      // Eğer mevcut siparişe eklendiyse, sadece yeni eklenen item'ları yazdır
+      // (Tüm siparişi yazdırmak için tüm item'ları alabiliriz ama genelde sadece yeni eklenenleri yazdırmak daha mantıklı)
+      const order = db.tableOrders.find(o => o.id === orderId);
+      const receiptData = {
+        items: items, // Sadece yeni eklenen item'lar
+        totalAmount: totalAmount, // Sadece yeni eklenen tutar
+        tableName: tableName,
+        tableType: tableType,
+        order_id: orderId,
+        sale_date: order?.order_date || new Date().toLocaleDateString('tr-TR'),
+        sale_time: order?.order_time || new Date().toLocaleTimeString('tr-TR'),
+        orderNote: orderNote,
+        isAddition: !isNewOrder // Mevcut siparişe ekleme mi?
+      };
+
+      // Yazdırma işlemini Electron'a gönder
+      // print-receipt handler'ını doğrudan çağır
+      if (mainWindow && mainWindow.webContents) {
+        // IPC üzerinden print-receipt'i çağır
+        mainWindow.webContents.send('mobile-print-request', receiptData);
+      }
+
+      res.json({ 
+        success: true, 
+        orderId,
+        isNewOrder,
+        message: isNewOrder ? 'Yeni sipariş oluşturuldu' : 'Mevcut siparişe eklendi'
+      });
+    } catch (error) {
+      console.error('Sipariş oluşturma hatası:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Server'ı başlat
+  server.listen(serverPort, () => {
+    console.log(`\n🚀 API Server başlatıldı: ${serverURL}`);
+    console.log(`📱 Mobil cihazlardan erişim için: ${serverURL}/mobile\n`);
+  });
+
+  apiServer = server;
+  return { serverURL, localIP };
+}
+
 app.whenReady().then(() => {
   initDatabase();
   createWindow();
+  startAPIServer();
 
   // Uygulama paketlenmişse güncelleme kontrolü yap
   if (app.isPackaged) {
@@ -2031,28 +2806,67 @@ ipcMain.handle('get-printers', async () => {
 ipcMain.handle('assign-category-to-printer', (event, assignmentData) => {
   const { printerName, printerType, category_id } = assignmentData;
   
+  console.log('\n=== KATEGORİ ATAMA İŞLEMİ BAŞLADI ===');
+  console.log('Yazıcı:', printerName, 'Tip:', printerType, 'Kategori ID:', category_id);
+  
   if (!printerName || !printerType) {
     return { success: false, error: 'Yazıcı adı ve tipi gerekli' };
   }
   
-  // Mevcut atamayı bul veya yeni oluştur
-  const existingIndex = db.printerAssignments.findIndex(
-    a => a.printerName === printerName && a.printerType === printerType
-  );
+  if (!category_id) {
+    return { success: false, error: 'Kategori ID gerekli' };
+  }
   
+  // category_id'yi number'a çevir (tip uyumluluğu için)
+  const categoryIdNum = Number(category_id);
+  
+  // Önce bu kategoriye atanmış başka bir yazıcı var mı kontrol et
+  // Bir kategoriye sadece bir yazıcı atanabilir
+  const existingCategoryAssignment = db.printerAssignments.find(a => {
+    const existingCategoryId = Number(a.category_id);
+    return existingCategoryId === categoryIdNum;
+  });
+  
+  console.log('Mevcut kategori ataması:', existingCategoryAssignment);
+  
+  if (existingCategoryAssignment) {
+    // Eğer aynı yazıcı zaten bu kategoriye atanmışsa, değişiklik yapma
+    if (existingCategoryAssignment.printerName === printerName && 
+        existingCategoryAssignment.printerType === printerType) {
+      console.log('Bu yazıcı zaten bu kategoriye atanmış, değişiklik yapılmıyor');
+      return { success: true, assignment: existingCategoryAssignment, message: 'Bu yazıcı zaten bu kategoriye atanmış' };
+    }
+    
+    // Farklı bir yazıcı atanmışsa, önce onu kaldır
+    const oldIndex = db.printerAssignments.findIndex(a => {
+      const existingCategoryId = Number(a.category_id);
+      return existingCategoryId === categoryIdNum;
+    });
+    if (oldIndex >= 0) {
+      console.log('Eski atama kaldırılıyor, index:', oldIndex);
+      db.printerAssignments.splice(oldIndex, 1);
+    }
+  }
+  
+  // Yeni atamayı ekle (bir yazıcı birden fazla kategoriye atanabilir)
   const assignment = {
     printerName,
     printerType,
-    category_id: category_id || null
+    category_id: categoryIdNum  // Number olarak sakla
   };
   
-  if (existingIndex >= 0) {
-    db.printerAssignments[existingIndex] = assignment;
-  } else {
-    db.printerAssignments.push(assignment);
-  }
+  console.log('Yeni atama ekleniyor:', assignment);
+  db.printerAssignments.push(assignment);
+  
+  console.log('Toplam atama sayısı:', db.printerAssignments.length);
+  console.log('Bu yazıcıya atanmış kategoriler:', 
+    db.printerAssignments
+      .filter(a => a.printerName === printerName && a.printerType === printerType)
+      .map(a => a.category_id)
+  );
   
   saveDatabase();
+  console.log('=== KATEGORİ ATAMA İŞLEMİ TAMAMLANDI ===\n');
   return { success: true, assignment };
 });
 
@@ -2060,10 +2874,22 @@ ipcMain.handle('get-printer-assignments', () => {
   return db.printerAssignments;
 });
 
-ipcMain.handle('remove-printer-assignment', (event, printerName, printerType) => {
-  const index = db.printerAssignments.findIndex(
-    a => a.printerName === printerName && a.printerType === printerType
-  );
+ipcMain.handle('remove-printer-assignment', (event, printerName, printerType, categoryId) => {
+  // Eğer categoryId verilmişse, sadece o kategori için atamayı kaldır
+  // Eğer verilmemişse, yazıcı adı ve tipine göre tüm atamaları kaldır (geriye dönük uyumluluk)
+  let index;
+  
+  if (categoryId !== undefined && categoryId !== null) {
+    // Kategori bazlı kaldırma
+    index = db.printerAssignments.findIndex(
+      a => a.category_id === categoryId
+    );
+  } else {
+    // Yazıcı bazlı kaldırma (tüm kategorilerden)
+    index = db.printerAssignments.findIndex(
+      a => a.printerName === printerName && a.printerType === printerType
+    );
+  }
   
   if (index >= 0) {
     db.printerAssignments.splice(index, 1);
@@ -2563,9 +3389,108 @@ function generateAdisyonHTML(items, adisyonData) {
 
 ipcMain.handle('quit-app', () => {
   saveDatabase();
+  if (apiServer) {
+    apiServer.close();
+  }
   setTimeout(() => {
     app.quit();
   }, 500);
   return { success: true };
+});
+
+// Mobil API Server IPC Handlers
+ipcMain.handle('get-server-url', () => {
+  if (!apiServer) {
+    return { success: false, error: 'Server başlatılmadı' };
+  }
+  const interfaces = os.networkInterfaces();
+  let localIP = 'localhost';
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        localIP = iface.address;
+        break;
+      }
+    }
+    if (localIP !== 'localhost') break;
+  }
+  const serverURL = `http://${localIP}:${serverPort}`;
+  return { success: true, url: serverURL, ip: localIP, port: serverPort };
+});
+
+ipcMain.handle('generate-qr-code', async () => {
+  try {
+    const interfaces = os.networkInterfaces();
+    let localIP = 'localhost';
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          localIP = iface.address;
+          break;
+        }
+      }
+      if (localIP !== 'localhost') break;
+    }
+    const serverURL = `http://${localIP}:${serverPort}/mobile`;
+    const qrCodeDataURL = await QRCode.toDataURL(serverURL, {
+      width: 400,
+      margin: 2,
+      color: {
+        dark: '#000000',
+        light: '#FFFFFF'
+      }
+    });
+    return { success: true, qrCode: qrCodeDataURL, url: serverURL };
+  } catch (error) {
+    console.error('QR kod oluşturma hatası:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Mobil cihazdan gelen yazdırma komutunu işle
+ipcMain.on('mobile-print-request', async (event, receiptData) => {
+  console.log('\n=== MOBİL YAZDIRMA İSTEĞİ ALINDI ===');
+  console.log('📄 ReceiptData:', JSON.stringify(receiptData, null, 2));
+  
+  // print-receipt handler'ını çağır (event parametresi null olabilir)
+  try {
+    // print-receipt handler fonksiyonunu doğrudan çağır
+    // Handler'ın içeriğini ayrı bir fonksiyon olarak çıkarıp buradan çağıracağız
+    // Şimdilik basit bir yazdırma yapalım - sadece kasa yazıcısına
+    const cashierPrinter = db.settings.cashierPrinter;
+    
+    if (!cashierPrinter || !cashierPrinter.printerName) {
+      console.error('❌ Kasa yazıcısı ayarlanmamış!');
+      return;
+    }
+    
+    // Basit yazdırma - tüm ürünleri kasa yazıcısına yazdır
+    const totalAmount = receiptData.items.reduce((sum, item) => {
+      if (item.isGift) return sum;
+      return sum + (item.price * item.quantity);
+    }, 0);
+    
+    const cashierReceiptData = {
+      ...receiptData,
+      items: receiptData.items,
+      totalAmount: totalAmount
+    };
+    
+    const result = await printToPrinter(
+      cashierPrinter.printerName, 
+      cashierPrinter.printerType, 
+      cashierReceiptData, 
+      false, // isProductionReceipt = false (tam fiş)
+      null
+    );
+    
+    if (result.success) {
+      console.log(`✅ Mobil fiş yazdırma başarılı`);
+    } else {
+      console.error(`❌ Mobil fiş yazdırma başarısız: ${result.error}`);
+    }
+  } catch (error) {
+    console.error('❌ Mobil yazdırma hatası:', error);
+  }
 });
 

@@ -36,13 +36,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPrinters: () => ipcRenderer.invoke('get-printers'),
   assignCategoryToPrinter: (assignmentData) => ipcRenderer.invoke('assign-category-to-printer', assignmentData),
   getPrinterAssignments: () => ipcRenderer.invoke('get-printer-assignments'),
-  removePrinterAssignment: (printerName, printerType) => ipcRenderer.invoke('remove-printer-assignment', printerName, printerType),
+  removePrinterAssignment: (printerName, printerType, categoryId) => ipcRenderer.invoke('remove-printer-assignment', printerName, printerType, categoryId),
   setCashierPrinter: (printerData) => ipcRenderer.invoke('set-cashier-printer', printerData),
   getCashierPrinter: () => ipcRenderer.invoke('get-cashier-printer'),
   // Table Order Partial Payment API
   updateTableOrderAmount: (orderId, paidAmount) => ipcRenderer.invoke('update-table-order-amount', orderId, paidAmount),
   createPartialPaymentSale: (saleData) => ipcRenderer.invoke('create-partial-payment-sale', saleData),
   // Exit API
-  quitApp: () => ipcRenderer.invoke('quit-app')
+  quitApp: () => ipcRenderer.invoke('quit-app'),
+  // Mobile API
+  getServerURL: () => ipcRenderer.invoke('get-server-url'),
+  generateQRCode: () => ipcRenderer.invoke('generate-qr-code'),
+  // Real-time updates
+  onNewOrderCreated: (callback) => {
+    ipcRenderer.on('new-order-created', (event, data) => callback(data));
+    // Cleanup function döndür
+    return () => {
+      ipcRenderer.removeAllListeners('new-order-created');
+    };
+  }
 });
 

@@ -10,6 +10,9 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showSettingsSplash, setShowSettingsSplash] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [showMobileModal, setShowMobileModal] = useState(false);
+  const [qrCode, setQrCode] = useState(null);
+  const [serverURL, setServerURL] = useState('');
   const menuRef = useRef(null);
 
   // Dışarı tıklayınca menüyü kapat
@@ -50,6 +53,22 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
     setShowPinModal(false);
   };
 
+  const handleOpenMobileModal = async () => {
+    setShowMobileModal(true);
+    try {
+      const result = await window.electronAPI.generateQRCode();
+      if (result && result.success) {
+        setQrCode(result.qrCode);
+        setServerURL(result.url);
+      } else {
+        alert('QR kod oluşturulamadı: ' + (result?.error || 'Bilinmeyen hata'));
+      }
+    } catch (error) {
+      console.error('QR kod oluşturma hatası:', error);
+      alert('QR kod oluşturulamadı');
+    }
+  };
+
   return (
     <nav className="h-20 bg-white/90 backdrop-blur-xl border-b border-purple-200 px-8 flex items-center justify-between shadow-lg relative z-50">
       <div className="flex items-center space-x-4">
@@ -73,6 +92,17 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
       </div>
 
       <div className="flex items-center space-x-4">
+        <button
+          onClick={handleOpenMobileModal}
+          className="px-6 py-3 rounded-xl font-medium transition-all duration-300 bg-gradient-to-r from-blue-500 to-cyan-500 text-white hover:shadow-lg"
+        >
+          <div className="flex items-center space-x-2">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+            </svg>
+            <span>Mobil Personel</span>
+          </div>
+        </button>
         <button
           onClick={() => setCurrentView('tables')}
           className={`px-6 py-3 rounded-xl font-medium transition-all duration-300 ${
@@ -302,6 +332,61 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
           onClose={() => setShowSettingsModal(false)}
           onProductsUpdated={onProductsUpdated}
         />
+      )}
+
+      {/* Mobil Personel Modal */}
+      {showMobileModal && createPortal(
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-lg flex items-center justify-center z-[1000] animate-fade-in px-4">
+          <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl transform animate-scale-in relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 via-cyan-500 to-blue-500"></div>
+            
+            <button
+              onClick={() => {
+                setShowMobileModal(false);
+                setQrCode(null);
+                setServerURL('');
+              }}
+              className="absolute top-6 right-6 w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+            >
+              <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-800 mb-2">Mobil Personel</h3>
+              <p className="text-sm text-gray-500">Telefonunuzla QR kodu okutun</p>
+            </div>
+
+            <div className="space-y-4">
+              {qrCode ? (
+                <>
+                  <div className="flex justify-center">
+                    <img src={qrCode} alt="QR Code" className="w-64 h-64 border-4 border-blue-200 rounded-xl" />
+                  </div>
+                  <div className="bg-blue-50 rounded-xl p-4">
+                    <p className="text-xs text-gray-600 mb-2 text-center">Veya bu adresi tarayıcıya yazın:</p>
+                    <p className="text-sm font-mono text-blue-600 text-center break-all">{serverURL}</p>
+                  </div>
+                  <p className="text-xs text-gray-500 text-center">
+                    📱 Aynı WiFi ağına bağlı olduğunuzdan emin olun
+                  </p>
+                </>
+              ) : (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+                  <p className="mt-4 text-gray-600">QR kod oluşturuluyor...</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </nav>
   );

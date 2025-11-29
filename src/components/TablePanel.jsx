@@ -30,19 +30,29 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
   // Masa siparişlerini yükle
   useEffect(() => {
     loadTableOrders();
+    
+    // Yeni sipariş geldiğinde dinle (mobil cihazdan gelen siparişler için)
+    if (window.electronAPI && window.electronAPI.onNewOrderCreated) {
+      const unsubscribe = window.electronAPI.onNewOrderCreated((data) => {
+        console.log('📱 Yeni sipariş alındı (mobil):', data);
+        // Siparişleri yenile (kısa bir gecikme ile veritabanının güncellenmesini bekle)
+        setTimeout(() => {
+          loadTableOrders();
+        }, 500);
+      });
+      
+      return () => {
+        if (unsubscribe && typeof unsubscribe === 'function') {
+          unsubscribe();
+        }
+      };
+    }
   }, []);
 
   // Masa tipi değiştiğinde siparişleri yenile
   useEffect(() => {
     loadTableOrders();
   }, [selectedType]);
-
-  // Refresh trigger değiştiğinde siparişleri yenile
-  useEffect(() => {
-    if (refreshTrigger) {
-      loadTableOrders();
-    }
-  }, [refreshTrigger]);
 
   // Refresh trigger değiştiğinde siparişleri yenile
   useEffect(() => {
@@ -90,6 +100,22 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
       handleViewOrder(table);
     } else {
       // Sipariş yoksa yeni sipariş oluştur
+      onSelectTable(table);
+    }
+  };
+
+  // Sipariş ekle - mevcut siparişe yeni ürünler eklemek için
+  const handleAddItems = () => {
+    if (!selectedOrder) return;
+    
+    // Masayı bul
+    const table = tables.find(t => t.id === selectedOrder.table_id);
+    if (table) {
+      // Modal'ı kapat
+      setShowModal(false);
+      setSelectedOrder(null);
+      setOrderItems([]);
+      // Masayı seç ve sipariş ekleme moduna geç
       onSelectTable(table);
     }
   };
@@ -355,6 +381,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
           onCompleteTable={handleCompleteTable}
           onPartialPayment={handlePartialPayment}
           onRequestAdisyon={handleRequestAdisyon}
+          onAddItems={handleAddItems}
         />
       )}
 

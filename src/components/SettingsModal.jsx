@@ -38,6 +38,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
   const [showCategoryAssignModal, setShowCategoryAssignModal] = useState(false);
   const [assigningCategory, setAssigningCategory] = useState(null);
   const [cashierPrinter, setCashierPrinter] = useState(null);
+  const [selectedCategories, setSelectedCategories] = useState([]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -93,6 +94,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
   const loadPrinterAssignments = async () => {
     try {
       const assignments = await window.electronAPI.getPrinterAssignments();
+      console.log('Yazıcı atamaları yüklendi:', assignments);
       setPrinterAssignments(assignments || []);
     } catch (error) {
       console.error('Yazıcı atamaları yükleme hatası:', error);
@@ -133,34 +135,168 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
 
   const handleAssignCategory = async (printerName, printerType) => {
     setSelectedPrinter({ name: printerName, type: printerType });
+    // Bu yazıcıya zaten atanmış kategorileri yükle
+    const existingAssignments = printerAssignments.filter(
+      a => a.printerName === printerName && a.printerType === printerType
+    );
+    // category_id'leri number'a çevir (tip uyumluluğu için)
+    const existingCategoryIds = existingAssignments.map(a => Number(a.category_id));
+    console.log('Modal açılıyor - Mevcut atamalar:', existingCategoryIds);
+    setSelectedCategories(existingCategoryIds);
     setShowCategoryAssignModal(true);
   };
 
-  const confirmCategoryAssignment = async (categoryId) => {
+  const toggleCategorySelection = (categoryId) => {
+    setSelectedCategories(prev => {
+      const newSelection = prev.includes(categoryId)
+        ? prev.filter(id => id !== categoryId)
+        : [...prev, categoryId];
+      console.log('Kategori seçimi değişti:', categoryId, 'Yeni seçim:', newSelection);
+      return newSelection;
+    });
+  };
+
+  const confirmCategoryAssignment = async () => {
     if (!selectedPrinter) return;
     
-    setAssigningCategory(categoryId);
+    console.log('Kategori atama başlatılıyor - Seçilen kategoriler:', selectedCategories);
+    
+    if (selectedCategories.length === 0) {
+      alert('Lütfen en az bir kategori seçin');
+      return;
+    }
+    
+    setAssigningCategory(true);
     
     try {
-      const result = await window.electronAPI.assignCategoryToPrinter({
-        printerName: selectedPrinter.name,
-        printerType: selectedPrinter.type,
-        category_id: categoryId
-      });
+      // Önce bu yazıcıya zaten atanmış kategorileri bul
+      const existingAssignments = printerAssignments.filter(
+        a => a.printerName === selectedPrinter.name && a.printerType === selectedPrinter.type
+      );
+      // Tip uyumluluğu için number'a çevir
+      const existingCategoryIds = existingAssignments.map(a => Number(a.category_id));
       
-      if (result && result.success) {
-        await loadPrinterAssignments();
-        setShowCategoryAssignModal(false);
-        setSelectedPrinter(null);
-        setAssigningCategory(null);
-      } else {
-        alert(result?.error || 'Kategori atanamadı');
-        setAssigningCategory(null);
+      console.log('Mevcut atamalar:', existingCategoryIds);
+      console.log('Seçilen kategoriler:', selectedCategories);
+      
+      // Kaldırılacak kategoriler (eski atamalarda var ama yeni seçimde yok)
+      const toRemove = existingCategoryIds.filter(id => !selectedCategories.includes(id));
+      
+      // Eklenecek kategoriler (yeni seçimde var ama eski atamalarda yok)
+      const toAdd = selectedCategories.filter(id => !existingCategoryIds.includes(id));
+      
+      console.log('Kaldırılacak kategoriler:', toRemove);
+      console.log('Eklenecek kategoriler:', toAdd);
+      
+      // Önce kaldırılacak kategorileri kaldır
+      for (const categoryId of toRemove) {
+        const assignment = existingAssignments.find(a => a.category_id === categoryId);
+        if (assignment) {
+          const result = await window.electronAPI.removePrinterAssignment(
+            assignment.printerName,
+            assignment.printerType,
+            categoryId
+          );
+          if (!result || !result.success) {
+            console.error('Kategori kaldırma hatası:', categoryId, result);
+          }
+        }
       }
+      
+      // Sonra eklenecek kategorileri ekle - hepsini sırayla ekle
+      const addResults = [];
+      console.log(`Toplam ${toAdd.length} kategori eklenecek`);
+      
+      for (let i = 0; i < toAdd.length; i++) {
+        const categoryId = toAdd[i];
+        console.log(`[${i + 1}/${toAdd.length}] Kategori ekleniyor:`, categoryId, 'Tip:', typeof categoryId);
+        
+        try {
+          const result = await window.electronAPI.assignCategoryToPrinter({
+            printerName: selectedPrinter.name,
+            printerType: selectedPrinter.type,
+            category_id: categoryId
+          });
+          
+          addResults.push({ categoryId, result });
+          
+          if (!result || !result.success) {
+            console.error('Kategori ekleme hatası:', categoryId, result);
+            throw new Error(result?.error || `Kategori ${categoryId} atanamadı`);
+          }
+          
+          console.log(`✓ Kategori ${categoryId} başarıyla eklendi`);
+          
+          // Her atama arasında kısa bir bekleme (race condition önlemek için)
+          if (i < toAdd.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+        } catch (error) {
+          console.error(`Kategori ${categoryId} eklenirken hata:`, error);
+          throw error;
+        }
+      }
+      
+      console.log('Tüm kategoriler eklendi:', addResults);
+      
+      // Veritabanını yeniden yükle
+      await loadPrinterAssignments();
+      
+      setShowCategoryAssignModal(false);
+      setSelectedPrinter(null);
+      setAssigningCategory(null);
+      setSelectedCategories([]);
+      
+      const addedCount = toAdd.length;
+      const removedCount = toRemove.length;
+      let message = '';
+      if (addedCount > 0 && removedCount > 0) {
+        message = `${addedCount} kategori eklendi, ${removedCount} kategori kaldırıldı`;
+      } else if (addedCount > 0) {
+        message = `${addedCount} kategori başarıyla atandı`;
+      } else if (removedCount > 0) {
+        message = `${removedCount} kategori kaldırıldı`;
+      }
+      alert(message || 'Kategori atamaları güncellendi');
     } catch (error) {
       console.error('Kategori atama hatası:', error);
       alert('Kategori atanamadı: ' + error.message);
       setAssigningCategory(null);
+      // Hata durumunda da veritabanını yeniden yükle
+      await loadPrinterAssignments();
+    }
+  };
+
+  const handleRemoveCategoryAssignment = async (categoryId) => {
+    if (!categoryId) return;
+    
+    if (!confirm(`Bu kategorinin yazıcı atamasını kaldırmak istediğinize emin misiniz?`)) {
+      return;
+    }
+    
+    try {
+      // Kategori bazlı kaldırma için categoryId kullan
+      const assignment = printerAssignments.find(a => a.category_id === categoryId);
+      if (!assignment) {
+        alert('Atama bulunamadı');
+        return;
+      }
+      
+      const result = await window.electronAPI.removePrinterAssignment(
+        assignment.printerName,
+        assignment.printerType,
+        categoryId
+      );
+      
+      if (result && result.success) {
+        await loadPrinterAssignments();
+        alert('Kategori ataması kaldırıldı');
+      } else {
+        alert(result?.error || 'Kategori ataması kaldırılamadı');
+      }
+    } catch (error) {
+      console.error('Kategori ataması kaldırma hatası:', error);
+      alert('Kategori ataması kaldırılamadı: ' + error.message);
     }
   };
 
@@ -883,12 +1019,17 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
               {/* Printer List */}
               <div className="space-y-3 max-h-96 overflow-y-auto scrollbar-custom">
                 {(printerSubTab === 'usb' ? printers.usb : printers.network).map((printer) => {
-                  const assignment = printerAssignments.find(
+                  // Bir yazıcı birden fazla kategoriye atanabilir
+                  const assignments = printerAssignments.filter(
                     a => a.printerName === printer.name && a.printerType === printerSubTab
                   );
-                  const assignedCategory = assignment 
-                    ? categories.find(c => c.id === assignment.category_id)
-                    : null;
+                  // Tip uyumluluğu için number'a çevir
+                  const assignedCategories = assignments
+                    .map(a => {
+                      const categoryIdNum = Number(a.category_id);
+                      return categories.find(c => Number(c.id) === categoryIdNum);
+                    })
+                    .filter(c => c !== undefined);
                   
                   const isCashierPrinter = cashierPrinter && 
                     cashierPrinter.printerName === printer.name && 
@@ -920,11 +1061,23 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                               )}
                             </div>
                             <p className="text-sm text-gray-500">{printer.description || 'Açıklama yok'}</p>
-                            {assignedCategory ? (
-                              <div className="mt-1">
-                                <span className="inline-flex items-center px-2 py-1 rounded-lg bg-purple-100 text-purple-700 text-xs font-medium">
-                                  📋 {assignedCategory.name}
-                                </span>
+                            {assignedCategories.length > 0 ? (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {assignedCategories.map(category => (
+                                  <span key={category.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-100 text-purple-700 text-xs font-medium">
+                                    📋 {category.name}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRemoveCategoryAssignment(category.id);
+                                      }}
+                                      className="hover:bg-purple-200 rounded px-1 transition-colors"
+                                      title="Kategori atamasını kaldır"
+                                    >
+                                      ✕
+                                    </button>
+                                  </span>
+                                ))}
                               </div>
                             ) : (
                               <p className="text-xs text-gray-400 mt-1">Kategori atanmamış</p>
@@ -947,7 +1100,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                           onClick={() => handleAssignCategory(printer.name, printerSubTab)}
                           className="flex-1 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:shadow-lg transition-all font-medium"
                         >
-                          Kategori Ayla
+                          Kategori Ata
                         </button>
                       </div>
                     </div>
@@ -982,6 +1135,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                 setShowCategoryAssignModal(false);
                 setSelectedPrinter(null);
                 setAssigningCategory(null);
+                setSelectedCategories([]);
               }}
               className="absolute top-6 right-6 w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
             >
@@ -1000,46 +1154,104 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
               <p className="text-gray-600 mb-2">
                 <span className="font-semibold text-purple-600">{selectedPrinter.name}</span>
               </p>
-              <p className="text-sm text-gray-500">Bu yazıcıya kategori atayın</p>
+              <p className="text-sm text-gray-500">Bu yazıcıya birden fazla kategori seçebilirsiniz</p>
             </div>
 
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Kategori Seçin
+                  Kategorileri Seçin (Çoklu Seçim)
                 </label>
                 <div className="space-y-2 max-h-60 overflow-y-auto scrollbar-custom">
-                  <button
-                    onClick={() => confirmCategoryAssignment(null)}
-                    className={`w-full px-4 py-3 rounded-xl text-left transition-all ${
-                      assigningCategory === null
-                        ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
-                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2">
-                      <span>❌ Kategori Atamasını Kaldır</span>
-                    </div>
-                  </button>
-                  {categories.map(category => (
-                    <button
-                      key={category.id}
-                      onClick={() => confirmCategoryAssignment(category.id)}
-                      className={`w-full px-4 py-3 rounded-xl text-left transition-all ${
-                        assigningCategory === category.id
-                          ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2">
-                        <div className={`w-2 h-2 rounded-full ${
-                          assigningCategory === category.id ? 'bg-white' : 'bg-purple-500'
-                        }`}></div>
-                        <span className="font-medium">{category.name}</span>
+                  {categories.map(category => {
+                    // Tip uyumluluğu için number'a çevir
+                    const categoryIdNum = Number(category.id);
+                    
+                    // Bu kategoriye zaten bir yazıcı atanmış mı kontrol et
+                    const existingAssignment = printerAssignments.find(a => {
+                      const assignmentCategoryId = Number(a.category_id);
+                      return assignmentCategoryId === categoryIdNum;
+                    });
+                    
+                    const isAssignedToThisPrinter = existingAssignment && 
+                      existingAssignment.printerName === selectedPrinter.name && 
+                      existingAssignment.printerType === selectedPrinter.type;
+                    const isAssignedToOtherPrinter = existingAssignment && !isAssignedToThisPrinter;
+                    const isSelected = selectedCategories.includes(categoryIdNum);
+                    
+                    return (
+                      <div
+                        key={category.id}
+                        onClick={() => {
+                          if (!isAssignedToOtherPrinter) {
+                            toggleCategorySelection(categoryIdNum);
+                          }
+                        }}
+                        className={`w-full px-4 py-3 rounded-xl text-left transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                            : isAssignedToThisPrinter
+                            ? 'bg-purple-200 text-purple-800 border-2 border-purple-400'
+                            : isAssignedToOtherPrinter
+                            ? 'bg-yellow-100 text-yellow-800 border-2 border-yellow-400 cursor-not-allowed opacity-60'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => {
+                                if (!isAssignedToOtherPrinter) {
+                                  toggleCategorySelection(categoryIdNum);
+                                }
+                              }}
+                              disabled={isAssignedToOtherPrinter}
+                              className="w-5 h-5 rounded border-2 border-gray-300 text-purple-600 focus:ring-purple-500 focus:ring-2 cursor-pointer"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            <span className="font-medium">{category.name}</span>
+                          </div>
+                          {isAssignedToThisPrinter && !isSelected && (
+                            <span className="text-xs bg-purple-600 text-white px-2 py-1 rounded">
+                              Bu yazıcıya atanmış
+                            </span>
+                          )}
+                          {isAssignedToOtherPrinter && (
+                            <span className="text-xs bg-yellow-600 text-white px-2 py-1 rounded">
+                              {existingAssignment.printerName} yazıcısına atanmış
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </button>
-                  ))}
+                    );
+                  })}
                 </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  💡 Bir kategoriye sadece bir yazıcı atanabilir. Başka yazıcıya atanmış kategoriler seçilemez.
+                </p>
+              </div>
+              
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => {
+                    setShowCategoryAssignModal(false);
+                    setSelectedPrinter(null);
+                    setAssigningCategory(null);
+                    setSelectedCategories([]);
+                  }}
+                  className="flex-1 px-4 py-3 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 transition-all font-medium"
+                >
+                  İptal
+                </button>
+                <button
+                  onClick={confirmCategoryAssignment}
+                  disabled={assigningCategory}
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl hover:shadow-lg transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {assigningCategory ? 'Atanıyor...' : 'Kategorileri Ata'}
+                </button>
               </div>
             </div>
           </div>

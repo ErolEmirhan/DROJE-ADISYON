@@ -244,6 +244,12 @@ function App() {
       const result = await window.electronAPI.createTableOrder(orderData);
       
       if (result.success) {
+        // Yeni sipariş mi yoksa mevcut siparişe ekleme mi?
+        if (!result.isNewOrder) {
+          console.log('📦 Mevcut siparişe eklendi:', result.orderId);
+        } else {
+          console.log('✨ Yeni sipariş oluşturuldu:', result.orderId);
+        }
         // Adisyon yazdır (masaya kaydet'te de)
         const adisyonData = {
           items: cart,
@@ -278,7 +284,16 @@ function App() {
         setReceiptData(tableReceiptData);
         setShowReceiptModal(true);
         
-        clearCart();
+        // Sepeti temizle
+        setCart([]);
+        setOrderNote('');
+        
+        // Mevcut siparişe ekleme durumunda masa seçimini koru, yeni sipariş durumunda temizle
+        if (result.isNewOrder) {
+          setSelectedTable(null);
+        }
+        // Mevcut siparişe eklendiyse masa seçili kalır, böylece tekrar ürün eklenebilir
+        
         setSaleSuccessInfo({ 
           totalAmount, 
           paymentMethod: 'Masaya Kaydedildi',
