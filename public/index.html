@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAKARA - Admin Dashboard</title>
+  <script defer src="/__/firebase/12.6.0/firebase-app-compat.js"></script>
+  <script defer src="/__/firebase/12.6.0/firebase-firestore-compat.js"></script>
+  <script defer src="/__/firebase/init.js?useEmulator=false"></script>
+  <script>
+    // Firebase yapılandırması ve kod
+    document.addEventListener('DOMContentLoaded', function() {
+      // Firebase SDK yüklendikten sonra çalışacak
+      setTimeout(() => {
+        if (typeof firebase === 'undefined') {
+          console.error('Firebase SDK yüklenemedi');
+          document.getElementById('errorMessage').style.display = 'block';
+          return;
+        }
+
+        const firebaseConfig = {
+          apiKey: "AIzaSyCdf-c13e0wCafRYHXhIls1epJgD1RjPUA",
+          authDomain: "makara-16344.firebaseapp.com",
+          projectId: "makara-16344",
+          storageBucket: "makara-16344.firebasestorage.app",
+          messagingSenderId: "216769654742",
+          appId: "1:216769654742:web:16792742d4613f4269be77",
+          measurementId: "G-K4XZHP11MM"
+        };
+
+        // Firebase'i başlat (eğer zaten başlatılmamışsa)
+        let app;
+        try {
+          app = firebase.app();
+        } catch (e) {
+          app = firebase.initializeApp(firebaseConfig);
+        }
+
+        const db = firebase.firestore();
+        let isAuthenticated = false;
+
+        // PIN girişi
+        const adminPin = '1234';
+
+        function showLogin() {
+          document.getElementById('loginSection').style.display = 'block';
+          document.getElementById('dashboard').style.display = 'none';
+        }
+
+        function showDashboard() {
+          document.getElementById('loginSection').style.display = 'none';
+          document.getElementById('dashboard').style.display = 'block';
+          loadSales();
+          startRealtimeListener();
+        }
+
+        window.verifyPin = function() {
+          const pinInput = document.getElementById('pinInput');
+          const pin = pinInput.value;
+          
+          if (pin === adminPin) {
+            isAuthenticated = true;
+            sessionStorage.setItem('adminAuthenticated', 'true');
+            showDashboard();
+          } else {
+            alert('PIN hatalı!');
+            pinInput.value = '';
+          }
+        };
+
+        // Sayfa yüklendiğinde kontrol et
+        if (sessionStorage.getItem('adminAuthenticated') === 'true') {
+          showDashboard();
+        } else {
+          showLogin();
+        }
+
+        // Satışları yükle
+        function loadSales() {
+          const salesRef = db.collection('sales');
+          salesRef.orderBy('created_at', 'desc').limit(1000).get()
+            .then((querySnapshot) => {
+              const sales = [];
+              querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                sales.push({
+                  id: doc.id,
+                  ...data
+                });
+              });
+              renderSales(sales);
+              updateStats(sales);
+            })
+            .catch((error) => {
+              console.error('Satış yükleme hatası:', error);
+              document.getElementById('salesContainer').innerHTML = '<div class="error">Bağlantı hatası! Lütfen sayfayı yenileyin.</div>';
+            });
+        }
+
+        // Real-time dinleme
+        function startRealtimeListener() {
+          const salesRef = db.collection('sales');
+          salesRef.orderBy('created_at', 'desc').limit(1000)
+            .onSnapshot((querySnapshot) => {
+              const sales = [];
+              querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                sales.push({
+                  id: doc.id,
+                  ...data
+                });
+              });
+              renderSales(sales);
+              updateStats(sales);
+            }, (error) => {
+              console.error('Real-time listener hatası:', error);
+            });
+        }
+
+        // Satışları render et
+        function renderSales(sales) {
+          const container = document.getElementById('salesContainer');
+          if (!container) return;
+
+          if (sales.length === 0) {
+            container.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">Henüz satış yok</div>';
+            return;
+          }
+
+          // Tarihe göre grupla
+          const salesByDate = {};
+          sales.forEach(sale => {
+            const date = sale.sale_date || 'Bilinmeyen';
+            if (!salesByDate[date]) {
+              salesByDate[date] = [];
+            }
+            salesByDate[date].push(sale);
+          });
+
+          // Tarihleri sırala
+          const sortedDates = Object.keys(salesByDate).sort((a, b) => {
+            const [dayA, monthA, yearA] = a.split('.');
+            const [dayB, monthB, yearB] = b.split('.');
+            const dateA = new Date(yearA, monthA - 1, dayA);
+            const dateB = new Date(yearB, monthB - 1, dayB);
+            return dateB - dateA;
+          });
+
+          let html = '';
+          sortedDates.forEach(date => {
+            const daySales = salesByDate[date];
+            const dayTotal = daySales.reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+            
+            html += `
+              <div style="margin-bottom: 30px;">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 15px; margin-bottom: 15px;">
+                  <h2 style="margin: 0; font-size: 20px;">${date}</h2>
+                  <p style="margin: 5px 0 0 0; opacity: 0.9;">${daySales.length} satış • Toplam: ₺${dayTotal.toFixed(2)}</p>
+                </div>
+                <div style="display: grid; gap: 15px;">
+                  ${daySales.map(sale => {
+                    const itemsText = sale.items ? sale.items.map(item => 
+                      `${item.product_name} x${item.quantity}${item.isGift ? ' (İKRAM)' : ''}`
+                    ).join(', ') : 'Ürün bulunamadı';
+                    
+                    return `
+                    <div style="background: white; border-radius: 15px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border: 1px solid #e0e0e0;">
+                      <div style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 15px;">
+                        <div style="flex: 1; min-width: 200px;">
+                          <h3 style="margin: 0 0 10px 0; color: #333; font-size: 18px;">Satış #${sale.sale_id || sale.id}</h3>
+                          <p style="margin: 5px 0; color: #666; font-size: 14px;">${sale.sale_date || ''} • ${sale.sale_time || ''}</p>
+                          <div style="margin: 10px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+                            <span style="display: inline-block; padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; background: ${sale.payment_method === 'Nakit' ? '#e8f5e9' : '#e3f2fd'}; color: ${sale.payment_method === 'Nakit' ? '#2e7d32' : '#1565c0'};">${sale.payment_method || 'Nakit'}</span>
+                            ${sale.staff_name ? `<span style="display: inline-block; padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; background: #f3e5f5; color: #7b1fa2;">👤 ${sale.staff_name}</span>` : ''}
+                          </div>
+                          <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;">
+                            <p style="margin: 5px 0; color: #666; font-size: 13px;"><strong>Ürünler:</strong></p>
+                            <p style="margin: 5px 0; color: #333; font-size: 14px; line-height: 1.6;">${itemsText}</p>
+                          </div>
+                        </div>
+                        <div style="text-align: right; min-width: 120px;">
+                          <p style="margin: 0 0 10px 0; color: #666; font-size: 12px; font-weight: bold;">TOPLAM</p>
+                          <p style="margin: 0; font-size: 28px; font-weight: bold; color: #667eea;">₺${parseFloat(sale.total_amount || 0).toFixed(2)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                  }).join('')}
+                </div>
+              </div>
+            `;
+          });
+
+          container.innerHTML = html;
+        }
+
+        // İstatistikleri güncelle
+        function updateStats(sales) {
+          const today = new Date().toLocaleDateString('tr-TR');
+          const todaySales = sales.filter(s => s.sale_date === today);
+          const todayRevenue = todaySales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+          
+          document.getElementById('statsGrid').innerHTML = `
+            <div class="stat-card">
+              <h3>💰 Günlük Ciro</h3>
+              <div class="value">${todayRevenue.toFixed(2)} ₺</div>
+            </div>
+            <div class="stat-card">
+              <h3>📦 Toplam Satış</h3>
+              <div class="value">${sales.length}</div>
+            </div>
+            <div class="stat-card">
+              <h3>📊 Bugünkü Satış</h3>
+              <div class="value">${todaySales.length}</div>
+            </div>
+            <div class="stat-card">
+              <h3>👥 Toplam Garson</h3>
+              <div class="value">${new Set(sales.filter(s => s.staff_name).map(s => s.staff_name)).size}</div>
+            </div>
+          `;
+        }
+
+        // Enter tuşu ile PIN girişi
+        document.getElementById('pinInput')?.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            window.verifyPin();
+          }
+        });
+
+        window.loadSales = loadSales;
+      }, 500); // Firebase SDK'nın yüklenmesi için bekle
+    });
+  </script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+      min-height: 100vh; 
+      padding: 20px; 
+    }
+    .container { 
+      max-width: 1200px; 
+      margin: 0 auto; 
+      background: white; 
+      border-radius: 20px; 
+      padding: 30px; 
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3); 
+    }
+    .header { 
+      text-align: center; 
+      margin-bottom: 30px; 
+      padding-bottom: 20px; 
+      border-bottom: 3px solid #667eea; 
+    }
+    .header h1 { 
+      color: #667eea; 
+      font-size: 32px; 
+      margin-bottom: 10px; 
+    }
+    .pin-section { 
+      background: #f5f5f5; 
+      padding: 20px; 
+      border-radius: 15px; 
+      margin-bottom: 30px; 
+      text-align: center; 
+    }
+    .pin-input { 
+      padding: 15px; 
+      font-size: 18px; 
+      border: 2px solid #667eea; 
+      border-radius: 10px; 
+      width: 200px; 
+      text-align: center; 
+      margin: 10px; 
+    }
+    .pin-btn { 
+      padding: 15px 30px; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+      color: white; 
+      border: none; 
+      border-radius: 10px; 
+      font-size: 18px; 
+      font-weight: bold; 
+      cursor: pointer; 
+      margin: 10px; 
+    }
+    .dashboard { 
+      display: none; 
+    }
+    .dashboard.active { 
+      display: block; 
+    }
+    .stats-grid { 
+      display: grid; 
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+      gap: 20px; 
+      margin-bottom: 30px; 
+    }
+    .stat-card { 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+      color: white; 
+      padding: 25px; 
+      border-radius: 15px; 
+      text-align: center; 
+      box-shadow: 0 5px 15px rgba(0,0,0,0.2); 
+    }
+    .stat-card h3 { 
+      font-size: 14px; 
+      opacity: 0.9; 
+      margin-bottom: 10px; 
+    }
+    .stat-card .value { 
+      font-size: 32px; 
+      font-weight: bold; 
+    }
+    .refresh-btn { 
+      padding: 10px 20px; 
+      background: #4caf50; 
+      color: white; 
+      border: none; 
+      border-radius: 8px; 
+      font-size: 14px; 
+      cursor: pointer; 
+      margin-bottom: 15px; 
+    }
+    .error { 
+      background: #ff4444; 
+      color: white; 
+      padding: 15px; 
+      border-radius: 10px; 
+      margin-bottom: 20px; 
+    }
+    #errorMessage {
+      display: none;
+      background: #ff4444;
+      color: white;
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      margin: 20px 0;
+    }
+    @media (max-width: 768px) {
+      .stats-grid { 
+        grid-template-columns: 1fr; 
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>👔 MAKARA Admin Dashboard</h1>
+      <p style="color: #666;">Anlık Satış Detayları ve İstatistikler</p>
+    </div>
+
+    <div id="errorMessage">
+      <h2>❌ Firebase SDK Yüklenemedi</h2>
+      <p>Lütfen sayfayı yenileyin veya internet bağlantınızı kontrol edin.</p>
+    </div>
+
+    <div id="loginSection" class="pin-section">
+      <h2 style="color: #667eea; margin-bottom: 15px;">PIN ile Giriş</h2>
+      <input type="password" id="pinInput" class="pin-input" placeholder="PIN Girin" maxlength="10">
+      <br>
+      <button onclick="verifyPin()" class="pin-btn">🔓 Giriş Yap</button>
+    </div>
+
+    <div id="dashboard" class="dashboard">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h1 style="color: #667eea; font-size: 28px; margin: 0;">📊 Satış Detayları</h1>
+        <button onclick="loadSales()" class="refresh-btn" style="padding: 12px 24px; font-size: 16px;">🔄 Yenile</button>
+      </div>
+      
+      <div class="stats-grid" id="statsGrid" style="margin-bottom: 30px;"></div>
+      
+      <div id="salesContainer" style="min-height: 200px;"></div>
+    </div>
+  </div>
+</body>
+</html>

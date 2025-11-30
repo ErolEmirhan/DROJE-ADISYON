@@ -47,6 +47,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Mobile API
   getServerURL: () => ipcRenderer.invoke('get-server-url'),
   generateQRCode: () => ipcRenderer.invoke('generate-qr-code'),
+  // Admin Dashboard API
+  // Staff Management API
+  createStaff: (staffData) => ipcRenderer.invoke('create-staff', staffData),
+  deleteStaff: (staffId) => ipcRenderer.invoke('delete-staff', staffId),
+  getStaff: () => ipcRenderer.invoke('get-staff'),
+  verifyStaffPin: (password) => ipcRenderer.invoke('verify-staff-pin', password),
   // Real-time updates
   onNewOrderCreated: (callback) => {
     ipcRenderer.on('new-order-created', (event, data) => callback(data));

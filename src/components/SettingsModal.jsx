@@ -39,6 +39,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
   const [assigningCategory, setAssigningCategory] = useState(null);
   const [cashierPrinter, setCashierPrinter] = useState(null);
   const [selectedCategories, setSelectedCategories] = useState([]);
+  
 
   useEffect(() => {
     const handleClickOutside = (event) => {

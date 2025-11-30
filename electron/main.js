@@ -9,12 +9,15 @@ const http = require('http');
 const { Server } = require('socket.io');
 const QRCode = require('qrcode');
 const os = require('os');
+// ngrok kaldırıldı - Firebase kullanılacak
 
 let mainWindow;
 let dbPath;
 let apiServer = null;
 let io = null;
 let serverPort = 3000;
+let firebaseApp = null;
+let firestore = null;
 let db = {
   categories: [],
   products: [],
@@ -22,12 +25,89 @@ let db = {
   saleItems: [],
   tableOrders: [],
   tableOrderItems: [],
+  staff: [], // { id, name, surname, password }
   settings: {
     adminPin: '1234',
     cashierPrinter: null // { printerName, printerType } - Kasa yazıcısı ayarı
   },
   printerAssignments: [] // { printerName, printerType, category_id }
 };
+
+function addNewCategoriesAndProducts() {
+  let updated = false;
+  
+  // Varsayılan kategorileri tanımla
+  const defaultCategories = [
+    { id: 1, name: 'KRUVASANLAR', order_index: 0 },
+    { id: 2, name: 'Fransız Pastalar', order_index: 1 },
+    { id: 3, name: 'SÜTLÜ TATLILAR VE PASTALAR', order_index: 2 },
+    { id: 4, name: 'MAKARALAR', order_index: 3 }
+  ];
+  
+  // Kategorileri ekle (eğer yoksa)
+  defaultCategories.forEach(cat => {
+    const exists = db.categories.find(c => c.id === cat.id || c.name === cat.name);
+    if (!exists) {
+      db.categories.push(cat);
+      updated = true;
+      console.log(`Kategori eklendi: ${cat.name}`);
+    }
+  });
+  
+  // Varsayılan ürünleri tanımla
+  const defaultProducts = [
+    // KRUVASANLAR
+    { id: 1, name: 'Sade Kuruvasan', category_id: 1, price: 150.00 },
+    { id: 2, name: 'Antep Fıstıklı', category_id: 1, price: 280.00 },
+    { id: 3, name: 'Framboğazlı', category_id: 1, price: 250.00 },
+    { id: 4, name: 'Belçika Çikolatalı', category_id: 1, price: 250.00 },
+    { id: 5, name: 'Sütlü kahveli', category_id: 1, price: 250.00 },
+    { id: 6, name: 'Lotuslu', category_id: 1, price: 250.00 },
+    { id: 7, name: 'Muzlu çilekli', category_id: 1, price: 250.00 },
+    
+    // Fransız Pastalar
+    { id: 8, name: 'Limon', category_id: 2, price: 250.00 },
+    { id: 9, name: 'Badem', category_id: 2, price: 280.00 },
+    { id: 10, name: 'Mango', category_id: 2, price: 250.00 },
+    { id: 11, name: 'Portakal', category_id: 2, price: 250.00 },
+    { id: 12, name: 'Çilek', category_id: 2, price: 270.00 },
+    { id: 13, name: 'Yaban mersini', category_id: 2, price: 270.00 },
+    { id: 14, name: 'Antep fıstığı', category_id: 2, price: 290.00 },
+    
+    // SÜTLÜ TATLILAR VE PASTALAR
+    { id: 15, name: 'Çilekli Magnolya', category_id: 3, price: 220.00 },
+    { id: 16, name: 'Dev profiterol', category_id: 3, price: 280.00 },
+    { id: 17, name: 'Tiramisu', category_id: 3, price: 280.00 },
+    { id: 18, name: 'Limonlu Chesecake', category_id: 3, price: 250.00 },
+    { id: 19, name: 'San sebastian', category_id: 3, price: 280.00 },
+    { id: 20, name: 'Antep Fıstıklı keşkül', category_id: 3, price: 280.00 },
+    { id: 21, name: 'İncirli muhallebi', category_id: 3, price: 280.00 },
+    { id: 22, name: 'Red velvet', category_id: 3, price: 240.00 },
+    { id: 23, name: 'Lotuslu Paris Brest', category_id: 3, price: 250.00 },
+    { id: 24, name: 'Antep fıstıklı Çıtırtı', category_id: 3, price: 290.00 },
+    
+    // MAKARALAR
+    { id: 25, name: 'Antep Fıstıklı', category_id: 4, price: 290.00 },
+    { id: 26, name: 'Lotuslu', category_id: 4, price: 280.00 },
+    { id: 27, name: 'Oreolu', category_id: 4, price: 280.00 },
+    { id: 28, name: 'Çilekli', category_id: 4, price: 280.00 }
+  ];
+  
+  // Ürünleri ekle (eğer yoksa)
+  defaultProducts.forEach(prod => {
+    const exists = db.products.find(p => p.id === prod.id || (p.name === prod.name && p.category_id === prod.category_id));
+    if (!exists) {
+      db.products.push(prod);
+      updated = true;
+      console.log(`Ürün eklendi: ${prod.name}`);
+    }
+  });
+  
+  if (updated) {
+    saveDatabase();
+    console.log('Kategoriler ve ürünler veritabanına eklendi.');
+  }
+}
 
 function initDatabase() {
   dbPath = path.join(app.getPath('userData'), 'makara-db.json');
@@ -48,7 +128,6 @@ function initDatabase() {
         db.settings.cashierPrinter = null;
         saveDatabase();
       }
-      
       // Eksik diğer alanları kontrol et
       if (!db.categories) db.categories = [];
       if (!db.products) db.products = [];
@@ -56,7 +135,11 @@ function initDatabase() {
       if (!db.saleItems) db.saleItems = [];
       if (!db.tableOrders) db.tableOrders = [];
       if (!db.tableOrderItems) db.tableOrderItems = [];
+      if (!db.staff) db.staff = [];
       if (!db.printerAssignments) db.printerAssignments = [];
+      
+      // Yeni kategorileri ve ürünleri ekle
+      addNewCategoriesAndProducts();
     } catch (error) {
       console.error('Veritabanı yüklenemedi, yeni oluşturuluyor:', error);
       initDefaultData();
@@ -67,57 +150,58 @@ function initDatabase() {
 }
 
 function initDefaultData() {
-  // Örnek kategoriler
+  // Varsayılan kategoriler
   db.categories = [
-    { id: 1, name: 'Kruvasan Çeşitleri', order_index: 0 },
-    { id: 2, name: 'Prag Tatlısı', order_index: 1 },
-    { id: 3, name: 'Paris Tatlıları', order_index: 2 },
-    { id: 4, name: 'Kahvaltılar', order_index: 3 },
-    { id: 5, name: 'Sıcak İçecekler', order_index: 4 },
-    { id: 6, name: 'Soğuk İçecekler', order_index: 5 }
+    { id: 1, name: 'KRUVASANLAR', order_index: 0 },
+    { id: 2, name: 'Fransız Pastalar', order_index: 1 },
+    { id: 3, name: 'SÜTLÜ TATLILAR VE PASTALAR', order_index: 2 },
+    { id: 4, name: 'MAKARALAR', order_index: 3 }
   ];
 
-  // Örnek ürünler
+  // Varsayılan ürünler
   db.products = [
-    // Kruvasan Çeşitleri
-    { id: 1, name: 'Sade Kruvasan', category_id: 1, price: 35.00 },
-    { id: 2, name: 'Çikolatalı Kruvasan', category_id: 1, price: 40.00 },
-    { id: 3, name: 'Peynirli Kruvasan', category_id: 1, price: 45.00 },
-    { id: 4, name: 'Kaymaklı Kruvasan', category_id: 1, price: 42.00 },
+    // KRUVASANLAR
+    { id: 1, name: 'Sade Kuruvasan', category_id: 1, price: 150.00 },
+    { id: 2, name: 'Antep Fıstıklı', category_id: 1, price: 280.00 },
+    { id: 3, name: 'Framboğazlı', category_id: 1, price: 250.00 },
+    { id: 4, name: 'Belçika Çikolatalı', category_id: 1, price: 250.00 },
+    { id: 5, name: 'Sütlü kahveli', category_id: 1, price: 250.00 },
+    { id: 6, name: 'Lotuslu', category_id: 1, price: 250.00 },
+    { id: 7, name: 'Muzlu çilekli', category_id: 1, price: 250.00 },
     
-    // Prag Tatlısı
-    { id: 5, name: 'Klasik Prag', category_id: 2, price: 55.00 },
-    { id: 6, name: 'Çilekli Prag', category_id: 2, price: 60.00 },
-    { id: 7, name: 'Frambuazlı Prag', category_id: 2, price: 60.00 },
+    // Fransız Pastalar
+    { id: 8, name: 'Limon', category_id: 2, price: 250.00 },
+    { id: 9, name: 'Badem', category_id: 2, price: 280.00 },
+    { id: 10, name: 'Mango', category_id: 2, price: 250.00 },
+    { id: 11, name: 'Portakal', category_id: 2, price: 250.00 },
+    { id: 12, name: 'Çilek', category_id: 2, price: 270.00 },
+    { id: 13, name: 'Yaban mersini', category_id: 2, price: 270.00 },
+    { id: 14, name: 'Antep fıstığı', category_id: 2, price: 290.00 },
     
-    // Paris Tatlıları
-    { id: 8, name: 'Ekler', category_id: 3, price: 38.00 },
-    { id: 9, name: 'Macaron', category_id: 3, price: 25.00 },
-    { id: 10, name: 'Millefeuille', category_id: 3, price: 65.00 },
+    // SÜTLÜ TATLILAR VE PASTALAR
+    { id: 15, name: 'Çilekli Magnolya', category_id: 3, price: 220.00 },
+    { id: 16, name: 'Dev profiterol', category_id: 3, price: 280.00 },
+    { id: 17, name: 'Tiramisu', category_id: 3, price: 280.00 },
+    { id: 18, name: 'Limonlu Chesecake', category_id: 3, price: 250.00 },
+    { id: 19, name: 'San sebastian', category_id: 3, price: 280.00 },
+    { id: 20, name: 'Antep Fıstıklı keşkül', category_id: 3, price: 280.00 },
+    { id: 21, name: 'İncirli muhallebi', category_id: 3, price: 280.00 },
+    { id: 22, name: 'Red velvet', category_id: 3, price: 240.00 },
+    { id: 23, name: 'Lotuslu Paris Brest', category_id: 3, price: 250.00 },
+    { id: 24, name: 'Antep fıstıklı Çıtırtı', category_id: 3, price: 290.00 },
     
-    // Kahvaltılar
-    { id: 11, name: 'Serpme Kahvaltı', category_id: 4, price: 180.00 },
-    { id: 12, name: 'Kahvaltı Tabağı', category_id: 4, price: 120.00 },
-    { id: 13, name: 'Menemen', category_id: 4, price: 75.00 },
-    
-    // Sıcak İçecekler
-    { id: 14, name: 'Türk Kahvesi', category_id: 5, price: 30.00 },
-    { id: 15, name: 'Filtre Kahve', category_id: 5, price: 35.00 },
-    { id: 16, name: 'Cappuccino', category_id: 5, price: 45.00 },
-    { id: 17, name: 'Latte', category_id: 5, price: 45.00 },
-    { id: 18, name: 'Çay', category_id: 5, price: 15.00 },
-    
-    // Soğuk İçecekler
-    { id: 19, name: 'Ice Latte', category_id: 6, price: 50.00 },
-    { id: 20, name: 'Limonata', category_id: 6, price: 35.00 },
-    { id: 21, name: 'Soda', category_id: 6, price: 20.00 },
-    { id: 22, name: 'Ayran', category_id: 6, price: 15.00 }
+    // MAKARALAR
+    { id: 25, name: 'Antep Fıstıklı', category_id: 4, price: 290.00 },
+    { id: 26, name: 'Lotuslu', category_id: 4, price: 280.00 },
+    { id: 27, name: 'Oreolu', category_id: 4, price: 280.00 },
+    { id: 28, name: 'Çilekli', category_id: 4, price: 280.00 }
   ];
 
   db.sales = [];
   db.saleItems = [];
   db.tableOrders = [];
   db.tableOrderItems = [];
+  db.staff = [];
   db.settings = {
     adminPin: '1234'
   };
@@ -283,7 +367,7 @@ ipcMain.handle('get-products', (event, categoryId) => {
 });
 
 ipcMain.handle('create-sale', (event, saleData) => {
-  const { items, totalAmount, paymentMethod, orderNote } = saleData;
+  const { items, totalAmount, paymentMethod, orderNote, staffId } = saleData;
   
   const now = new Date();
   const saleDate = now.toLocaleDateString('tr-TR');
@@ -300,7 +384,8 @@ ipcMain.handle('create-sale', (event, saleData) => {
     total_amount: totalAmount,
     payment_method: paymentMethod,
     sale_date: saleDate,
-    sale_time: saleTime
+    sale_time: saleTime,
+    staff_id: staffId || null
   });
 
   // Satış itemlarını ekle
@@ -321,6 +406,31 @@ ipcMain.handle('create-sale', (event, saleData) => {
   });
 
   saveDatabase();
+  
+  // Firebase'e kaydet
+  const saleDataForFirebase = {
+    id: saleId,
+    total_amount: totalAmount,
+    payment_method: paymentMethod,
+    sale_date: saleDate,
+    sale_time: saleTime,
+    staff_id: staffId || null,
+    table_name: null,
+    table_type: null
+  };
+  const saleItems = db.saleItems.filter(si => si.sale_id === saleId);
+  saveSaleToFirebase(saleDataForFirebase, saleItems);
+  
+  // WebSocket ile admin dashboard'a bildirim gönder
+  if (io) {
+    io.emit('new-sale', {
+      saleId: saleId,
+      totalAmount: totalAmount,
+      paymentMethod: paymentMethod,
+      createdAt: new Date().toISOString()
+    });
+  }
+  
   return { success: true, saleId };
 });
 
@@ -335,9 +445,14 @@ ipcMain.handle('get-sales', () => {
       })
       .join(', ');
     
+    // Staff bilgisini ekle
+    const staff = sale.staff_id ? db.staff.find(s => s.id === sale.staff_id) : null;
+    const staffName = staff ? `${staff.name} ${staff.surname}` : null;
+    
     return {
       ...sale,
-      items: items || 'Ürün bulunamadı'
+      items: items || 'Ürün bulunamadı',
+      staff_name: staffName
     };
   });
   
@@ -349,12 +464,19 @@ ipcMain.handle('get-sale-details', (event, saleId) => {
   const sale = db.sales.find(s => s.id === saleId);
   const items = db.saleItems.filter(si => si.sale_id === saleId);
   
-  return { sale, items };
+  // Staff bilgisini ekle
+  const staff = sale?.staff_id ? db.staff.find(s => s.id === sale.staff_id) : null;
+  const staffName = staff ? `${staff.name} ${staff.surname}` : null;
+  
+  return { 
+    sale: { ...sale, staff_name: staffName }, 
+    items 
+  };
 });
 
 // Table Order IPC Handlers
 ipcMain.handle('create-table-order', (event, orderData) => {
-  const { items, totalAmount, tableId, tableName, tableType, orderNote } = orderData;
+  const { items, totalAmount, tableId, tableName, tableType, orderNote, staffId } = orderData;
   
   // Bu masada pending durumunda bir sipariş var mı kontrol et
   const existingOrder = db.tableOrders.find(
@@ -431,7 +553,8 @@ ipcMain.handle('create-table-order', (event, orderData) => {
       order_date: orderDate,
       order_time: orderTime,
       status: 'pending', // 'pending', 'completed', 'cancelled'
-      order_note: orderNote || null
+      order_note: orderNote || null,
+      staff_id: staffId || null
     });
 
     // Sipariş itemlarını ekle
@@ -494,6 +617,10 @@ ipcMain.handle('complete-table-order', (event, orderId) => {
     ? Math.max(...db.sales.map(s => s.id)) + 1 
     : 1;
 
+  // Staff bilgisini al (masa siparişinden)
+  const staffId = order.staff_id || null;
+  const staffName = order.staff_name || null;
+  
   // Satış ekle
   db.sales.push({
     id: saleId,
@@ -502,7 +629,9 @@ ipcMain.handle('complete-table-order', (event, orderId) => {
     sale_date: saleDate,
     sale_time: saleTime,
     table_name: order.table_name,
-    table_type: order.table_type
+    table_type: order.table_type,
+    staff_id: staffId,
+    staff_name: staffName
   });
 
   // Satış itemlarını ekle
@@ -524,6 +653,21 @@ ipcMain.handle('complete-table-order', (event, orderId) => {
   });
 
   saveDatabase();
+  
+  // Firebase'e kaydet
+  const saleDataForFirebase = {
+    id: saleId,
+    total_amount: order.total_amount,
+    payment_method: 'Nakit',
+    sale_date: saleDate,
+    sale_time: saleTime,
+    staff_id: staffId,
+    table_name: order.table_name,
+    table_type: order.table_type
+  };
+  const saleItemsForFirebase = db.saleItems.filter(si => si.sale_id === saleId);
+  saveSaleToFirebase(saleDataForFirebase, saleItemsForFirebase);
+  
   return { success: true, saleId };
 });
 
@@ -561,6 +705,11 @@ ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
     ? Math.max(...db.sales.map(s => s.id)) + 1 
     : 1;
 
+  // Masa siparişinden staff bilgisini al
+  const order = db.tableOrders.find(o => o.id === saleData.orderId);
+  const staffId = order?.staff_id || null;
+  const staffName = order?.staff_name || null;
+
   // Satış ekle
   db.sales.push({
     id: saleId,
@@ -569,7 +718,9 @@ ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
     sale_date: saleDate,
     sale_time: saleTime,
     table_name: saleData.tableName,
-    table_type: saleData.tableType
+    table_type: saleData.tableType,
+    staff_id: staffId,
+    staff_name: staffName
   });
 
   // Satış itemlarını ekle (kısmi ödeme için tüm ürünleri göster, sadece ödeme yöntemi farklı)
@@ -592,6 +743,21 @@ ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
   });
 
   saveDatabase();
+  
+  // Firebase'e kaydet
+  const saleDataForFirebase = {
+    id: saleId,
+    total_amount: saleData.totalAmount,
+    payment_method: saleData.paymentMethod,
+    sale_date: saleDate,
+    sale_time: saleTime,
+    staff_id: staffId,
+    table_name: saleData.tableName,
+    table_type: saleData.tableType
+  };
+  const saleItemsForFirebase = db.saleItems.filter(si => si.sale_id === saleId);
+  saveSaleToFirebase(saleDataForFirebase, saleItemsForFirebase);
+  
   return { success: true, saleId };
 });
 
@@ -636,6 +802,58 @@ ipcMain.handle('get-admin-pin', () => {
     console.error('PIN okuma hatası:', error);
     return '1234';
   }
+});
+
+// Staff Management IPC Handlers
+ipcMain.handle('create-staff', (event, staffData) => {
+  const { name, surname, password } = staffData;
+  
+  if (!name || !surname || !password) {
+    return { success: false, error: 'Tüm alanları doldurun' };
+  }
+  
+  const newId = db.staff.length > 0 
+    ? Math.max(...db.staff.map(s => s.id)) + 1 
+    : 1;
+  
+  const newStaff = {
+    id: newId,
+    name: name.trim(),
+    surname: surname.trim(),
+    password: password.toString()
+  };
+  
+  db.staff.push(newStaff);
+  saveDatabase();
+  return { success: true, staff: newStaff };
+});
+
+ipcMain.handle('delete-staff', (event, staffId) => {
+  const index = db.staff.findIndex(s => s.id === staffId);
+  if (index === -1) {
+    return { success: false, error: 'Personel bulunamadı' };
+  }
+  
+  db.staff.splice(index, 1);
+  saveDatabase();
+  return { success: true };
+});
+
+ipcMain.handle('get-staff', () => {
+  return db.staff.map(s => ({
+    id: s.id,
+    name: s.name,
+    surname: s.surname
+    // Şifre güvenlik için döndürülmüyor
+  }));
+});
+
+ipcMain.handle('verify-staff-pin', (event, password) => {
+  const staff = db.staff.find(s => s.password === password.toString());
+  if (staff) {
+    return { success: true, staff: { id: staff.id, name: staff.name, surname: staff.surname } };
+  }
+  return { success: false, error: 'Şifre hatalı' };
 });
 
 // Product Management IPC Handlers
@@ -1816,7 +2034,409 @@ function generateReceiptHTML(receiptData) {
   `;
 }
 
-// Mobil uygulama HTML'i oluştur
+// Admin Dashboard HTML'i oluştur (SalesHistory benzeri, real-time)
+function generateAdminHTML(serverURL) {
+  return `<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#667eea">
+  <title>MAKARA - Admin Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+      min-height: 100vh; 
+      padding: 20px; 
+    }
+    .container { 
+      max-width: 1200px; 
+      margin: 0 auto; 
+      background: white; 
+      border-radius: 20px; 
+      padding: 30px; 
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3); 
+    }
+    .header { 
+      text-align: center; 
+      margin-bottom: 30px; 
+      padding-bottom: 20px; 
+      border-bottom: 3px solid #667eea; 
+    }
+    .header h1 { 
+      color: #667eea; 
+      font-size: 32px; 
+      margin-bottom: 10px; 
+    }
+    .pin-section { 
+      background: #f5f5f5; 
+      padding: 20px; 
+      border-radius: 15px; 
+      margin-bottom: 30px; 
+      text-align: center; 
+    }
+    .pin-input { 
+      padding: 15px; 
+      font-size: 18px; 
+      border: 2px solid #667eea; 
+      border-radius: 10px; 
+      width: 200px; 
+      text-align: center; 
+      margin: 10px; 
+    }
+    .pin-btn { 
+      padding: 15px 30px; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+      color: white; 
+      border: none; 
+      border-radius: 10px; 
+      font-size: 18px; 
+      font-weight: bold; 
+      cursor: pointer; 
+      margin: 10px; 
+    }
+    .dashboard { 
+      display: none; 
+    }
+    .dashboard.active { 
+      display: block; 
+    }
+    .stats-grid { 
+      display: grid; 
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+      gap: 20px; 
+      margin-bottom: 30px; 
+    }
+    .stat-card { 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+      color: white; 
+      padding: 25px; 
+      border-radius: 15px; 
+      text-align: center; 
+      box-shadow: 0 5px 15px rgba(0,0,0,0.2); 
+    }
+    .stat-card h3 { 
+      font-size: 14px; 
+      opacity: 0.9; 
+      margin-bottom: 10px; 
+    }
+    .stat-card .value { 
+      font-size: 32px; 
+      font-weight: bold; 
+    }
+    .section { 
+      margin-bottom: 30px; 
+    }
+    .section h2 { 
+      color: #667eea; 
+      margin-bottom: 15px; 
+      font-size: 24px; 
+    }
+    .table { 
+      width: 100%; 
+      border-collapse: collapse; 
+      background: white; 
+      border-radius: 10px; 
+      overflow: hidden; 
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+    }
+    .table th { 
+      background: #667eea; 
+      color: white; 
+      padding: 15px; 
+      text-align: left; 
+    }
+    .table td { 
+      padding: 12px 15px; 
+      border-bottom: 1px solid #e0e0e0; 
+    }
+    .table tr:last-child td { 
+      border-bottom: none; 
+    }
+    .refresh-btn { 
+      padding: 10px 20px; 
+      background: #4caf50; 
+      color: white; 
+      border: none; 
+      border-radius: 8px; 
+      font-size: 14px; 
+      cursor: pointer; 
+      margin-bottom: 15px; 
+    }
+    .loading { 
+      text-align: center; 
+      padding: 20px; 
+      color: #667eea; 
+    }
+    .error { 
+      background: #ff4444; 
+      color: white; 
+      padding: 15px; 
+      border-radius: 10px; 
+      margin-bottom: 20px; 
+    }
+    @media (max-width: 768px) {
+      .stats-grid { 
+        grid-template-columns: 1fr; 
+      }
+      .table { 
+        font-size: 12px; 
+      }
+      .table th, .table td { 
+        padding: 8px; 
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>👔 MAKARA Admin Dashboard</h1>
+      <p style="color: #666;">Anlık Satış Detayları ve İstatistikler</p>
+    </div>
+
+    <div id="pinSection" class="pin-section">
+      <h2 style="color: #667eea; margin-bottom: 15px;">PIN ile Giriş</h2>
+      <input type="password" id="pinInput" class="pin-input" placeholder="PIN Girin" maxlength="10">
+      <br>
+      <button onclick="verifyPin()" class="pin-btn">🔓 Giriş Yap</button>
+    </div>
+
+    <div id="dashboard" class="dashboard">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h1 style="color: #667eea; font-size: 28px; margin: 0;">📊 Satış Detayları</h1>
+        <button onclick="loadDashboard()" class="refresh-btn" style="padding: 12px 24px; font-size: 16px;">🔄 Yenile</button>
+      </div>
+      
+      <div class="stats-grid" id="statsGrid" style="margin-bottom: 30px;"></div>
+      
+      <div id="salesContainer" style="min-height: 200px;"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <script>
+    const API_URL = '${serverURL}';
+    let isAuthenticated = false;
+
+    // Sayfa yüklendiğinde PIN kontrolü
+    window.addEventListener('load', () => {
+      const savedPin = sessionStorage.getItem('adminPin');
+      if (savedPin) {
+        verifyPin(savedPin, true);
+      }
+    });
+
+    async function verifyPin(pin = null, skipCheck = false) {
+      const pinInput = document.getElementById('pinInput');
+      const pinValue = pin || pinInput.value;
+      
+      if (!pinValue) {
+        alert('Lütfen PIN girin');
+        return;
+      }
+
+      try {
+        const response = await fetch(API_URL + '/api/admin/verify-pin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: pinValue })
+        });
+
+        const result = await response.json();
+        
+        if (result.success) {
+          isAuthenticated = true;
+          sessionStorage.setItem('adminPin', pinValue);
+          document.getElementById('pinSection').style.display = 'none';
+          document.getElementById('dashboard').classList.add('active');
+          loadSales(); // Tüm satışları yükle
+          initWebSocket(); // WebSocket bağlantısını başlat
+        } else {
+          alert('PIN hatalı!');
+          pinInput.value = '';
+        }
+      } catch (error) {
+        console.error('PIN doğrulama hatası:', error);
+        alert('Bağlantı hatası!');
+      }
+    }
+
+    let sales = [];
+    let socket = null;
+
+    // WebSocket bağlantısı
+    function initWebSocket() {
+      try {
+        socket = io(API_URL);
+        
+        socket.on('connect', () => {
+          console.log('WebSocket bağlandı');
+        });
+        
+        socket.on('new-sale', (data) => {
+          console.log('Yeni satış alındı:', data);
+          // Yeni satış geldiğinde listeyi yenile
+          loadSales();
+        });
+        
+        socket.on('disconnect', () => {
+          console.log('WebSocket bağlantısı kesildi');
+        });
+      } catch (error) {
+        console.error('WebSocket bağlantı hatası:', error);
+      }
+    }
+
+    // Tüm satışları yükle (SalesHistory benzeri)
+    async function loadSales() {
+      if (!isAuthenticated) return;
+
+      const pin = sessionStorage.getItem('adminPin');
+      const headers = { 'x-admin-pin': pin };
+
+      try {
+        // Tüm satışları getir
+        const salesRes = await fetch(API_URL + '/api/admin/all-sales', { headers });
+        const result = await salesRes.json();
+        
+        if (result.success) {
+          sales = result.sales;
+          renderSales();
+          updateStats();
+        }
+      } catch (error) {
+        console.error('Satış yükleme hatası:', error);
+        document.getElementById('salesContainer').innerHTML = '<div class="error">Bağlantı hatası! Lütfen sayfayı yenileyin.</div>';
+      }
+    }
+
+    // Satışları render et (SalesHistory benzeri)
+    function renderSales() {
+      const container = document.getElementById('salesContainer');
+      if (!container) return;
+
+      if (sales.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">Henüz satış yok</div>';
+        return;
+      }
+
+      // Tarihe göre grupla
+      const salesByDate = {};
+      sales.forEach(sale => {
+        const date = sale.sale_date;
+        if (!salesByDate[date]) {
+          salesByDate[date] = [];
+        }
+        salesByDate[date].push(sale);
+      });
+
+      // Tarihleri sırala
+      const sortedDates = Object.keys(salesByDate).sort((a, b) => {
+        const [dayA, monthA, yearA] = a.split('.');
+        const [dayB, monthB, yearB] = b.split('.');
+        const dateA = new Date(yearA, monthA - 1, dayA);
+        const dateB = new Date(yearB, monthB - 1, dayB);
+        return dateB - dateA;
+      });
+
+      let html = '';
+      sortedDates.forEach(date => {
+        const daySales = salesByDate[date];
+        const dayTotal = daySales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
+        
+        html += \`
+          <div style="margin-bottom: 30px;">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 15px; margin-bottom: 15px;">
+              <h2 style="margin: 0; font-size: 20px;">\${date}</h2>
+              <p style="margin: 5px 0 0 0; opacity: 0.9;">\${daySales.length} satış • Toplam: ₺\${dayTotal.toFixed(2)}</p>
+            </div>
+            <div style="display: grid; gap: 15px;">
+              \${daySales.map(sale => \`
+                <div style="background: white; border-radius: 15px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border: 1px solid #e0e0e0;">
+                  <div style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 15px;">
+                    <div style="flex: 1; min-width: 200px;">
+                      <h3 style="margin: 0 0 10px 0; color: #333; font-size: 18px;">Satış #\${sale.id}</h3>
+                      <p style="margin: 5px 0; color: #666; font-size: 14px;">\${sale.sale_date} • \${sale.sale_time}</p>
+                      <div style="margin: 10px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+                        <span style="display: inline-block; padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; background: \${sale.payment_method === 'Nakit' ? '#e8f5e9' : '#e3f2fd'}; color: \${sale.payment_method === 'Nakit' ? '#2e7d32' : '#1565c0'};">\${sale.payment_method}</span>
+                        \${sale.staff_name ? \`<span style="display: inline-block; padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; background: #f3e5f5; color: #7b1fa2;">👤 \${sale.staff_name}</span>\` : ''}
+                      </div>
+                      <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;">
+                        <p style="margin: 5px 0; color: #666; font-size: 13px;"><strong>Ürünler:</strong></p>
+                        <p style="margin: 5px 0; color: #333; font-size: 14px; line-height: 1.6;">\${sale.items}</p>
+                      </div>
+                    </div>
+                    <div style="text-align: right; min-width: 120px;">
+                      <p style="margin: 0 0 10px 0; color: #666; font-size: 12px; font-weight: bold;">TOPLAM</p>
+                      <p style="margin: 0; font-size: 28px; font-weight: bold; color: #667eea;">₺\${parseFloat(sale.total_amount).toFixed(2)}</p>
+                    </div>
+                  </div>
+                </div>
+              \`).join('')}
+            </div>
+          </div>
+        \`;
+      });
+
+      container.innerHTML = html;
+    }
+
+    // İstatistikleri güncelle
+    async function updateStats() {
+      const pin = sessionStorage.getItem('adminPin');
+      const headers = { 'x-admin-pin': pin };
+
+      try {
+        const statsRes = await fetch(API_URL + '/api/admin/stats', { headers });
+        const stats = await statsRes.json();
+        
+        if (stats.success) {
+          const todayRevenue = sales.filter(s => s.sale_date === new Date().toLocaleDateString('tr-TR'))
+            .reduce((sum, s) => sum + parseFloat(s.total_amount), 0);
+          
+          document.getElementById('statsGrid').innerHTML = \`
+            <div class="stat-card">
+              <h3>💰 Günlük Ciro</h3>
+              <div class="value">\${todayRevenue.toFixed(2)} ₺</div>
+            </div>
+            <div class="stat-card">
+              <h3>📦 Toplam Satış</h3>
+              <div class="value">\${sales.length}</div>
+            </div>
+            <div class="stat-card">
+              <h3>📊 Bugünkü Satış</h3>
+              <div class="value">\${stats.todaySales}</div>
+            </div>
+            <div class="stat-card">
+              <h3>📋 Aktif Sipariş</h3>
+              <div class="value">\${stats.activeOrders}</div>
+            </div>
+          \`;
+        }
+      } catch (error) {
+        console.error('İstatistik güncelleme hatası:', error);
+      }
+    }
+
+    // Yenile butonu
+    function loadDashboard() {
+      loadSales();
+    }
+
+    // Enter tuşu ile PIN girişi
+    document.getElementById('pinInput')?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        verifyPin();
+      }
+    });
+  </script>
+</body>
+</html>`;
+}
+
 function generateMobileHTML(serverURL) {
   return `<!DOCTYPE html>
 <html lang="tr">
@@ -1857,13 +2477,29 @@ function generateMobileHTML(serverURL) {
 <body>
   <div class="container">
     <h1>📱 MAKARA Mobil Sipariş</h1>
-    <div id="tableSelection">
-      <h2 style="margin-bottom: 15px; font-size: 18px;">Masa Seçin</h2>
-      <div class="table-grid" id="tablesGrid"></div>
+    
+    <!-- PIN Giriş Ekranı -->
+    <div id="pinSection" style="text-align: center; padding: 40px 20px;">
+      <h2 style="margin-bottom: 20px; color: #667eea; font-size: 20px;">Personel Girişi</h2>
+      <input type="password" id="pinInput" placeholder="Şifrenizi girin" style="width: 100%; max-width: 300px; padding: 15px; font-size: 18px; border: 2px solid #667eea; border-radius: 10px; text-align: center; margin-bottom: 15px;" maxlength="20">
+      <br>
+      <button onclick="verifyStaffPin()" style="padding: 15px 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer;">Giriş Yap</button>
+      <p id="pinError" style="color: red; margin-top: 10px; display: none;"></p>
     </div>
-    <div id="orderSection" style="display: none;">
-      <div class="category-tabs" id="categoryTabs"></div>
-      <div class="products-grid" id="productsGrid"></div>
+    
+    <!-- Ana Sipariş Ekranı -->
+    <div id="mainSection" style="display: none;">
+      <div style="text-align: center; margin-bottom: 15px; padding: 10px; background: #f0f4ff; border-radius: 10px;">
+        <p style="font-weight: bold; color: #667eea;">Garson: <span id="staffName"></span></p>
+      </div>
+      <div id="tableSelection">
+        <h2 style="margin-bottom: 15px; font-size: 18px;">Masa Seçin</h2>
+        <div class="table-grid" id="tablesGrid"></div>
+      </div>
+      <div id="orderSection" style="display: none;">
+        <div class="category-tabs" id="categoryTabs"></div>
+        <div class="products-grid" id="productsGrid"></div>
+      </div>
     </div>
   </div>
   <div class="cart" id="cart" style="display: none;">
@@ -1880,6 +2516,54 @@ function generateMobileHTML(serverURL) {
     let products = [];
     let cart = [];
     let selectedCategoryId = null;
+    let currentStaff = null;
+    
+    // PIN doğrulama
+    async function verifyStaffPin() {
+      const pinInput = document.getElementById('pinInput');
+      const pin = pinInput.value;
+      const errorDiv = document.getElementById('pinError');
+      
+      if (!pin) {
+        errorDiv.textContent = 'Lütfen şifrenizi girin';
+        errorDiv.style.display = 'block';
+        return;
+      }
+      
+      try {
+        const response = await fetch(API_URL + '/staff/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pin })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          currentStaff = result.staff;
+          document.getElementById('pinSection').style.display = 'none';
+          document.getElementById('mainSection').style.display = 'block';
+          document.getElementById('staffName').textContent = currentStaff.name + ' ' + currentStaff.surname;
+          loadData();
+        } else {
+          errorDiv.textContent = result.error || 'Şifre hatalı';
+          errorDiv.style.display = 'block';
+          pinInput.value = '';
+        }
+      } catch (error) {
+        console.error('PIN doğrulama hatası:', error);
+        errorDiv.textContent = 'Bağlantı hatası';
+        errorDiv.style.display = 'block';
+      }
+    }
+    
+    // Enter tuşu ile giriş
+    document.getElementById('pinInput')?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        verifyStaffPin();
+      }
+    });
+    
     async function loadData() {
       try {
         const [catsRes, prodsRes] = await Promise.all([
@@ -1967,12 +2651,20 @@ function generateMobileHTML(serverURL) {
     function removeFromCart(productId) { cart = cart.filter(item => item.id !== productId); updateCart(); }
     async function sendOrder() {
       if (!selectedTable || cart.length === 0) { alert('Lütfen masa seçin ve ürün ekleyin'); return; }
+      if (!currentStaff) { alert('Lütfen giriş yapın'); return; }
       const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
       try {
         const response = await fetch(API_URL + '/orders', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: cart, totalAmount, tableId: selectedTable.id, tableName: selectedTable.name, tableType: selectedTable.type })
+          body: JSON.stringify({ 
+            items: cart, 
+            totalAmount, 
+            tableId: selectedTable.id, 
+            tableName: selectedTable.name, 
+            tableType: selectedTable.type,
+            staffId: currentStaff.id
+          })
         });
         const result = await response.json();
         if (result.success) {
@@ -1989,7 +2681,6 @@ function generateMobileHTML(serverURL) {
         } else alert('❌ Hata: ' + (result.error || 'Sipariş gönderilemedi'));
       } catch (error) { console.error('Sipariş gönderme hatası:', error); alert('❌ Bağlantı hatası'); }
     }
-    loadData();
   </script>
 </body>
 </html>`;
@@ -2038,6 +2729,32 @@ function startAPIServer() {
       res.json(db.products.filter(p => p.category_id === Number(categoryId)));
     } else {
       res.json(db.products);
+    }
+  });
+
+  // Personel API
+  appExpress.get('/api/staff', (req, res) => {
+    res.json(db.staff.map(s => ({
+      id: s.id,
+      name: s.name,
+      surname: s.surname
+    })));
+  });
+
+  appExpress.post('/api/staff/login', (req, res) => {
+    const { password } = req.body;
+    const staff = db.staff.find(s => s.password === password.toString());
+    if (staff) {
+      res.json({ 
+        success: true, 
+        staff: { 
+          id: staff.id, 
+          name: staff.name, 
+          surname: staff.surname 
+        } 
+      });
+    } else {
+      res.status(401).json({ success: false, error: 'Şifre hatalı' });
     }
   });
 
@@ -2138,218 +2855,17 @@ self.addEventListener('fetch', (event) => {
     res.send(serviceWorker);
   });
 
+
   // Mobil uygulama sayfası
   appExpress.get('/mobile', (req, res) => {
-    // PWA destekli mobil HTML sayfası
-    const mobileHTML = `<!DOCTYPE html>
-<html lang="tr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#667eea">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="MAKARA">
-  <link rel="manifest" href="/manifest.json">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📱</text></svg>">
-  <title>MAKARA - Mobil Sipariş</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
-    .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 20px; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
-    h1 { text-align: center; color: #667eea; margin-bottom: 20px; font-size: 24px; }
-    .table-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px; }
-    .table-btn { padding: 20px; border: 2px solid #e0e0e0; border-radius: 15px; background: white; font-size: 18px; font-weight: bold; color: #333; cursor: pointer; transition: all 0.3s; position: relative; }
-    .table-btn:active { border-color: #667eea; background: #f0f4ff; transform: scale(1.05); }
-    .table-btn.selected { border-color: #667eea; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
-    .table-btn.has-order { border-color: #4caf50; background: #e8f5e9; }
-    .table-btn.has-order.selected { border-color: #4caf50; background: linear-gradient(135deg, #4caf50 0%, #45a049 100%); color: white; }
-    .table-btn.has-order::before { content: '●'; position: absolute; top: 5px; right: 5px; color: #4caf50; font-size: 12px; }
-    .table-btn.has-order.selected::before { color: white; }
-    .category-tabs { display: flex; gap: 10px; margin-bottom: 20px; overflow-x: auto; padding-bottom: 10px; }
-    .category-tab { padding: 10px 20px; border: 2px solid #e0e0e0; border-radius: 25px; background: white; font-size: 14px; white-space: nowrap; cursor: pointer; transition: all 0.3s; }
-    .category-tab.active { border-color: #667eea; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
-    .products-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px; max-height: 400px; overflow-y: auto; }
-    .product-card { padding: 15px; border: 2px solid #e0e0e0; border-radius: 15px; background: white; cursor: pointer; transition: all 0.3s; }
-    .product-card:active { border-color: #667eea; transform: scale(1.02); }
-    .product-name { font-weight: bold; margin-bottom: 5px; font-size: 16px; }
-    .product-price { color: #667eea; font-weight: bold; font-size: 18px; }
-    .cart { position: fixed; bottom: 0; left: 0; right: 0; background: white; padding: 20px; border-top: 3px solid #667eea; box-shadow: 0 -5px 20px rgba(0,0,0,0.2); max-height: 50vh; overflow-y: auto; }
-    .cart-items { max-height: 200px; overflow-y: auto; margin-bottom: 15px; }
-    .cart-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #e0e0e0; }
-    .cart-item-controls { display: flex; align-items: center; gap: 10px; }
-    .qty-btn { width: 30px; height: 30px; border: 2px solid #667eea; border-radius: 50%; background: white; color: #667eea; font-weight: bold; cursor: pointer; }
-    .send-btn { width: 100%; padding: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 15px; font-size: 18px; font-weight: bold; cursor: pointer; }
-    .loading { text-align: center; padding: 20px; color: #667eea; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>📱 MAKARA Mobil Sipariş</h1>
-    <div id="tableSelection">
-      <h2 style="margin-bottom: 15px; font-size: 18px;">Masa Seçin</h2>
-      <div class="table-grid" id="tablesGrid"></div>
-    </div>
-    <div id="orderSection" style="display: none;">
-      <div class="category-tabs" id="categoryTabs"></div>
-      <div class="products-grid" id="productsGrid"></div>
-    </div>
-  </div>
-  <div class="cart" id="cart" style="display: none;">
-    <div class="cart-items" id="cartItems"></div>
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-      <span style="font-size: 20px; font-weight: bold;">Toplam: <span id="cartTotal">0</span> ₺</span>
-    </div>
-    <button class="send-btn" onclick="sendOrder()">📤 Siparişi Gönder</button>
-  </div>
-  <script>
-    const API_URL = '${serverURL}/api';
-    let selectedTable = null;
-    let categories = [];
-    let products = [];
-    let cart = [];
-    let selectedCategoryId = null;
-    async function loadData() {
-      try {
-        const [catsRes, prodsRes] = await Promise.all([
-          fetch(API_URL + '/categories'),
-          fetch(API_URL + '/products')
-        ]);
-        categories = await catsRes.json();
-        products = await prodsRes.json();
-        const tablesRes = await fetch(API_URL + '/tables');
-        const tables = await tablesRes.json();
-        renderTables(tables);
-        renderCategories();
-      } catch (error) {
-        console.error('Veri yükleme hatası:', error);
-        document.getElementById('tablesGrid').innerHTML = '<div class="loading">❌ Bağlantı hatası</div>';
-      }
-    }
-    function renderTables(tables) {
-      const grid = document.getElementById('tablesGrid');
-      grid.innerHTML = tables.map(table => {
-        // table.id string olabilir (inside-1, outside-1 gibi), bu yüzden tırnak içine al
-        const tableIdStr = typeof table.id === 'string' ? '\\'' + table.id + '\\'' : table.id;
-        const nameStr = table.name.replace(/'/g, "\\'");
-        const typeStr = table.type.replace(/'/g, "\\'");
-        const hasOrderClass = table.hasOrder ? ' has-order' : '';
-        return '<button class="table-btn' + hasOrderClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')">' + table.name + '</button>';
-      }).join('');
-    }
-    function selectTable(id, name, type) {
-      selectedTable = { id, name, type };
-      document.querySelectorAll('.table-btn').forEach(btn => btn.classList.remove('selected'));
-      event.target.classList.add('selected');
-      document.getElementById('tableSelection').style.display = 'none';
-      document.getElementById('orderSection').style.display = 'block';
-      document.getElementById('cart').style.display = 'block';
-      if (categories.length > 0) selectCategory(categories[0].id);
-    }
-    function renderCategories() {
-      const tabs = document.getElementById('categoryTabs');
-      tabs.innerHTML = categories.map(cat => 
-        '<button class="category-tab ' + (selectedCategoryId === cat.id ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')">' + cat.name + '</button>'
-      ).join('');
-    }
-    function selectCategory(categoryId) {
-      selectedCategoryId = categoryId;
-      renderCategories();
-      renderProducts();
-    }
-    function renderProducts() {
-      const filtered = products.filter(p => p.category_id === selectedCategoryId);
-      const grid = document.getElementById('productsGrid');
-      grid.innerHTML = filtered.map(prod => 
-        '<div class="product-card" onclick="addToCart(' + prod.id + ', \\'' + prod.name.replace(/'/g, "\\'") + '\\', ' + prod.price + ')">' +
-          '<div class="product-name">' + prod.name + '</div>' +
-          '<div class="product-price">' + prod.price.toFixed(2) + ' ₺</div>' +
-        '</div>'
-      ).join('');
-    }
-    function addToCart(productId, name, price) {
-      const existing = cart.find(item => item.id === productId);
-      if (existing) existing.quantity++;
-      else cart.push({ id: productId, name, price, quantity: 1 });
-      updateCart();
-    }
-    function updateCart() {
-      const itemsDiv = document.getElementById('cartItems');
-      const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-      itemsDiv.innerHTML = cart.map(item => 
-        '<div class="cart-item">' +
-          '<div><div style="font-weight: bold;">' + item.name + '</div><div style="color: #667eea;">' + item.price.toFixed(2) + ' ₺ x ' + item.quantity + '</div></div>' +
-          '<div class="cart-item-controls">' +
-            '<button class="qty-btn" onclick="changeQuantity(' + item.id + ', -1)">-</button>' +
-            '<span style="min-width: 30px; text-align: center;">' + item.quantity + '</span>' +
-            '<button class="qty-btn" onclick="changeQuantity(' + item.id + ', 1)">+</button>' +
-            '<button class="qty-btn" onclick="removeFromCart(' + item.id + ')" style="background: #ff4444; color: white; border-color: #ff4444;">×</button>' +
-          '</div>' +
-        '</div>'
-      ).join('');
-      document.getElementById('cartTotal').textContent = total.toFixed(2);
-    }
-    function changeQuantity(productId, delta) {
-      const item = cart.find(item => item.id === productId);
-      if (item) { item.quantity += delta; if (item.quantity <= 0) removeFromCart(productId); else updateCart(); }
-    }
-    function removeFromCart(productId) { cart = cart.filter(item => item.id !== productId); updateCart(); }
-    async function sendOrder() {
-      if (!selectedTable || cart.length === 0) { alert('Lütfen masa seçin ve ürün ekleyin'); return; }
-      const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-      try {
-        const response = await fetch(API_URL + '/orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: cart, totalAmount, tableId: selectedTable.id, tableName: selectedTable.name, tableType: selectedTable.type })
-        });
-        const result = await response.json();
-        if (result.success) {
-          const message = result.isNewOrder 
-            ? '✅ Yeni sipariş başarıyla oluşturuldu!' 
-            : '✅ Sipariş mevcut siparişe eklendi!';
-          alert(message);
-          cart = []; selectedTable = null; updateCart();
-          document.getElementById('tableSelection').style.display = 'block';
-          document.getElementById('orderSection').style.display = 'none';
-          document.getElementById('cart').style.display = 'none';
-          // Masaları yeniden yükle (aktif durumları güncellenmiş olabilir)
-          loadData();
-        } else alert('❌ Hata: ' + (result.error || 'Sipariş gönderilemedi'));
-      } catch (error) { console.error('Sipariş gönderme hatası:', error); alert('❌ Bağlantı hatası'); }
-    }
-    loadData();
-    
-    // PWA Install Prompt
-    let deferredPrompt;
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      deferredPrompt = e;
-      console.log('📱 Uygulama yükleme hazır');
-    });
-    
-    // Service Worker kayıt
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-          .then((registration) => {
-            console.log('✅ Service Worker kaydedildi:', registration.scope);
-          })
-          .catch((error) => {
-            console.log('❌ Service Worker kayıt hatası:', error);
-          });
-      });
-    }
-  </script>
-</body>
-</html>`;
-    res.send(mobileHTML);
+    // PWA destekli mobil HTML sayfası - PIN girişi ile
+    res.send(generateMobileHTML(serverURL));
   });
 
   // Sipariş oluştur veya mevcut siparişe ekle
   appExpress.post('/api/orders', async (req, res) => {
     try {
-      const { items, totalAmount, tableId, tableName, tableType, orderNote } = req.body;
+      const { items, totalAmount, tableId, tableName, tableType, orderNote, staffId } = req.body;
       
       // Bu masada pending durumunda bir sipariş var mı kontrol et
       const existingOrder = db.tableOrders.find(
@@ -2417,6 +2933,10 @@ self.addEventListener('fetch', (event) => {
           ? Math.max(...db.tableOrders.map(o => o.id)) + 1 
           : 1;
 
+        // Staff bilgisini al
+        const staff = staffId ? db.staff.find(s => s.id === staffId) : null;
+        const staffName = staff ? `${staff.name} ${staff.surname}` : null;
+        
         db.tableOrders.push({
           id: orderId,
           table_id: tableId,
@@ -2426,7 +2946,9 @@ self.addEventListener('fetch', (event) => {
           order_date: orderDate,
           order_time: orderTime,
           status: 'pending',
-          order_note: orderNote || null
+          order_note: orderNote || null,
+          staff_id: staffId || null,
+          staff_name: staffName
         });
 
         items.forEach(item => {
@@ -2513,17 +3035,130 @@ self.addEventListener('fetch', (event) => {
   });
 
   // Server'ı başlat
-  server.listen(serverPort, () => {
+  server.listen(serverPort, async () => {
     console.log(`\n🚀 API Server başlatıldı: ${serverURL}`);
     console.log(`📱 Mobil cihazlardan erişim için: ${serverURL}/mobile\n`);
+    
+    // ngrok kaldırıldı - Firebase kullanılacak
   });
 
   apiServer = server;
   return { serverURL, localIP };
 }
 
+// Firebase yapılandırması
+async function initFirebase() {
+  try {
+    // Electron'da Firebase modüler SDK kullanımı
+    const firebaseModule = await import('firebase/app');
+    const firestoreModule = await import('firebase/firestore');
+    
+    const firebaseConfig = {
+      apiKey: "AIzaSyCdf-c13e0wCafRYHXhIls1epJgD1RjPUA",
+      authDomain: "makara-16344.firebaseapp.com",
+      projectId: "makara-16344",
+      storageBucket: "makara-16344.firebasestorage.app",
+      messagingSenderId: "216769654742",
+      appId: "1:216769654742:web:16792742d4613f4269be77",
+      measurementId: "G-K4XZHP11MM"
+    };
+    
+    firebaseApp = firebaseModule.initializeApp(firebaseConfig);
+    firestore = firestoreModule.getFirestore(firebaseApp);
+    console.log('✅ Firebase başlatıldı');
+  } catch (error) {
+    console.error('❌ Firebase başlatılamadı:', error);
+  }
+}
+
+// Firebase'e satış kaydet
+async function saveSaleToFirebase(saleData, items) {
+  if (!firestore) {
+    console.warn('⚠️ Firebase henüz başlatılmadı');
+    return;
+  }
+
+  try {
+    const firestoreModule = await import('firebase/firestore');
+    const { collection, addDoc, serverTimestamp } = firestoreModule;
+    
+    // Staff bilgisini al
+    const staff = saleData.staff_id ? db.staff.find(s => s.id === saleData.staff_id) : null;
+    const staffName = staff ? `${staff.name} ${staff.surname}` : null;
+    
+    // Satış verisi
+    const saleDoc = {
+      sale_id: saleData.id,
+      total_amount: saleData.total_amount,
+      payment_method: saleData.payment_method,
+      sale_date: saleData.sale_date,
+      sale_time: saleData.sale_time,
+      staff_id: saleData.staff_id || null,
+      staff_name: staffName,
+      table_name: saleData.table_name || null,
+      table_type: saleData.table_type || null,
+      items: items.map(item => ({
+        product_id: item.product_id,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        price: item.price,
+        isGift: item.isGift || false
+      })),
+      created_at: serverTimestamp()
+    };
+    
+    await addDoc(collection(firestore, 'sales'), saleDoc);
+    console.log('✅ Satış Firebase\'e kaydedildi:', saleData.id);
+  } catch (error) {
+    console.error('❌ Firebase\'e satış kaydedilemedi:', error);
+  }
+}
+
+// Firebase'e satış kaydet
+async function saveSaleToFirebase(saleData, items) {
+  if (!firestore) {
+    console.warn('⚠️ Firebase henüz başlatılmadı');
+    return;
+  }
+
+  try {
+    const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
+    
+    // Staff bilgisini al
+    const staff = saleData.staff_id ? db.staff.find(s => s.id === saleData.staff_id) : null;
+    const staffName = staff ? `${staff.name} ${staff.surname}` : null;
+    
+    // Satış verisi
+    const saleDoc = {
+      sale_id: saleData.id,
+      total_amount: saleData.total_amount,
+      payment_method: saleData.payment_method,
+      sale_date: saleData.sale_date,
+      sale_time: saleData.sale_time,
+      staff_id: saleData.staff_id || null,
+      staff_name: staffName,
+      table_name: saleData.table_name || null,
+      table_type: saleData.table_type || null,
+      items: items.map(item => ({
+        product_id: item.product_id,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        price: item.price,
+        isGift: item.isGift || false
+      })),
+      created_at: serverTimestamp()
+    };
+    
+    await addDoc(collection(firestore, 'sales'), saleDoc);
+    console.log('✅ Satış Firebase\'e kaydedildi:', saleData.id);
+  } catch (error) {
+    console.error('❌ Firebase\'e satış kaydedilemedi:', error);
+  }
+}
+
 app.whenReady().then(() => {
   initDatabase();
+  initFirebase();
   createWindow();
   startAPIServer();
 
