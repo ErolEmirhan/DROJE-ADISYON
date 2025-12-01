@@ -33,3 +33,4 @@ Deploy sonrası sabit URL: `https://makara-16344.web.app` veya `https://makara-1
 Varsayılan PIN: `1234` (Firebase'den güvenli bir şekilde alınabilir)
 
 
+

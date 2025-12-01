@@ -5,13 +5,15 @@ import DatePickerDropdown from './DatePickerDropdown';
 const SalesHistory = () => {
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('recent'); // 'recent' or 'reports'
+  const [activeTab, setActiveTab] = useState('recent'); // 'recent', 'reports', or 'staff'
   const [selectedDate, setSelectedDate] = useState(null); // null = tüm tarihler, yoksa seçilen tarih
   const [printToast, setPrintToast] = useState(null); // { status: 'printing' | 'success' | 'error', message: string }
   const [productStatsData, setProductStatsData] = useState(null); // Ürün istatistikleri
+  const [staffList, setStaffList] = useState([]);
 
   useEffect(() => {
     loadSales();
+    loadStaff();
   }, []);
 
   const loadSales = async () => {
@@ -19,6 +21,15 @@ const SalesHistory = () => {
     const salesData = await window.electronAPI.getSales();
     setSales(salesData);
     setLoading(false);
+  };
+
+  const loadStaff = async () => {
+    try {
+      const staff = await window.electronAPI.getStaff();
+      setStaffList(staff || []);
+    } catch (error) {
+      console.error('Personel yükleme hatası:', error);
+    }
   };
 
   const getPaymentMethodColor = (method) => {
@@ -622,6 +633,191 @@ const SalesHistory = () => {
     );
   };
 
+  const renderStaffDetails = () => {
+    // Filtrelenmiş satışları kullan
+    const reportSales = selectedDate 
+      ? sales.filter(sale => sale.sale_date === selectedDate)
+      : sales;
+
+    // Personel bazlı istatistikleri hesapla
+    const staffStats = {};
+    
+    reportSales.forEach(sale => {
+      if (!sale.staff_name) return; // Staff bilgisi yoksa atla
+      
+      if (!staffStats[sale.staff_name]) {
+        staffStats[sale.staff_name] = {
+          name: sale.staff_name,
+          totalRevenue: 0,
+          totalSales: 0,
+          products: {},
+          averageSale: 0
+        };
+      }
+      
+      staffStats[sale.staff_name].totalRevenue += parseFloat(sale.total_amount);
+      staffStats[sale.staff_name].totalSales += 1;
+      
+      // Ürün istatistikleri
+      if (sale.items) {
+        const items = sale.items.split(', ');
+        items.forEach(item => {
+          const match = item.match(/(.+) x(\d+)/);
+          if (match) {
+            const [, productName] = match;
+            const cleanProductName = productName.replace(' (İKRAM)', '');
+            
+            if (!staffStats[sale.staff_name].products[cleanProductName]) {
+              staffStats[sale.staff_name].products[cleanProductName] = 0;
+            }
+            staffStats[sale.staff_name].products[cleanProductName] += parseInt(match[2]);
+          }
+        });
+      }
+    });
+    
+    // Ortalama satış hesapla
+    Object.keys(staffStats).forEach(staffName => {
+      const stats = staffStats[staffName];
+      stats.averageSale = stats.totalSales > 0 ? stats.totalRevenue / stats.totalSales : 0;
+    });
+    
+    // Personelleri toplam ciroyu göre sırala
+    const sortedStaff = Object.values(staffStats).sort((a, b) => b.totalRevenue - a.totalRevenue);
+    
+    if (sortedStaff.length === 0) {
+      return (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">
+                {selectedDate ? formatDateDisplay(selectedDate) + ' - Personel Detayları' : 'Tüm Zamanlar - Personel Detayları'}
+              </h3>
+              <p className="text-sm text-gray-600 mt-1">
+                {selectedDate ? 'Seçilen tarihteki personel performansları' : 'Tüm personellerin performansları'}
+              </p>
+            </div>
+            <DatePickerDropdown
+              selectedDate={selectedDate}
+              onDateChange={setSelectedDate}
+            />
+          </div>
+          <div className="text-center py-20">
+            <svg className="w-32 h-32 mx-auto text-purple-200 mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            <h3 className="text-2xl font-bold text-gray-700 mb-2">
+              Personel satış verisi bulunamadı
+            </h3>
+            <p className="text-gray-600">
+              {selectedDate ? 'Seçilen tarihte personel satışı yok' : 'Henüz personel satış verisi yok'}
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900">
+              {selectedDate ? formatDateDisplay(selectedDate) + ' - Personel Detayları' : 'Tüm Zamanlar - Personel Detayları'}
+            </h3>
+            <p className="text-sm text-gray-600 mt-1">
+              {selectedDate ? 'Seçilen tarihteki personel performansları' : 'Tüm personellerin performansları'}
+            </p>
+          </div>
+          <DatePickerDropdown
+            selectedDate={selectedDate}
+            onDateChange={setSelectedDate}
+          />
+        </div>
+
+        {/* Personel Kartları */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {sortedStaff.map((staff, index) => {
+            // En çok satılan ürünü bul
+            const topProducts = Object.entries(staff.products)
+              .sort(([, a], [, b]) => b - a)
+              .slice(0, 3);
+            
+            return (
+              <div
+                key={staff.name}
+                className="card-glass p-6 hover:shadow-xl transition-all duration-300"
+              >
+                {/* Personel Başlığı */}
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center space-x-4">
+                    <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-white font-bold text-2xl ${
+                      index === 0 ? 'bg-gradient-to-br from-yellow-400 to-orange-500' :
+                      index === 1 ? 'bg-gradient-to-br from-gray-300 to-gray-400' :
+                      index === 2 ? 'bg-gradient-to-br from-amber-600 to-amber-700' :
+                      'bg-gradient-to-br from-purple-500 to-pink-500'
+                    }`}>
+                      {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '👤'}
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-bold text-gray-900">{staff.name}</h3>
+                      <p className="text-sm text-gray-600 mt-1">
+                        {staff.totalSales} satış yaptı
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* İstatistikler */}
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                  <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
+                    <p className="text-xs font-semibold text-gray-600 mb-1">Toplam Ciro</p>
+                    <p className="text-2xl font-bold bg-gradient-to-r from-green-500 to-emerald-500 bg-clip-text text-transparent">
+                      ₺{staff.totalRevenue.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl p-4 border border-blue-200">
+                    <p className="text-xs font-semibold text-gray-600 mb-1">Ortalama Satış</p>
+                    <p className="text-2xl font-bold bg-gradient-to-r from-blue-500 to-cyan-500 bg-clip-text text-transparent">
+                      ₺{staff.averageSale.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* En Çok Satılan Ürünler */}
+                {topProducts.length > 0 && (
+                  <div className="border-t border-gray-200 pt-4">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center space-x-2">
+                      <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                      </svg>
+                      <span>En Çok Sattığı Ürünler</span>
+                    </h4>
+                    <div className="space-y-2">
+                      {topProducts.map(([productName, count], idx) => (
+                        <div
+                          key={productName}
+                          className="flex items-center justify-between p-3 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg"
+                        >
+                          <div className="flex items-center space-x-3">
+                            <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">
+                              {idx + 1}
+                            </div>
+                            <span className="font-medium text-gray-900">{productName}</span>
+                          </div>
+                          <span className="text-sm font-semibold text-purple-600">{count} adet</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-8">
@@ -680,6 +876,22 @@ const SalesHistory = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
             </svg>
             <span>Detaylı Raporlama</span>
+          </div>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('staff')}
+          className={`px-8 py-4 rounded-2xl font-semibold text-lg transition-all duration-300 ${
+            activeTab === 'staff'
+              ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-2xl transform scale-105'
+              : 'bg-white/70 text-gray-600 hover:bg-white hover:shadow-lg hover:scale-102'
+          }`}
+        >
+          <div className="flex items-center space-x-3">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            <span>Personel Detayları</span>
           </div>
         </button>
       </div>
@@ -872,7 +1084,7 @@ const SalesHistory = () => {
           })}
         </div>
       )
-      ) : renderReports()}
+      ) : activeTab === 'reports' ? renderReports() : renderStaffDetails()}
 
       {activeTab === 'recent' && filteredSales.length > 0 && (
         <div className="mt-8 p-6 bg-white/70 backdrop-blur-xl rounded-2xl border border-purple-200 shadow-lg">

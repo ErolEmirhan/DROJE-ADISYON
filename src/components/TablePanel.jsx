@@ -173,6 +173,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
       quantity: item.quantity,
       price: item.price,
       isGift: item.isGift || false,
+      staff_name: item.staff_name || null,
       category_id: null // Kategori bilgisi item'da yoksa sonra eklenebilir
     }));
     

@@ -2383,10 +2383,122 @@ async function printAdisyonToPrinter(printerName, printerType, items, adisyonDat
   }
 }
 
+// Kategori bazlı adisyon yazdırma fonksiyonu
+async function printAdisyonByCategory(items, adisyonData) {
+  console.log('\n=== KATEGORİ BAZLI ADİSYON YAZDIRMA BAŞLIYOR ===');
+  console.log(`   Toplam ${items.length} ürün bulundu`);
+  
+  try {
+    // 1. Ürünleri kategorilerine göre grupla
+    const categoryItemsMap = new Map();
+    
+    for (const item of items) {
+      // Ürünün kategori ID'sini bul
+      const product = db.products.find(p => p.id === item.id);
+      if (product && product.category_id) {
+        const categoryId = product.category_id;
+        if (!categoryItemsMap.has(categoryId)) {
+          categoryItemsMap.set(categoryId, []);
+        }
+        categoryItemsMap.get(categoryId).push(item);
+      } else {
+        // Kategori bulunamazsa, 'no-category' key kullan
+        if (!categoryItemsMap.has('no-category')) {
+          categoryItemsMap.set('no-category', []);
+        }
+        categoryItemsMap.get('no-category').push(item);
+      }
+    }
+    
+    console.log(`\n📋 Kategori grupları oluşturuldu: ${categoryItemsMap.size} kategori`);
+    
+    // 2. Her kategori için atanmış yazıcıları bul ve yazdır
+    const printJobs = [];
+    
+    categoryItemsMap.forEach((categoryItems, categoryId) => {
+      const categoryIdNum = typeof categoryId === 'string' && categoryId !== 'no-category' ? parseInt(categoryId) : categoryId;
+      
+      // Bu kategori için atanmış yazıcıyı bul
+      const assignment = db.printerAssignments.find(a => {
+        const assignmentCategoryId = typeof a.category_id === 'string' ? parseInt(a.category_id) : a.category_id;
+        return assignmentCategoryId === categoryIdNum;
+      });
+      
+      if (assignment) {
+        console.log(`   ✓ Kategori ID ${categoryId} için yazıcı bulundu: "${assignment.printerName}"`);
+        printJobs.push({
+          printerName: assignment.printerName,
+          printerType: assignment.printerType,
+          categoryId: categoryId,
+          items: categoryItems
+        });
+      } else {
+        // Kasa yazıcısına yazdır (varsayılan)
+        const cashierPrinter = db.settings.cashierPrinter;
+        if (cashierPrinter && cashierPrinter.printerName) {
+          console.log(`   ⚠️ Kategori ID ${categoryId} için yazıcı ataması yok, kasa yazıcısına yazdırılacak`);
+          printJobs.push({
+            printerName: cashierPrinter.printerName,
+            printerType: cashierPrinter.printerType,
+            categoryId: categoryId,
+            items: categoryItems
+          });
+        }
+      }
+    });
+    
+    // 3. Her yazdırma işini gerçekleştir
+    for (let i = 0; i < printJobs.length; i++) {
+      const job = printJobs[i];
+      const categoryAdisyonData = {
+        ...adisyonData,
+        items: job.items
+      };
+      
+      console.log(`\n🖨️ ADİSYON YAZDIRMA ${i + 1}/${printJobs.length}`);
+      console.log(`   Yazıcı: "${job.printerName}"`);
+      console.log(`   Kategori ID: ${job.categoryId}`);
+      console.log(`   Ürün sayısı: ${job.items.length}`);
+      
+      await printAdisyonToPrinter(
+        job.printerName,
+        job.printerType,
+        job.items,
+        categoryAdisyonData
+      ).catch(err => {
+        console.error(`   ❌ Adisyon yazdırma hatası:`, err);
+      });
+      
+      // Yazıcılar arası kısa bekleme
+      if (i < printJobs.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    
+    console.log(`\n=== KATEGORİ BAZLI ADİSYON YAZDIRMA TAMAMLANDI ===`);
+  } catch (error) {
+    console.error('\n❌ KATEGORİ BAZLI ADİSYON YAZDIRMA HATASI:', error);
+    // Hata durumunda kasa yazıcısına yazdırmayı dene
+    const cashierPrinter = db.settings.cashierPrinter;
+    if (cashierPrinter && cashierPrinter.printerName) {
+      console.log('   ⚠️ Kasa yazıcısına yazdırma deneniyor...');
+      await printAdisyonToPrinter(
+        cashierPrinter.printerName,
+        cashierPrinter.printerType,
+        items,
+        adisyonData
+      ).catch(err => {
+        console.error('   ❌ Kasa yazıcısına yazdırma hatası:', err);
+      });
+    }
+  }
+}
+
 // Modern ve profesyonel adisyon HTML formatı
 function generateAdisyonHTML(items, adisyonData) {
   const itemsHTML = items.map(item => {
     const isGift = item.isGift || false;
+    const staffName = item.staff_name || null;
     
     if (isGift) {
       return `
@@ -2397,9 +2509,14 @@ function generateAdisyonHTML(items, adisyonData) {
             <span style="font-size: 8px; background: linear-gradient(135deg, #16a34a, #22c55e); color: white; padding: 3px 6px; border-radius: 12px; font-weight: 900; box-shadow: 0 2px 4px rgba(22,163,74,0.3);">İKRAM</span>
           </div>
         </div>
-        <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
           <span style="font-size: 11px; color: #166534; font-weight: 700; font-family: 'Montserrat', sans-serif;">${item.quantity} adet</span>
         </div>
+        ${staffName ? `
+        <div style="margin-top: 4px; padding: 4px 6px; background: rgba(139, 92, 246, 0.1); border-radius: 4px; border-left: 2px solid #8b5cf6;">
+          <p style="font-size: 8px; color: #6d28d9; font-weight: 700; margin: 0; font-family: 'Montserrat', sans-serif;">👤 ${staffName}</p>
+        </div>
+        ` : ''}
         ${item.extraNote ? `
         <div style="margin-top: 6px; padding: 6px; background: white; border-radius: 4px; border-left: 3px solid #fbbf24;">
           <p style="font-size: 9px; color: #92400e; font-weight: 700; margin: 0; font-family: 'Montserrat', sans-serif;">📝 ${item.extraNote}</p>
@@ -2414,9 +2531,14 @@ function generateAdisyonHTML(items, adisyonData) {
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
           <span style="font-weight: 900; font-size: 13px; color: #1e293b; font-family: 'Montserrat', sans-serif;">${item.name}</span>
         </div>
-        <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
           <span style="font-size: 11px; color: #475569; font-weight: 700; font-family: 'Montserrat', sans-serif;">${item.quantity} adet</span>
         </div>
+        ${staffName ? `
+        <div style="margin-top: 4px; padding: 4px 6px; background: rgba(139, 92, 246, 0.1); border-radius: 4px; border-left: 2px solid #8b5cf6;">
+          <p style="font-size: 8px; color: #6d28d9; font-weight: 700; margin: 0; font-family: 'Montserrat', sans-serif;">👤 ${staffName}</p>
+        </div>
+        ` : ''}
         ${item.extraNote ? `
         <div style="margin-top: 6px; padding: 6px; background: #fef3c7; border-radius: 4px; border-left: 3px solid #f59e0b;">
           <p style="font-size: 9px; color: #92400e; font-weight: 700; margin: 0; font-family: 'Montserrat', sans-serif;">📝 ${item.extraNote}</p>
@@ -2741,9 +2863,27 @@ function generateMobileHTML(serverURL) {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
       gap: 12px;
-      margin-bottom: 20px;
-      max-height: 400px;
-      overflow-y: auto;
+      margin-bottom: 0;
+      padding-right: 5px;
+    }
+    /* Scrollable container for products */
+    #orderSection > div:last-child {
+      scrollbar-width: thin;
+      scrollbar-color: #a855f7 #f1f1f1;
+    }
+    #orderSection > div:last-child::-webkit-scrollbar {
+      width: 6px;
+    }
+    #orderSection > div:last-child::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 10px;
+    }
+    #orderSection > div:last-child::-webkit-scrollbar-thumb {
+      background: #a855f7;
+      border-radius: 10px;
+    }
+    #orderSection > div:last-child::-webkit-scrollbar-thumb:hover {
+      background: #9333ea;
     }
     .product-card {
       padding: 15px;
@@ -3026,6 +3166,162 @@ function generateMobileHTML(serverURL) {
         transform: translateX(0);
       }
     }
+    .logout-btn {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 20px;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(10px);
+      color: #ef4444;
+      border: 2px solid rgba(239, 68, 68, 0.2);
+      border-radius: 16px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(239, 68, 68, 0.15);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      animation: logoutButtonSlideIn 0.4s ease-out;
+    }
+    .logout-btn:hover {
+      background: rgba(255, 255, 255, 1);
+      border-color: rgba(239, 68, 68, 0.4);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 25px rgba(239, 68, 68, 0.25);
+    }
+    .logout-btn:active {
+      transform: translateY(0) scale(0.98);
+    }
+    .logout-btn svg {
+      width: 18px;
+      height: 18px;
+      transition: transform 0.3s;
+    }
+    .logout-btn:hover svg {
+      transform: rotate(-15deg);
+    }
+    @keyframes logoutButtonSlideIn {
+      from {
+        opacity: 0;
+        transform: translateX(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+    .logout-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(5px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      animation: modalFadeIn 0.3s ease-out;
+    }
+    .logout-modal-content {
+      background: white;
+      border-radius: 20px;
+      padding: 30px;
+      max-width: 400px;
+      width: 90%;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      animation: modalSlideUp 0.3s ease-out;
+    }
+    .logout-modal-icon {
+      width: 60px;
+      height: 60px;
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 28px;
+    }
+    .logout-modal-title {
+      text-align: center;
+      font-size: 20px;
+      font-weight: 700;
+      color: #1f2937;
+      margin-bottom: 10px;
+    }
+    .logout-modal-message {
+      text-align: center;
+      font-size: 16px;
+      color: #6b7280;
+      margin-bottom: 30px;
+      line-height: 1.5;
+    }
+    .logout-modal-staff-name {
+      font-weight: 600;
+      color: #a855f7;
+      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .logout-modal-buttons {
+      display: flex;
+      gap: 12px;
+    }
+    .logout-modal-btn {
+      flex: 1;
+      padding: 14px 24px;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    .logout-modal-btn-cancel {
+      background: #f3f4f6;
+      color: #374151;
+    }
+    .logout-modal-btn-cancel:hover {
+      background: #e5e7eb;
+      transform: translateY(-2px);
+    }
+    .logout-modal-btn-confirm {
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      color: white;
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+    }
+    .logout-modal-btn-confirm:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(239, 68, 68, 0.4);
+    }
+    .logout-modal-btn:active {
+      transform: translateY(0) scale(0.98);
+    }
+    @keyframes modalFadeIn {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+    @keyframes modalSlideUp {
+      from {
+        transform: translateY(30px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
     .search-box {
       width: 100%;
       padding: 12px 15px;
@@ -3268,7 +3564,15 @@ function generateMobileHTML(serverURL) {
     </div>
     
     <!-- Ana Sipariş Ekranı -->
-    <div id="mainSection" style="display: none;">
+    <div id="mainSection" style="display: none; padding-top: 70px;">
+      <!-- Çıkış Yap Butonu - Sol Üst -->
+      <button class="logout-btn" onclick="showLogoutModal()" title="Çıkış Yap">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+        </svg>
+        <span>Çıkış Yap</span>
+      </button>
+      
       <div class="staff-info">
         <p>Garson: <span id="staffName"></span></p>
       </div>
@@ -3302,8 +3606,10 @@ function generateMobileHTML(serverURL) {
         <!-- Arama Çubuğu -->
         <input type="text" id="searchInput" class="search-box" placeholder="🔍 Ürün ara..." oninput="filterProducts()">
         
-        <!-- Ürünler -->
-        <div class="products-grid" id="productsGrid"></div>
+        <!-- Ürünler - Scrollable Container -->
+        <div style="overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; max-height: calc(100vh - 450px); padding-bottom: 20px;">
+          <div class="products-grid" id="productsGrid"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -3324,6 +3630,21 @@ function generateMobileHTML(serverURL) {
       <div class="toast-message" id="toastMessage"></div>
     </div>
     <button class="toast-close" onclick="hideToast()">×</button>
+  </div>
+  
+  <!-- Çıkış Yap Onay Modal -->
+  <div id="logoutModal" class="logout-modal" style="display: none;" onclick="if(event.target === this) hideLogoutModal()">
+    <div class="logout-modal-content">
+      <div class="logout-modal-icon">🚪</div>
+      <h3 class="logout-modal-title">Çıkış Yapmak İstediğinize Emin Misiniz?</h3>
+      <p class="logout-modal-message">
+        <span class="logout-modal-staff-name" id="logoutStaffName"></span> olarak çıkış yapmak istediğinize emin misiniz?
+      </p>
+      <div class="logout-modal-buttons">
+        <button class="logout-modal-btn logout-modal-btn-cancel" onclick="hideLogoutModal()">İptal</button>
+        <button class="logout-modal-btn logout-modal-btn-confirm" onclick="confirmLogout()">Evet, Çıkış Yap</button>
+      </div>
+    </div>
   </div>
   
   <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
@@ -3659,6 +3980,48 @@ function generateMobileHTML(serverURL) {
       toast.classList.remove('show');
     }
     
+    // Çıkış Yap Fonksiyonları
+    function showLogoutModal() {
+      if (currentStaff) {
+        const staffName = currentStaff.name + ' ' + currentStaff.surname;
+        document.getElementById('logoutStaffName').textContent = staffName;
+        document.getElementById('logoutModal').style.display = 'flex';
+      }
+    }
+    
+    function hideLogoutModal() {
+      document.getElementById('logoutModal').style.display = 'none';
+    }
+    
+    function confirmLogout() {
+      // Oturum bilgisini temizle
+      localStorage.removeItem('staffSession');
+      currentStaff = null;
+      
+      // WebSocket bağlantısını kapat
+      if (socket) {
+        socket.disconnect();
+        socket = null;
+      }
+      
+      // Ana ekranı gizle, giriş ekranını göster
+      document.getElementById('mainSection').style.display = 'none';
+      document.getElementById('pinSection').style.display = 'block';
+      document.getElementById('logoutModal').style.display = 'none';
+      
+      // Sepeti ve seçili masayı temizle
+      cart = [];
+      selectedTable = null;
+      updateCart();
+      
+      // Input'u temizle
+      document.getElementById('pinInput').value = '';
+      document.getElementById('pinError').classList.remove('show');
+      
+      // Toast göster
+      showToast('success', 'Çıkış Yapıldı', 'Başarıyla çıkış yaptınız. Tekrar giriş yapabilirsiniz.');
+    }
+    
     async function sendOrder() {
       if (!selectedTable || cart.length === 0) { 
         showToast('error', 'Eksik Bilgi', 'Lütfen masa seçin ve ürün ekleyin');
@@ -3945,31 +4308,37 @@ function startAPIServer() {
         });
       }
 
-      // Mobil personel arayüzünden gelen siparişler için otomatik adisyon yazdır
-      const cashierPrinter = db.settings.cashierPrinter;
-      if (cashierPrinter && cashierPrinter.printerName) {
-        try {
-          const adisyonData = {
-            items: items,
-            tableName: tableName,
-            tableType: tableType,
-            orderNote: orderNote || null,
-            sale_date: isNewOrder ? new Date().toLocaleDateString('tr-TR') : (db.tableOrders.find(o => o.id === orderId)?.order_date || new Date().toLocaleDateString('tr-TR')),
-            sale_time: isNewOrder ? new Date().toLocaleTimeString('tr-TR') : (db.tableOrders.find(o => o.id === orderId)?.order_time || new Date().toLocaleTimeString('tr-TR'))
+      // Mobil personel arayüzünden gelen siparişler için otomatik adisyon yazdır (kategori bazlı)
+      try {
+        // Items'a staff_name ekle (tableOrderItems'dan al)
+        const itemsWithStaff = items.map(item => {
+          // Mevcut orderId için bu ürünü ekleyen garsonu bul
+          const orderItem = db.tableOrderItems.find(oi => 
+            oi.order_id === orderId && 
+            oi.product_id === item.id && 
+            oi.product_name === item.name
+          );
+          return {
+            ...item,
+            staff_name: orderItem?.staff_name || staffName || null
           };
-          
-          // Arka planda yazdır, hata olsa bile devam et
-          printAdisyonToPrinter(
-            cashierPrinter.printerName,
-            cashierPrinter.printerType,
-            items,
-            adisyonData
-          ).catch(err => {
-            console.error('Mobil sipariş adisyon yazdırma hatası:', err);
-          });
-        } catch (error) {
-          console.error('Mobil sipariş adisyon yazdırma hatası:', error);
-        }
+        });
+        
+        const adisyonData = {
+          items: itemsWithStaff,
+          tableName: tableName,
+          tableType: tableType,
+          orderNote: orderNote || null,
+          sale_date: isNewOrder ? new Date().toLocaleDateString('tr-TR') : (db.tableOrders.find(o => o.id === orderId)?.order_date || new Date().toLocaleDateString('tr-TR')),
+          sale_time: isNewOrder ? new Date().toLocaleTimeString('tr-TR') : (db.tableOrders.find(o => o.id === orderId)?.order_time || new Date().toLocaleTimeString('tr-TR'))
+        };
+        
+        // Kategori bazlı adisyon yazdırma
+        printAdisyonByCategory(itemsWithStaff, adisyonData).catch(err => {
+          console.error('Mobil sipariş kategori bazlı adisyon yazdırma hatası:', err);
+        });
+      } catch (error) {
+        console.error('Mobil sipariş adisyon yazdırma hatası:', error);
       }
 
       res.json({ 
