@@ -7,7 +7,6 @@ import Cart from './components/Cart';
 import SalesHistory from './components/SalesHistory';
 import PaymentModal from './components/PaymentModal';
 import SplitPaymentModal from './components/SplitPaymentModal';
-import ReceiptModal from './components/ReceiptModal';
 import RoleSplash from './components/RoleSplash';
 import SaleSuccessToast from './components/SaleSuccessToast';
 import PrintToast from './components/PrintToast';
@@ -267,7 +266,7 @@ function App() {
           });
         }
         
-        // Masa siparişi fişi için receiptData oluştur
+        // Masa siparişi fişi için receiptData oluştur ve direkt yazdır
         const tableReceiptData = {
           order_id: result.orderId,
           totalAmount,
@@ -280,9 +279,20 @@ function App() {
           orderNote: orderNote || null
         };
         
-        // Fiş modal'ını göster
-        setReceiptData(tableReceiptData);
-        setShowReceiptModal(true);
+        // Fişi direkt yazdır (modal gösterme)
+        if (window.electronAPI && window.electronAPI.printReceipt) {
+          setPrintToast({ status: 'printing', message: 'Fiş yazdırılıyor...' });
+          window.electronAPI.printReceipt(tableReceiptData).then(result => {
+            if (result.success) {
+              setPrintToast({ status: 'success', message: 'Fiş başarıyla yazdırıldı' });
+            } else {
+              setPrintToast({ status: 'error', message: result.error || 'Fiş yazdırılamadı' });
+            }
+          }).catch(err => {
+            console.error('Fiş yazdırılırken hata:', err);
+            setPrintToast({ status: 'error', message: 'Fiş yazdırılamadı: ' + err.message });
+          });
+        }
         
         // Sepeti temizle
         setCart([]);
@@ -382,7 +392,7 @@ function App() {
     if (result.success) {
       setShowSplitPaymentModal(false);
       // Fiş modal'ını göster
-      setReceiptData({
+      const receiptData = {
         sale_id: result.saleId,
         totalAmount,
         paymentMethod: `Parçalı Ödeme (${paymentDetails})`,
@@ -390,8 +400,22 @@ function App() {
         sale_time: new Date().toLocaleTimeString('tr-TR'),
         items: cart,
         orderNote: orderNote || null
-      });
-      setShowReceiptModal(true);
+      };
+      
+      // Fişi direkt yazdır (modal gösterme)
+      if (window.electronAPI && window.electronAPI.printReceipt) {
+        setPrintToast({ status: 'printing', message: 'Fiş yazdırılıyor...' });
+        window.electronAPI.printReceipt(receiptData).then(result => {
+          if (result.success) {
+            setPrintToast({ status: 'success', message: 'Fiş başarıyla yazdırıldı' });
+          } else {
+            setPrintToast({ status: 'error', message: result.error || 'Fiş yazdırılamadı' });
+          }
+        }).catch(err => {
+          console.error('Fiş yazdırılırken hata:', err);
+          setPrintToast({ status: 'error', message: 'Fiş yazdırılamadı: ' + err.message });
+        });
+      }
       clearCart();
       setSaleSuccessInfo({ 
         totalAmount, 
@@ -541,50 +565,6 @@ function App() {
         />
       )}
 
-      {showReceiptModal && receiptData && (
-        <ReceiptModal
-          saleInfo={receiptData}
-          items={receiptData.items}
-          onClose={() => {
-            setShowReceiptModal(false);
-            setReceiptData(null);
-          }}
-          onPrint={async () => {
-            // Modal'ı hemen kapat
-            setShowReceiptModal(false);
-            setReceiptData(null);
-            
-            // Yazdırma toast'ını göster
-            setPrintToast({ status: 'printing', message: 'Fiş yazdırılıyor...' });
-            
-            if (window.electronAPI && window.electronAPI.printReceipt) {
-              try {
-                // Yazdırma işlemini başlat (arka planda ama sonucu bekle)
-                await window.electronAPI.printReceipt(receiptData);
-                
-                // Yazdırma işlemi tamamlandı - başarılı say
-                setPrintToast({ 
-                  status: 'success', 
-                  message: 'Yazdırma Başarılı' 
-                });
-              } catch (err) {
-                // Sadece gerçek hata durumunda error göster
-                setPrintToast({ 
-                  status: 'error', 
-                  message: err.message || 'Yazdırma hatası oluştu' 
-                });
-              }
-            } else {
-              // Fallback: window.print()
-              window.print();
-              setPrintToast({ 
-                status: 'success', 
-                message: 'Yazdırma Başarılı' 
-              });
-            }
-          }}
-        />
-      )}
 
       {activeRoleSplash && <RoleSplash role={activeRoleSplash} />}
       <SaleSuccessToast

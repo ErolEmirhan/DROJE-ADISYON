@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 
 const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPayment, onRequestAdisyon, onAddItems }) => {
   const [sessionDuration, setSessionDuration] = useState('');
+  const [selectedItemDetail, setSelectedItemDetail] = useState(null);
 
   if (!order) return null;
 
@@ -50,7 +51,7 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
-      <div className="bg-white backdrop-blur-xl border border-purple-200 rounded-3xl p-8 max-w-2xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-white backdrop-blur-xl border border-purple-200 rounded-3xl p-8 max-w-5xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-3xl font-bold gradient-text">Masa Sipariş Detayları</h2>
           <button
@@ -66,7 +67,7 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
         <div className="space-y-6">
           {/* Masa Bilgileri */}
           <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-2xl p-6 border border-purple-200">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div>
                 <p className="text-sm text-gray-500 mb-1">Masa</p>
                 <p className="text-xl font-bold text-gray-800">{order.table_name}</p>
@@ -85,12 +86,12 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                 <p className="text-sm text-gray-500 mb-1">Sipariş Saati</p>
                 <p className="text-lg font-semibold text-gray-800">{order.order_time}</p>
               </div>
-              <div className="col-span-2">
+              <div>
                 <p className="text-sm text-gray-500 mb-1">Oturum Süresi</p>
                 <p className="text-lg font-semibold text-blue-600">{sessionDuration}</p>
               </div>
               {order.staff_name && (
-                <div className="col-span-2">
+                <div>
                   <p className="text-sm text-gray-500 mb-1">Sipariş Alan Garson</p>
                   <p className="text-lg font-semibold text-purple-600 flex items-center space-x-2">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -139,17 +140,28 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                       )}
                     </p>
                   </div>
-                  <div className="text-right">
-                    {isGift ? (
-                      <div>
-                        <p className="text-xs text-gray-400 line-through">₺{originalTotal.toFixed(2)}</p>
-                        <p className="font-bold text-lg text-green-600">₺0.00</p>
-                      </div>
-                    ) : (
-                      <p className="font-bold text-lg text-purple-600">
-                        ₺{displayTotal.toFixed(2)}
-                      </p>
-                    )}
+                  <div className="flex items-center space-x-4">
+                    <div className="text-right">
+                      {isGift ? (
+                        <div>
+                          <p className="text-xs text-gray-400 line-through">₺{originalTotal.toFixed(2)}</p>
+                          <p className="font-bold text-lg text-green-600">₺0.00</p>
+                        </div>
+                      ) : (
+                        <p className="font-bold text-lg text-purple-600">
+                          ₺{displayTotal.toFixed(2)}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setSelectedItemDetail(item)}
+                      className="p-2 hover:bg-purple-100 rounded-lg transition-colors text-purple-600 hover:text-purple-700"
+                      title="Sipariş Detayı"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
               )})}
@@ -255,6 +267,74 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
           )}
         </div>
       </div>
+
+      {/* Ürün Detay Modal */}
+      {selectedItemDetail && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] animate-fade-in">
+          <div className="bg-white backdrop-blur-xl border border-purple-200 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold gradient-text">Ürün Detayı</h3>
+              <button
+                onClick={() => setSelectedItemDetail(null)}
+                className="text-gray-500 hover:text-gray-700 transition-colors p-1 hover:bg-gray-100 rounded-lg"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm text-gray-500 mb-1">Ürün Adı</p>
+                <p className="text-lg font-semibold text-gray-800">{selectedItemDetail.product_name}</p>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm text-gray-500 mb-1">Adet</p>
+                  <p className="text-lg font-semibold text-gray-800">{selectedItemDetail.quantity}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500 mb-1">Birim Fiyat</p>
+                  <p className="text-lg font-semibold text-gray-800">₺{selectedItemDetail.price.toFixed(2)}</p>
+                </div>
+              </div>
+
+              {selectedItemDetail.staff_name ? (
+                <>
+                  <div className="border-t border-gray-200 pt-4">
+                    <p className="text-sm text-gray-500 mb-1">Siparişi Alan Garson</p>
+                    <p className="text-lg font-semibold text-purple-600 flex items-center space-x-2">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                      <span>{selectedItemDetail.staff_name}</span>
+                    </p>
+                  </div>
+                  {selectedItemDetail.added_date && selectedItemDetail.added_time && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-sm text-gray-500 mb-1">Eklenme Tarihi</p>
+                        <p className="text-base font-semibold text-gray-800">{selectedItemDetail.added_date}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500 mb-1">Eklenme Saati</p>
+                        <p className="text-base font-semibold text-gray-800">{selectedItemDetail.added_time}</p>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="border-t border-gray-200 pt-4">
+                  <p className="text-sm text-gray-500 mb-1">Siparişi Alan</p>
+                  <p className="text-lg font-semibold text-gray-600">Kasa / Sistem</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

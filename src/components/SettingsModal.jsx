@@ -211,14 +211,14 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
       for (let i = 0; i < toAdd.length; i++) {
         const categoryId = toAdd[i];
         console.log(`[${i + 1}/${toAdd.length}] Kategori ekleniyor:`, categoryId, 'Tip:', typeof categoryId);
-        
-        try {
-          const result = await window.electronAPI.assignCategoryToPrinter({
-            printerName: selectedPrinter.name,
-            printerType: selectedPrinter.type,
-            category_id: categoryId
-          });
-          
+    
+    try {
+      const result = await window.electronAPI.assignCategoryToPrinter({
+        printerName: selectedPrinter.name,
+        printerType: selectedPrinter.type,
+        category_id: categoryId
+      });
+      
           addResults.push({ categoryId, result });
           
           if (!result || !result.success) {
@@ -241,11 +241,11 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
       console.log('Tüm kategoriler eklendi:', addResults);
       
       // Veritabanını yeniden yükle
-      await loadPrinterAssignments();
+        await loadPrinterAssignments();
       
-      setShowCategoryAssignModal(false);
-      setSelectedPrinter(null);
-      setAssigningCategory(null);
+        setShowCategoryAssignModal(false);
+        setSelectedPrinter(null);
+        setAssigningCategory(null);
       setSelectedCategories([]);
       
       const addedCount = toAdd.length;
@@ -1077,7 +1077,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                                     >
                                       ✕
                                     </button>
-                                  </span>
+                                </span>
                                 ))}
                               </div>
                             ) : (
@@ -1190,14 +1190,14 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                         }}
                         className={`w-full px-4 py-3 rounded-xl text-left transition-all cursor-pointer ${
                           isSelected
-                            ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                        ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
                             : isAssignedToThisPrinter
                             ? 'bg-purple-200 text-purple-800 border-2 border-purple-400'
                             : isAssignedToOtherPrinter
                             ? 'bg-yellow-100 text-yellow-800 border-2 border-yellow-400 cursor-not-allowed opacity-60'
-                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                        }`}
-                      >
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-3">
                             <input
@@ -1213,7 +1213,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                               onClick={(e) => e.stopPropagation()}
                             />
                             <span className="font-medium">{category.name}</span>
-                          </div>
+                    </div>
                           {isAssignedToThisPrinter && !isSelected && (
                             <span className="text-xs bg-purple-600 text-white px-2 py-1 rounded">
                               Bu yazıcıya atanmış
@@ -1245,14 +1245,14 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                   className="flex-1 px-4 py-3 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 transition-all font-medium"
                 >
                   İptal
-                </button>
-                <button
+                  </button>
+                    <button
                   onClick={confirmCategoryAssignment}
                   disabled={assigningCategory}
                   className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl hover:shadow-lg transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {assigningCategory ? 'Atanıyor...' : 'Kategorileri Ata'}
-                </button>
+                    </button>
               </div>
             </div>
           </div>

@@ -1,15 +1,15 @@
 <!DOCTYPE html>
 <html lang="tr">
-<head>
+  <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MAKARA - Admin Dashboard</title>
-  <script defer src="/__/firebase/12.6.0/firebase-app-compat.js"></script>
-  <script defer src="/__/firebase/12.6.0/firebase-firestore-compat.js"></script>
+    <script defer src="/__/firebase/12.6.0/firebase-app-compat.js"></script>
+    <script defer src="/__/firebase/12.6.0/firebase-firestore-compat.js"></script>
   <script defer src="/__/firebase/init.js?useEmulator=false"></script>
-  <script>
+    <script>
     // Firebase yapılandırması ve kod
-    document.addEventListener('DOMContentLoaded', function() {
+      document.addEventListener('DOMContentLoaded', function() {
       // Firebase SDK yüklendikten sonra çalışacak
       setTimeout(() => {
         if (typeof firebase === 'undefined') {
@@ -229,8 +229,8 @@
 
         window.loadSales = loadSales;
       }, 500); // Firebase SDK'nın yüklenmesi için bekle
-    });
-  </script>
+      });
+    </script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { 
@@ -377,5 +377,5 @@
       <div id="salesContainer" style="min-height: 200px;"></div>
     </div>
   </div>
-</body>
+  </body>
 </html>

@@ -17,6 +17,8 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
   const [showAddStaff, setShowAddStaff] = useState(false);
   const [newStaff, setNewStaff] = useState({ name: '', surname: '', password: '' });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
   const menuRef = useRef(null);
 
   // Dışarı tıklayınca menüyü kapat
@@ -92,10 +94,15 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
     try {
       const result = await window.electronAPI.createStaff(newStaff);
       if (result && result.success) {
+        const staffName = `${newStaff.name} ${newStaff.surname}`;
         setNewStaff({ name: '', surname: '', password: '' });
         setShowAddStaff(false);
         loadStaff();
-        alert('Personel başarıyla eklendi');
+        setSuccessMessage(`${staffName} başarıyla eklendi`);
+        setShowSuccessToast(true);
+        setTimeout(() => {
+          setShowSuccessToast(false);
+        }, 3000);
       } else {
         alert('Personel eklenemedi: ' + (result?.error || 'Bilinmeyen hata'));
       }
@@ -547,6 +554,36 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
           </div>
         </div>,
         document.body
+      )}
+
+      {/* Modern Success Toast */}
+      {showSuccessToast && (
+        createPortal(
+          <div className="fixed inset-x-0 top-0 z-[2000] flex justify-center pointer-events-none pt-6">
+            <div className="bg-white/95 backdrop-blur-xl border-2 border-green-300 rounded-2xl shadow-2xl px-6 py-4 pointer-events-auto animate-toast-slide-down max-w-md mx-4">
+              <div className="flex items-center space-x-4">
+                <div className="w-14 h-14 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg ring-4 ring-green-100 flex-shrink-0 animate-scale-in">
+                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-1">Başarılı</p>
+                  <p className="text-lg font-bold text-gray-900">{successMessage}</p>
+                </div>
+                <button
+                  onClick={() => setShowSuccessToast(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )
       )}
     </nav>
   );
