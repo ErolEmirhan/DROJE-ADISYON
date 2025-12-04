@@ -10,6 +10,39 @@ const { Server } = require('socket.io');
 const QRCode = require('qrcode');
 const os = require('os');
 
+// Firebase entegrasyonu
+let firebaseApp = null;
+let firestore = null;
+let firebaseCollection = null;
+let firebaseAddDoc = null;
+let firebaseServerTimestamp = null;
+
+try {
+  // Firebase modüllerini dinamik olarak yükle
+  const firebaseAppModule = require('firebase/app');
+  const firebaseFirestoreModule = require('firebase/firestore');
+  
+  const firebaseConfig = {
+    apiKey: "AIzaSyCdf-c13e0wCafRYHXhIls1epJgD1RjPUA",
+    authDomain: "makara-16344.firebaseapp.com",
+    projectId: "makara-16344",
+    storageBucket: "makara-16344.firebasestorage.app",
+    messagingSenderId: "216769654742",
+    appId: "1:216769654742:web:16792742d4613f4269be77",
+    measurementId: "G-K4XZHP11MM"
+  };
+
+  firebaseApp = firebaseAppModule.initializeApp(firebaseConfig);
+  firestore = firebaseFirestoreModule.getFirestore(firebaseApp);
+  firebaseCollection = firebaseFirestoreModule.collection;
+  firebaseAddDoc = firebaseFirestoreModule.addDoc;
+  firebaseServerTimestamp = firebaseFirestoreModule.serverTimestamp;
+  console.log('Firebase başarıyla başlatıldı');
+} catch (error) {
+  console.error('Firebase başlatılamadı:', error);
+  console.log('Firebase olmadan devam ediliyor...');
+}
+
 let mainWindow;
 let dbPath;
 let apiServer = null;
@@ -282,8 +315,8 @@ ipcMain.handle('get-products', (event, categoryId) => {
   return db.products;
 });
 
-ipcMain.handle('create-sale', (event, saleData) => {
-  const { items, totalAmount, paymentMethod, orderNote } = saleData;
+ipcMain.handle('create-sale', async (event, saleData) => {
+  const { items, totalAmount, paymentMethod, orderNote, staff_name } = saleData;
   
   const now = new Date();
   const saleDate = now.toLocaleDateString('tr-TR');
@@ -300,7 +333,8 @@ ipcMain.handle('create-sale', (event, saleData) => {
     total_amount: totalAmount,
     payment_method: paymentMethod,
     sale_date: saleDate,
-    sale_time: saleTime
+    sale_time: saleTime,
+    staff_name: staff_name || null
   });
 
   // Satış itemlarını ekle
@@ -321,6 +355,46 @@ ipcMain.handle('create-sale', (event, saleData) => {
   });
 
   saveDatabase();
+
+  // Firebase'e kaydet
+  if (firestore && firebaseCollection && firebaseAddDoc && firebaseServerTimestamp) {
+    try {
+      const salesRef = firebaseCollection(firestore, 'sales');
+      
+      // Items'ı string formatına çevir
+      const itemsText = items.map(item => {
+        const giftText = item.isGift ? ' (İKRAM)' : '';
+        return `${item.name} x${item.quantity}${giftText}`;
+      }).join(', ');
+
+      const firebaseData = {
+        sale_id: saleId,
+        total_amount: totalAmount,
+        payment_method: paymentMethod,
+        sale_date: saleDate,
+        sale_time: saleTime,
+        staff_name: staff_name || null,
+        items: itemsText,
+        items_array: items.map(item => ({
+          product_id: item.id,
+          product_name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          isGift: item.isGift || false
+        })),
+        created_at: firebaseServerTimestamp()
+      };
+
+      await firebaseAddDoc(salesRef, firebaseData);
+      console.log('✅ Satış Firebase\'e başarıyla kaydedildi:', saleId);
+    } catch (error) {
+      console.error('❌ Firebase\'e kaydetme hatası:', error);
+      console.error('Hata detayları:', error.message, error.stack);
+    }
+  } else {
+    console.warn('⚠️ Firebase başlatılamadı, satış sadece local database\'e kaydedildi');
+  }
+
   return { success: true, saleId };
 });
 
@@ -485,7 +559,7 @@ ipcMain.handle('get-table-order-items', (event, orderId) => {
   return db.tableOrderItems.filter(oi => oi.order_id === orderId);
 });
 
-ipcMain.handle('complete-table-order', (event, orderId) => {
+ipcMain.handle('complete-table-order', async (event, orderId) => {
   const order = db.tableOrders.find(o => o.id === orderId);
   if (!order) {
     return { success: false, error: 'Sipariş bulunamadı' };
@@ -508,6 +582,9 @@ ipcMain.handle('complete-table-order', (event, orderId) => {
     ? Math.max(...db.sales.map(s => s.id)) + 1 
     : 1;
 
+  // Satış itemlarını al
+  const orderItems = db.tableOrderItems.filter(oi => oi.order_id === orderId);
+
   // Satış ekle
   db.sales.push({
     id: saleId,
@@ -520,7 +597,6 @@ ipcMain.handle('complete-table-order', (event, orderId) => {
   });
 
   // Satış itemlarını ekle
-  const orderItems = db.tableOrderItems.filter(oi => oi.order_id === orderId);
   orderItems.forEach(item => {
     const itemId = db.saleItems.length > 0 
       ? Math.max(...db.saleItems.map(si => si.id)) + 1 
@@ -538,6 +614,47 @@ ipcMain.handle('complete-table-order', (event, orderId) => {
   });
 
   saveDatabase();
+
+  // Firebase'e kaydet
+  if (firestore && firebaseCollection && firebaseAddDoc && firebaseServerTimestamp) {
+    try {
+      const salesRef = firebaseCollection(firestore, 'sales');
+      
+      // Items'ı string formatına çevir
+      const itemsText = orderItems.map(item => {
+        const giftText = item.isGift ? ' (İKRAM)' : '';
+        return `${item.product_name} x${item.quantity}${giftText}`;
+      }).join(', ');
+
+      // Staff bilgilerini topla (varsa)
+      const staffNames = [...new Set(orderItems.filter(oi => oi.staff_name).map(oi => oi.staff_name))];
+      const staffName = staffNames.length > 0 ? staffNames.join(', ') : null;
+
+      await firebaseAddDoc(salesRef, {
+        sale_id: saleId,
+        total_amount: order.total_amount,
+        payment_method: 'Nakit',
+        sale_date: saleDate,
+        sale_time: saleTime,
+        table_name: order.table_name,
+        table_type: order.table_type,
+        staff_name: staffName,
+        items: itemsText,
+        items_array: orderItems.map(item => ({
+          product_id: item.product_id,
+          product_name: item.product_name,
+          quantity: item.quantity,
+          price: item.price,
+          isGift: item.isGift || false
+        })),
+        created_at: firebaseServerTimestamp()
+      });
+      console.log('Masa siparişi Firebase\'e kaydedildi:', saleId);
+    } catch (error) {
+      console.error('Firebase\'e kaydetme hatası:', error);
+    }
+  }
+
   return { success: true, saleId };
 });
 
@@ -575,6 +692,9 @@ ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
     ? Math.max(...db.sales.map(s => s.id)) + 1 
     : 1;
 
+  // Satış itemlarını al (kısmi ödeme için tüm ürünleri göster, sadece ödeme yöntemi farklı)
+  const orderItems = db.tableOrderItems.filter(oi => oi.order_id === saleData.orderId);
+
   // Satış ekle
   db.sales.push({
     id: saleId,
@@ -586,9 +706,7 @@ ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
     table_type: saleData.tableType
   });
 
-  // Satış itemlarını ekle (kısmi ödeme için tüm ürünleri göster, sadece ödeme yöntemi farklı)
-  const orderItems = db.tableOrderItems.filter(oi => oi.order_id === saleData.orderId);
-  
+  // Satış itemlarını ekle
   orderItems.forEach(item => {
     const itemId = db.saleItems.length > 0 
       ? Math.max(...db.saleItems.map(si => si.id)) + 1 
@@ -606,6 +724,47 @@ ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
   });
 
   saveDatabase();
+
+  // Firebase'e kaydet
+  if (firestore && firebaseCollection && firebaseAddDoc && firebaseServerTimestamp) {
+    try {
+      const salesRef = firebaseCollection(firestore, 'sales');
+      
+      // Items'ı string formatına çevir
+      const itemsText = orderItems.map(item => {
+        const giftText = item.isGift ? ' (İKRAM)' : '';
+        return `${item.product_name} x${item.quantity}${giftText}`;
+      }).join(', ');
+
+      // Staff bilgilerini topla (varsa)
+      const staffNames = [...new Set(orderItems.filter(oi => oi.staff_name).map(oi => oi.staff_name))];
+      const staffName = staffNames.length > 0 ? staffNames.join(', ') : null;
+
+      await firebaseAddDoc(salesRef, {
+        sale_id: saleId,
+        total_amount: saleData.totalAmount,
+        payment_method: saleData.paymentMethod,
+        sale_date: saleDate,
+        sale_time: saleTime,
+        table_name: saleData.tableName,
+        table_type: saleData.tableType,
+        staff_name: staffName,
+        items: itemsText,
+        items_array: orderItems.map(item => ({
+          product_id: item.product_id,
+          product_name: item.product_name,
+          quantity: item.quantity,
+          price: item.price,
+          isGift: item.isGift || false
+        })),
+        created_at: firebaseServerTimestamp()
+      });
+      console.log('Kısmi ödeme satışı Firebase\'e kaydedildi:', saleId);
+    } catch (error) {
+      console.error('Firebase\'e kaydetme hatası:', error);
+    }
+  }
+
   return { success: true, saleId };
 });
 
@@ -3133,18 +3292,20 @@ function generateMobileHTML(serverURL) {
       border-radius: 12px;
     }
     .cart-header-icon {
-      width: 40px;
-      height: 40px;
-      border-radius: 10px;
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
       background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
       display: flex;
       align-items: center;
       justify-content: center;
       color: white;
-      transition: transform 0.3s;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 4px 12px rgba(168, 85, 247, 0.3);
     }
-    .cart.open .cart-header-icon {
-      transform: rotate(180deg);
+    .cart-header-icon:active {
+      transform: scale(0.95);
+      box-shadow: 0 2px 6px rgba(168, 85, 247, 0.4);
     }
     .cart-content {
       padding: 20px;
@@ -3891,7 +4052,7 @@ function generateMobileHTML(serverURL) {
     </div>
   </div>
   
-  <div class="cart" id="cart" style="display: none;">
+  <div class="cart" id="cart">
     <div class="cart-header" onclick="toggleCart()">
       <div class="cart-header-title">
         <span>Siparişi Gönder</span>
@@ -3899,9 +4060,9 @@ function generateMobileHTML(serverURL) {
       </div>
       <div style="display: flex; align-items: center; gap: 12px;">
         <span style="font-size: 20px; font-weight: 800; background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"><span id="cartTotal">0.00</span> ₺</span>
-        <div class="cart-header-icon">
-          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/>
+        <div class="cart-header-icon" id="cartToggleIcon">
+          <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5"/>
           </svg>
         </div>
       </div>
@@ -3984,6 +4145,9 @@ function generateMobileHTML(serverURL) {
     
     // Sayfa yüklendiğinde oturum kontrolü
     window.addEventListener('load', () => {
+      // Cart'ı başlat
+      initializeCart();
+      
       const savedStaff = getStaffSession();
       if (savedStaff) {
         currentStaff = savedStaff;
@@ -4155,7 +4319,12 @@ function generateMobileHTML(serverURL) {
       renderTables();
       document.getElementById('tableSelection').style.display = 'none';
       document.getElementById('orderSection').style.display = 'block';
-      document.getElementById('cart').style.display = 'block';
+      // Cart her zaman görünür, sadece içeriği kapalı başlar
+      const cartEl = document.getElementById('cart');
+      if (cartEl) {
+        cartEl.style.display = 'block';
+        cartEl.classList.remove('open'); // Başlangıçta kapalı
+      }
       // Seçili masa bilgisini göster
       document.getElementById('selectedTableInfo').textContent = name + ' için sipariş oluşturuluyor';
       // Arama çubuğunu temizle
@@ -4167,7 +4336,11 @@ function generateMobileHTML(serverURL) {
       selectedTable = null;
       document.getElementById('tableSelection').style.display = 'block';
       document.getElementById('orderSection').style.display = 'none';
-      document.getElementById('cart').style.display = 'none';
+      const cartEl = document.getElementById('cart');
+      if (cartEl) {
+        cartEl.style.display = 'none';
+        cartEl.classList.remove('open');
+      }
       document.getElementById('searchInput').value = '';
       renderTables();
     }
@@ -4221,11 +4394,7 @@ function generateMobileHTML(serverURL) {
       if (existing) existing.quantity++;
       else cart.push({ id: productId, name, price, quantity: 1 });
       updateCart();
-      // Sepeti otomatik aç
-      const cartEl = document.getElementById('cart');
-      if (cartEl && !cartEl.classList.contains('open')) {
-        cartEl.classList.add('open');
-      }
+      // Sepeti otomatik açma - kullanıcı manuel olarak açacak
     }
     
     function updateCart() {
@@ -4268,7 +4437,36 @@ function generateMobileHTML(serverURL) {
     
     function toggleCart() {
       const cartEl = document.getElementById('cart');
+      const iconEl = document.getElementById('cartToggleIcon');
+      
+      if (!cartEl) return;
+      
+      const wasOpen = cartEl.classList.contains('open');
       cartEl.classList.toggle('open');
+      const isNowOpen = cartEl.classList.contains('open');
+      
+      // İkonu güncelle: açıkken yukarı ok (kapatmak için), kapalıyken aşağı ok (açmak için)
+      if (iconEl) {
+        if (isNowOpen) {
+          // Açık - yukarı ok göster (kapatmak için)
+          iconEl.innerHTML = '<svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5"/></svg>';
+        } else {
+          // Kapalı - aşağı ok göster (açmak için)
+          iconEl.innerHTML = '<svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>';
+        }
+      }
+    }
+    
+    // Cart başlangıç durumunu ayarla
+    function initializeCart() {
+      const cartEl = document.getElementById('cart');
+      const iconEl = document.getElementById('cartToggleIcon');
+      
+      if (cartEl && iconEl) {
+        // Başlangıçta kapalı - aşağı ok göster
+        cartEl.classList.remove('open');
+        iconEl.innerHTML = '<svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>';
+      }
     }
     
     // Toast Notification Functions
@@ -4383,7 +4581,11 @@ function generateMobileHTML(serverURL) {
           updateCart();
           document.getElementById('tableSelection').style.display = 'block';
           document.getElementById('orderSection').style.display = 'none';
-          document.getElementById('cart').style.display = 'none';
+          const cartEl = document.getElementById('cart');
+          if (cartEl) {
+            cartEl.style.display = 'none';
+            cartEl.classList.remove('open');
+          }
           document.getElementById('searchInput').value = '';
           searchQuery = '';
           loadData();
