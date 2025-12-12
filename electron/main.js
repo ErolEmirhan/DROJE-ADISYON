@@ -2298,24 +2298,28 @@ ipcMain.handle('get-printers', async () => {
 ipcMain.handle('assign-category-to-printer', (event, assignmentData) => {
   const { printerName, printerType, category_id } = assignmentData;
   
-  if (!printerName || !printerType) {
-    return { success: false, error: 'Yazıcı adı ve tipi gerekli' };
+  if (!printerName || !printerType || !category_id) {
+    return { success: false, error: 'Yazıcı adı, tipi ve kategori ID gerekli' };
   }
   
-  // Mevcut atamayı bul veya yeni oluştur
+  // Mevcut atamayı bul (aynı yazıcı + aynı kategori kombinasyonu)
   const existingIndex = db.printerAssignments.findIndex(
-    a => a.printerName === printerName && a.printerType === printerType
+    a => a.printerName === printerName && 
+         a.printerType === printerType && 
+         Number(a.category_id) === Number(category_id)
   );
   
   const assignment = {
     printerName,
     printerType,
-    category_id: category_id || null
+    category_id: Number(category_id)
   };
   
   if (existingIndex >= 0) {
+    // Zaten varsa güncelle
     db.printerAssignments[existingIndex] = assignment;
   } else {
+    // Yoksa yeni ekle
     db.printerAssignments.push(assignment);
   }
   
@@ -2327,10 +2331,24 @@ ipcMain.handle('get-printer-assignments', () => {
   return db.printerAssignments;
 });
 
-ipcMain.handle('remove-printer-assignment', (event, printerName, printerType) => {
-  const index = db.printerAssignments.findIndex(
-    a => a.printerName === printerName && a.printerType === printerType
-  );
+ipcMain.handle('remove-printer-assignment', (event, printerName, printerType, categoryId) => {
+  // categoryId belirtilmişse, sadece o kategori atamasını kaldır
+  // categoryId belirtilmemişse, o yazıcıya ait tüm atamaları kaldır
+  let index;
+  
+  if (categoryId !== undefined && categoryId !== null) {
+    // Belirli bir kategori atamasını kaldır
+    index = db.printerAssignments.findIndex(
+      a => a.printerName === printerName && 
+           a.printerType === printerType && 
+           Number(a.category_id) === Number(categoryId)
+    );
+  } else {
+    // Tüm kategori atamalarını kaldır (eski davranış - geriye dönük uyumluluk için)
+    index = db.printerAssignments.findIndex(
+      a => a.printerName === printerName && a.printerType === printerType
+    );
+  }
   
   if (index >= 0) {
     db.printerAssignments.splice(index, 1);
