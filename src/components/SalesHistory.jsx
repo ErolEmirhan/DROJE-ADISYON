@@ -10,6 +10,8 @@ const SalesHistory = () => {
   const [printToast, setPrintToast] = useState(null); // { status: 'printing' | 'success' | 'error', message: string }
   const [productStatsData, setProductStatsData] = useState(null); // Ürün istatistikleri
   const [staffList, setStaffList] = useState([]);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     loadSales();
@@ -1051,6 +1053,19 @@ const SalesHistory = () => {
         </div>
       ) : (
         <div className="space-y-8">
+          {/* Tüm Satışları Sil Butonu */}
+          <div className="flex justify-end mb-4">
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="px-6 py-3 bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white font-semibold rounded-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95 flex items-center space-x-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              <span>Tüm Satış Verilerini Sil</span>
+            </button>
+          </div>
+          
           {sortedDates.map((date) => {
             const daySales = salesByDate[date];
             const dayTotal = daySales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
@@ -1255,6 +1270,99 @@ const SalesHistory = () => {
         onClose={() => setPrintToast(null)}
         autoHideDuration={printToast?.status === 'printing' ? null : 2500}
       />
+
+      {/* Tüm Satışları Sil Onay Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[9999] animate-fade-in">
+          <div className="bg-white/95 backdrop-blur-xl border-2 border-red-200 rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl animate-scale-in">
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-red-500 to-pink-500 flex items-center justify-center shadow-lg">
+                <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">Tüm Satış Verilerini Sil</h3>
+              <p className="text-gray-600">Bu işlem geri alınamaz. Tüm geçmiş satış verileri kalıcı olarak silinecektir.</p>
+            </div>
+
+            <div className="bg-gradient-to-r from-red-50 to-pink-50 rounded-2xl p-6 mb-6 border border-red-100">
+              <div className="flex items-start space-x-3">
+                <svg className="w-6 h-6 text-red-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <p className="text-sm font-semibold text-red-800 mb-1">Dikkat!</p>
+                  <p className="text-sm text-red-700">
+                    {filteredSales.length} adet satış kaydı silinecek. Bu işlem geri alınamaz ve tüm satış geçmişi kalıcı olarak kaybolacaktır.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex space-x-4">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="flex-1 py-4 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-600 hover:text-gray-800 font-semibold text-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                İptal
+              </button>
+              <button
+                onClick={async () => {
+                  setDeleting(true);
+                  try {
+                    if (!window.electronAPI || !window.electronAPI.deleteAllSales) {
+                      alert('API mevcut değil. Lütfen uygulamayı yeniden başlatın.');
+                      setDeleting(false);
+                      return;
+                    }
+
+                    const result = await window.electronAPI.deleteAllSales();
+                    
+                    if (result.success) {
+                      setShowDeleteConfirm(false);
+                      setSales([]);
+                      setPrintToast({
+                        status: 'success',
+                        message: 'Tüm satış verileri başarıyla silindi'
+                      });
+                    } else {
+                      setPrintToast({
+                        status: 'error',
+                        message: result.error || 'Satışlar silinemedi'
+                      });
+                    }
+                  } catch (error) {
+                    console.error('Satış silme hatası:', error);
+                    setPrintToast({
+                      status: 'error',
+                      message: 'Satışlar silinirken bir hata oluştu: ' + error.message
+                    });
+                  } finally {
+                    setDeleting(false);
+                  }
+                }}
+                disabled={deleting}
+                className="flex-1 py-4 bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 rounded-xl text-white font-bold text-lg transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+              >
+                {deleting ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    <span>Siliniyor...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    <span>Evet, Tümünü Sil</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

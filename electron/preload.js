@@ -8,11 +8,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createSale: (saleData) => ipcRenderer.invoke('create-sale', saleData),
   getSales: () => ipcRenderer.invoke('get-sales'),
   getSaleDetails: (saleId) => ipcRenderer.invoke('get-sale-details', saleId),
+  deleteAllSales: () => ipcRenderer.invoke('delete-all-sales'),
   // Table Order API
   createTableOrder: (orderData) => ipcRenderer.invoke('create-table-order', orderData),
   getTableOrders: (tableId) => ipcRenderer.invoke('get-table-orders', tableId),
   getTableOrderItems: (orderId) => ipcRenderer.invoke('get-table-order-items', orderId),
-  cancelTableOrderItem: (itemId) => ipcRenderer.invoke('cancel-table-order-item', itemId),
+  cancelTableOrderItem: (itemId, cancelQuantity) => ipcRenderer.invoke('cancel-table-order-item', itemId, cancelQuantity),
   completeTableOrder: (orderId) => ipcRenderer.invoke('complete-table-order', orderId),
   // Settings API
   changePassword: (currentPin, newPin) => ipcRenderer.invoke('change-password', currentPin, newPin),

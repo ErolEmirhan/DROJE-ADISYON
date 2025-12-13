@@ -16,6 +16,8 @@ let firestore = null;
 let firebaseCollection = null;
 let firebaseAddDoc = null;
 let firebaseServerTimestamp = null;
+let firebaseGetDocs = null;
+let firebaseDeleteDoc = null;
 
 try {
   // Firebase modüllerini dinamik olarak yükle
@@ -37,6 +39,8 @@ try {
   firebaseCollection = firebaseFirestoreModule.collection;
   firebaseAddDoc = firebaseFirestoreModule.addDoc;
   firebaseServerTimestamp = firebaseFirestoreModule.serverTimestamp;
+  firebaseGetDocs = firebaseFirestoreModule.getDocs;
+  firebaseDeleteDoc = firebaseFirestoreModule.deleteDoc;
   console.log('Firebase başarıyla başlatıldı');
 } catch (error) {
   console.error('Firebase başlatılamadı:', error);
@@ -449,6 +453,59 @@ ipcMain.handle('get-sale-details', (event, saleId) => {
   return { sale, items };
 });
 
+// Tüm satışları sil
+ipcMain.handle('delete-all-sales', async (event) => {
+  try {
+    console.log('🗑️ Tüm satışlar siliniyor...');
+    
+    // Local database'den tüm satışları sil
+    const salesCount = db.sales.length;
+    const saleItemsCount = db.saleItems.length;
+    
+    db.sales = [];
+    db.saleItems = [];
+    
+    saveDatabase();
+    console.log(`✅ Local database'den ${salesCount} satış ve ${saleItemsCount} satış item'ı silindi`);
+    
+    // Firebase'den de tüm satışları sil
+    if (firestore && firebaseCollection && firebaseGetDocs && firebaseDeleteDoc) {
+      try {
+        const salesRef = firebaseCollection(firestore, 'sales');
+        const snapshot = await firebaseGetDocs(salesRef);
+        
+        let deletedCount = 0;
+        const deletePromises = [];
+        
+        snapshot.forEach((doc) => {
+          deletePromises.push(firebaseDeleteDoc(doc.ref));
+          deletedCount++;
+        });
+        
+        await Promise.all(deletePromises);
+        console.log(`✅ Firebase'den ${deletedCount} satış silindi`);
+      } catch (firebaseError) {
+        console.error('❌ Firebase\'den silme hatası:', firebaseError);
+        // Firebase hatası olsa bile local database'den silindi, devam et
+      }
+    } else {
+      console.warn('⚠️ Firebase başlatılamadı, sadece local database temizlendi');
+    }
+    
+    return { 
+      success: true, 
+      message: `${salesCount} satış başarıyla silindi`,
+      deletedCount: salesCount
+    };
+  } catch (error) {
+    console.error('❌ Satış silme hatası:', error);
+    return { 
+      success: false, 
+      error: error.message || 'Satışlar silinirken bir hata oluştu' 
+    };
+  }
+});
+
 // Table Order IPC Handlers
 ipcMain.handle('create-table-order', (event, orderData) => {
   const { items, totalAmount, tableId, tableName, tableType, orderNote } = orderData;
@@ -583,7 +640,7 @@ ipcMain.handle('get-table-order-items', (event, orderId) => {
 });
 
 // Masa siparişinden ürün iptal etme
-ipcMain.handle('cancel-table-order-item', async (event, itemId) => {
+ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity) => {
   const item = db.tableOrderItems.find(oi => oi.id === itemId);
   if (!item) {
     return { success: false, error: 'Ürün bulunamadı' };
@@ -596,6 +653,12 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId) => {
 
   if (order.status !== 'pending') {
     return { success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' };
+  }
+
+  // İptal edilecek miktarı belirle
+  const quantityToCancel = cancelQuantity || item.quantity;
+  if (quantityToCancel <= 0 || quantityToCancel > item.quantity) {
+    return { success: false, error: 'Geçersiz iptal miktarı' };
   }
 
   // Ürün bilgilerini al (kategori ve yazıcı için)
@@ -628,7 +691,7 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId) => {
       tableName: order.table_name,
       tableType: order.table_type,
       productName: item.product_name,
-      quantity: item.quantity,
+      quantity: quantityToCancel,
       price: item.price,
       cancelDate: cancelDate,
       cancelTime: cancelTime,
@@ -641,16 +704,21 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId) => {
     // Yazdırma hatası olsa bile iptal işlemini devam ettir
   }
 
-  // Ürünün tutarını hesapla (ikram değilse)
-  const itemAmount = item.isGift ? 0 : (item.price * item.quantity);
+  // İptal edilecek tutarı hesapla (ikram değilse)
+  const cancelAmount = item.isGift ? 0 : (item.price * quantityToCancel);
 
   // Masa siparişinin toplam tutarını güncelle
-  order.total_amount = Math.max(0, order.total_amount - itemAmount);
+  order.total_amount = Math.max(0, order.total_amount - cancelAmount);
 
-  // Ürünü siparişten sil
-  const itemIndex = db.tableOrderItems.findIndex(oi => oi.id === itemId);
-  if (itemIndex !== -1) {
-    db.tableOrderItems.splice(itemIndex, 1);
+  // Eğer tüm ürün iptal ediliyorsa, item'ı sil
+  if (quantityToCancel >= item.quantity) {
+    const itemIndex = db.tableOrderItems.findIndex(oi => oi.id === itemId);
+    if (itemIndex !== -1) {
+      db.tableOrderItems.splice(itemIndex, 1);
+    }
+  } else {
+    // Sadece bir kısmı iptal ediliyorsa, quantity'yi azalt
+    item.quantity -= quantityToCancel;
   }
 
   saveDatabase();
@@ -1079,7 +1147,7 @@ ipcMain.handle('select-image-file', async (event) => {
 });
 
 // Auto Updater Configuration
-autoUpdater.autoDownload = false;
+autoUpdater.autoDownload = true; // Otomatik indirme aktif
 autoUpdater.autoInstallOnAppQuit = true;
 
 // Log dosyası oluştur
@@ -1117,11 +1185,13 @@ autoUpdater.on('checking-for-update', () => {
 });
 
 autoUpdater.on('update-available', (info) => {
-  const msg = `Yeni güncelleme mevcut: ${info.version}`;
+  const msg = `Yeni güncelleme mevcut: ${info.version} - Otomatik indirme başlatılıyor...`;
   writeLog(msg);
+  console.log('📥 Yeni güncelleme bulundu, otomatik indirme başlatılıyor...');
   if (mainWindow) {
     mainWindow.webContents.send('update-available', info);
   }
+  // Otomatik indirme zaten aktif (autoDownload = true), burada sadece bilgilendirme yapıyoruz
 });
 
 autoUpdater.on('update-not-available', (info) => {
@@ -1146,10 +1216,22 @@ autoUpdater.on('download-progress', (progressObj) => {
 });
 
 autoUpdater.on('update-downloaded', (info) => {
-  console.log('Güncelleme indirildi:', info.version);
+  const msg = `Güncelleme indirildi: ${info.version} - Otomatik yükleme ve yeniden başlatma yapılıyor...`;
+  writeLog(msg);
+  console.log('✅ Güncelleme indirildi, otomatik yükleme başlatılıyor...');
+  
+  // Kullanıcıya bilgi ver (opsiyonel - kısa bir süre gösterilebilir)
   if (mainWindow) {
     mainWindow.webContents.send('update-downloaded', info);
   }
+  
+  // 2 saniye bekle (kullanıcıya bilgi vermek için), sonra otomatik yükle ve yeniden başlat
+  setTimeout(() => {
+    writeLog('Uygulama kapatılıyor, güncelleme yükleniyor ve yeniden başlatılıyor...');
+    // isSilent: true = Windows dialog'unu gösterme
+    // isForceRunAfter: true = Yüklemeden sonra otomatik çalıştır
+    autoUpdater.quitAndInstall(true, true);
+  }, 2000); // 2 saniye bekle, kullanıcı bilgilendirilsin
 });
 
 // IPC Handlers for update
@@ -2811,134 +2893,183 @@ async function printAdisyonByCategory(items, adisyonData) {
   console.log(`   Toplam ${items.length} ürün bulundu`);
   
   try {
-    // 1. Ürünleri kategorilerine göre grupla
-    const categoryItemsMap = new Map(); // categoryId -> items[]
-    const categoryInfoMap = new Map(); // categoryId -> { name, id }
+    // 1. ÖNCE: Ürünleri personel ve zaman bazında grupla
+    // Her personel grubu için ayrı adisyon oluşturulacak
+    const staffGroupsMap = new Map(); // staffKey -> { staffName, staffTime, staffDate, items: [] }
     
     for (const item of items) {
-      // Ürünün kategori ID'sini bul
-      const product = db.products.find(p => p.id === item.id);
-      if (product && product.category_id) {
-        const categoryId = product.category_id;
-        const category = db.categories.find(c => c.id === categoryId);
-        
-        if (!categoryItemsMap.has(categoryId)) {
-          categoryItemsMap.set(categoryId, []);
-          categoryInfoMap.set(categoryId, {
-            id: categoryId,
-            name: category?.name || `Kategori ${categoryId}`
-          });
-        }
-        categoryItemsMap.get(categoryId).push(item);
-      } else {
-        // Kategori bulunamazsa, 'no-category' key kullan
-        if (!categoryItemsMap.has('no-category')) {
-          categoryItemsMap.set('no-category', []);
-          categoryInfoMap.set('no-category', {
-            id: 'no-category',
-            name: 'Diğer'
-          });
-        }
-        categoryItemsMap.get('no-category').push(item);
+      // Item'dan personel bilgisini al (staff_name, added_time, added_date)
+      const staffName = item.staff_name || null;
+      const itemTime = item.added_time || adisyonData.sale_time || getFormattedTime(new Date());
+      const itemDate = item.added_date || adisyonData.sale_date || new Date().toLocaleDateString('tr-TR');
+      
+      // Personel key'i oluştur (personel adı + tarih + saat kombinasyonu)
+      // Aynı personel, aynı tarih ve saatte eklenen ürünler aynı grupta olacak
+      const staffKey = `${staffName || 'Kasa'}::${itemDate}::${itemTime}`;
+      
+      if (!staffGroupsMap.has(staffKey)) {
+        staffGroupsMap.set(staffKey, {
+          staffName: staffName,
+          staffTime: itemTime,
+          staffDate: itemDate,
+          items: []
+        });
       }
+      
+      staffGroupsMap.get(staffKey).items.push(item);
     }
     
-    console.log(`\n📋 Kategori grupları oluşturuldu: ${categoryItemsMap.size} kategori`);
+    console.log(`\n👥 Personel grupları oluşturuldu: ${staffGroupsMap.size} grup`);
+    staffGroupsMap.forEach((group, key) => {
+      console.log(`   - "${group.staffName || 'Kasa'}": ${group.items.length} ürün (${group.staffDate} ${group.staffTime})`);
+    });
     
-    // 2. Kategorileri yazıcılara göre grupla (aynı yazıcıya atanmış kategorileri birleştir)
-    const printerGroupsMap = new Map(); // printerKey -> { printerName, printerType, categories: [{ categoryId, categoryName, items }] }
+    // 2. Her personel grubu için ayrı adisyon yazdır
+    const staffGroups = Array.from(staffGroupsMap.values());
     
-    categoryItemsMap.forEach((categoryItems, categoryId) => {
-      const categoryIdNum = typeof categoryId === 'string' && categoryId !== 'no-category' ? parseInt(categoryId) : categoryId;
-      const categoryInfo = categoryInfoMap.get(categoryId);
+    for (let staffGroupIndex = 0; staffGroupIndex < staffGroups.length; staffGroupIndex++) {
+      const staffGroup = staffGroups[staffGroupIndex];
       
-      // Bu kategori için atanmış yazıcıyı bul
-      const assignment = db.printerAssignments.find(a => {
-        const assignmentCategoryId = typeof a.category_id === 'string' ? parseInt(a.category_id) : a.category_id;
-        return assignmentCategoryId === categoryIdNum;
-      });
+      console.log(`\n📋 Personel Grubu ${staffGroupIndex + 1}/${staffGroups.length}: "${staffGroup.staffName || 'Kasa'}" (${staffGroup.staffDate} ${staffGroup.staffTime})`);
       
-      let printerName, printerType;
+      // Bu personel grubunun ürünlerini kategorilerine göre grupla
+      const categoryItemsMap = new Map(); // categoryId -> items[]
+      const categoryInfoMap = new Map(); // categoryId -> { name, id }
       
-      if (assignment) {
-        printerName = assignment.printerName;
-        printerType = assignment.printerType;
-        console.log(`   ✓ Kategori "${categoryInfo.name}" (ID: ${categoryId}) için yazıcı bulundu: "${printerName}"`);
-      } else {
-        // Kategori ataması yoksa atla (kasa yazıcısına adisyon yazdırma)
-        console.warn(`   ⚠️ Kategori "${categoryInfo.name}" (ID: ${categoryId}) için yazıcı ataması yok, atlanıyor`);
-        return; // Kasa yazıcısına adisyon yazdırma
+      for (const item of staffGroup.items) {
+        // Ürünün kategori ID'sini bul
+        const product = db.products.find(p => p.id === item.id);
+        if (product && product.category_id) {
+          const categoryId = product.category_id;
+          const category = db.categories.find(c => c.id === categoryId);
+          
+          if (!categoryItemsMap.has(categoryId)) {
+            categoryItemsMap.set(categoryId, []);
+            categoryInfoMap.set(categoryId, {
+              id: categoryId,
+              name: category?.name || `Kategori ${categoryId}`
+            });
+          }
+          categoryItemsMap.get(categoryId).push(item);
+        } else {
+          // Kategori bulunamazsa, 'no-category' key kullan
+          if (!categoryItemsMap.has('no-category')) {
+            categoryItemsMap.set('no-category', []);
+            categoryInfoMap.set('no-category', {
+              id: 'no-category',
+              name: 'Diğer'
+            });
+          }
+          categoryItemsMap.get('no-category').push(item);
+        }
       }
       
-      // Yazıcı key'i oluştur (aynı yazıcıyı gruplamak için)
-      const printerKey = `${printerName}::${printerType}`;
+      console.log(`   📋 Kategori grupları: ${categoryItemsMap.size} kategori`);
       
-      if (!printerGroupsMap.has(printerKey)) {
-        printerGroupsMap.set(printerKey, {
-          printerName,
-          printerType,
-          categories: []
+      // 3. Kategorileri yazıcılara göre grupla (aynı yazıcıya atanmış kategorileri birleştir)
+      const printerGroupsMap = new Map(); // printerKey -> { printerName, printerType, categories: [{ categoryId, categoryName, items }] }
+      
+      categoryItemsMap.forEach((categoryItems, categoryId) => {
+        const categoryIdNum = typeof categoryId === 'string' && categoryId !== 'no-category' ? parseInt(categoryId) : categoryId;
+        const categoryInfo = categoryInfoMap.get(categoryId);
+        
+        // Bu kategori için atanmış yazıcıyı bul
+        const assignment = db.printerAssignments.find(a => {
+          const assignmentCategoryId = typeof a.category_id === 'string' ? parseInt(a.category_id) : a.category_id;
+          return assignmentCategoryId === categoryIdNum;
         });
-      }
-      
-      // Bu kategoriyi yazıcı grubuna ekle
-      printerGroupsMap.get(printerKey).categories.push({
-        categoryId,
-        categoryName: categoryInfo.name,
-        items: categoryItems
+        
+        let printerName, printerType;
+        
+        if (assignment) {
+          printerName = assignment.printerName;
+          printerType = assignment.printerType;
+          console.log(`   ✓ Kategori "${categoryInfo.name}" (ID: ${categoryId}) için yazıcı bulundu: "${printerName}"`);
+        } else {
+          // Kategori ataması yoksa atla (kasa yazıcısına adisyon yazdırma)
+          console.warn(`   ⚠️ Kategori "${categoryInfo.name}" (ID: ${categoryId}) için yazıcı ataması yok, atlanıyor`);
+          return; // Kasa yazıcısına adisyon yazdırma
+        }
+        
+        // Yazıcı key'i oluştur (aynı yazıcıyı gruplamak için)
+        const printerKey = `${printerName}::${printerType}`;
+        
+        if (!printerGroupsMap.has(printerKey)) {
+          printerGroupsMap.set(printerKey, {
+            printerName,
+            printerType,
+            categories: []
+          });
+        }
+        
+        // Bu kategoriyi yazıcı grubuna ekle
+        printerGroupsMap.get(printerKey).categories.push({
+          categoryId,
+          categoryName: categoryInfo.name,
+          items: categoryItems
+        });
       });
-    });
-    
-    console.log(`\n🖨️ Yazıcı grupları oluşturuldu: ${printerGroupsMap.size} yazıcı`);
-    printerGroupsMap.forEach((group, key) => {
-      console.log(`   - "${group.printerName}": ${group.categories.length} kategori`);
-    });
-    
-    // 3. Her yazıcı için tek bir adisyon yazdır (kategoriler başlıklarla ayrılmış)
-    const printJobs = Array.from(printerGroupsMap.values());
-    
-    for (let i = 0; i < printJobs.length; i++) {
-      const job = printJobs[i];
       
-      // Tüm kategorilerin ürünlerini birleştir (kategori bilgisiyle)
-      const allItemsWithCategory = [];
-      job.categories.forEach(cat => {
-        cat.items.forEach(item => {
-          allItemsWithCategory.push({
-            ...item,
-            _categoryId: cat.categoryId,
-            _categoryName: cat.categoryName
+      console.log(`   🖨️ Yazıcı grupları: ${printerGroupsMap.size} yazıcı`);
+      
+      // 4. Her yazıcı için tek bir adisyon yazdır (kategoriler başlıklarla ayrılmış)
+      const printJobs = Array.from(printerGroupsMap.values());
+      
+      for (let i = 0; i < printJobs.length; i++) {
+        const job = printJobs[i];
+        
+        // Tüm kategorilerin ürünlerini birleştir (kategori bilgisiyle)
+        const allItemsWithCategory = [];
+        job.categories.forEach(cat => {
+          cat.items.forEach(item => {
+            allItemsWithCategory.push({
+              ...item,
+              _categoryId: cat.categoryId,
+              _categoryName: cat.categoryName
+            });
           });
         });
-      });
+        
+        // Bu personel grubu için özel adisyon data'sı oluştur
+        const printerAdisyonData = {
+          ...adisyonData,
+          items: allItemsWithCategory,
+          categories: job.categories.map(cat => ({
+            categoryId: cat.categoryId,
+            categoryName: cat.categoryName,
+            items: cat.items
+          })),
+          // Personel grubunun bilgilerini kullan
+          sale_date: staffGroup.staffDate,
+          sale_time: staffGroup.staffTime,
+          staff_name: staffGroup.staffName
+        };
+        
+        console.log(`\n   🖨️ ADİSYON YAZDIRMA ${i + 1}/${printJobs.length}`);
+        console.log(`      Yazıcı: "${job.printerName}"`);
+        console.log(`      Personel: "${staffGroup.staffName || 'Kasa'}"`);
+        console.log(`      Tarih/Saat: ${staffGroup.staffDate} ${staffGroup.staffTime}`);
+        console.log(`      Kategori sayısı: ${job.categories.length}`);
+        console.log(`      Toplam ürün sayısı: ${allItemsWithCategory.length}`);
+        
+        await printAdisyonToPrinter(
+          job.printerName,
+          job.printerType,
+          allItemsWithCategory,
+          printerAdisyonData
+        ).catch(err => {
+          console.error(`      ❌ Adisyon yazdırma hatası:`, err);
+        });
+        
+        // Yazıcılar arası kısa bekleme
+        if (i < printJobs.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
       
-      const printerAdisyonData = {
-        ...adisyonData,
-        items: allItemsWithCategory,
-        categories: job.categories.map(cat => ({
-          categoryId: cat.categoryId,
-          categoryName: cat.categoryName,
-          items: cat.items
-        }))
-      };
-      
-      console.log(`\n🖨️ ADİSYON YAZDIRMA ${i + 1}/${printJobs.length}`);
-      console.log(`   Yazıcı: "${job.printerName}"`);
-      console.log(`   Kategori sayısı: ${job.categories.length}`);
-      console.log(`   Toplam ürün sayısı: ${allItemsWithCategory.length}`);
-      
-      await printAdisyonToPrinter(
-        job.printerName,
-        job.printerType,
-        allItemsWithCategory,
-        printerAdisyonData
-      ).catch(err => {
-        console.error(`   ❌ Adisyon yazdırma hatası:`, err);
-      });
-      
-      // Yazıcılar arası kısa bekleme
-      if (i < printJobs.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+      // Personel grupları arası kısa bekleme
+      if (staffGroupIndex < staffGroups.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
     }
     
@@ -2951,8 +3082,8 @@ async function printAdisyonByCategory(items, adisyonData) {
 
 // Modern ve profesyonel adisyon HTML formatı
 function generateAdisyonHTML(items, adisyonData) {
-  // Garson ismini items'dan al (ilk item'dan)
-  const staffName = items.length > 0 && items[0].staff_name ? items[0].staff_name : null;
+  // Garson ismini adisyonData'dan al (eğer yoksa items'dan al)
+  const staffName = adisyonData.staff_name || (items.length > 0 && items[0].staff_name ? items[0].staff_name : null);
   
   // Eğer kategori bilgisi varsa, kategorilere göre grupla
   const hasCategories = adisyonData.categories && adisyonData.categories.length > 0;
@@ -3276,9 +3407,9 @@ function generateCancelReceiptHTML(cancelData) {
       </style>
     </head>
     <body>
-      <div style="text-align: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px dashed #dc2626;">
-        <h1 style="margin: 0; font-size: 14px; font-weight: 900; color: #dc2626; text-transform: uppercase; letter-spacing: 1px;">
-          ❌ İPTAL
+      <div style="text-align: center; margin-bottom: 16px; padding: 12px 8px; background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); border: 3px solid #dc2626; border-radius: 8px; box-shadow: 0 4px 8px rgba(220, 38, 38, 0.3);">
+        <h1 style="margin: 0; font-size: 24px; font-weight: 900; color: #dc2626; text-transform: uppercase; letter-spacing: 2px; text-shadow: 2px 2px 4px rgba(0,0,0,0.2);">
+          İPTAL
         </h1>
       </div>
       
@@ -3292,7 +3423,7 @@ function generateCancelReceiptHTML(cancelData) {
       <div style="margin-bottom: 10px; padding: 10px; background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%); border-left: 3px solid #f59e0b; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
         <div style="margin-bottom: 6px;">
           <p style="margin: 0; font-size: 9px; color: #92400e; font-weight: 700; text-transform: uppercase;">Ürün</p>
-          <p style="margin: 4px 0 0 0; font-size: 12px; font-weight: 900; color: #1e293b;">${cancelData.productName}</p>
+          <p style="margin: 4px 0 0 0; font-size: 12px; font-weight: 900; color: #1e293b; text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: #dc2626;">${cancelData.productName}</p>
         </div>
         <div style="display: flex; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #f59e0b;">
           <div>
@@ -5508,27 +5639,55 @@ function startAPIServer() {
 
       // Mobil personel arayüzünden gelen siparişler için otomatik adisyon yazdır (kategori bazlı)
       try {
-        // Items'a staff_name ekle (tableOrderItems'dan al)
+        // Items'a staff_name, added_time ve added_date ekle (tableOrderItems'dan al)
+        // Veritabanı zaten kaydedildi, şimdi items'ları bulabiliriz
+        // Bu sipariş için az önce eklenen item'ları bul (en yüksek ID'li olanlar - en son eklenenler)
         const itemsWithStaff = items.map(item => {
           // Mevcut orderId için bu ürünü ekleyen garsonu bul
-          const orderItem = db.tableOrderItems.find(oi => 
+          // En son eklenen item'ı al (ID'ye göre sırala - en yüksek ID = en son eklenen)
+          const matchingItems = db.tableOrderItems.filter(oi => 
             oi.order_id === orderId && 
             oi.product_id === item.id && 
             oi.product_name === item.name
           );
+          
+          // En son eklenen item'ı al (ID'ye göre sırala - büyükten küçüğe)
+          let orderItem = null;
+          if (matchingItems.length > 0) {
+            // ID'ye göre sırala ve en yüksek ID'li olanı al (en son eklenen)
+            orderItem = matchingItems.sort((a, b) => b.id - a.id)[0];
+          }
+          
+          // Eğer orderItem bulunduysa, onun bilgilerini kullan
+          // Bulunamazsa, genel staffName ve şu anki zamanı kullan (fallback)
+          const now = new Date();
+          const fallbackDate = now.toLocaleDateString('tr-TR');
+          const fallbackTime = getFormattedTime(now);
+          
           return {
             ...item,
-            staff_name: orderItem?.staff_name || staffName || null
+            staff_name: orderItem?.staff_name || staffName || null,
+            added_date: orderItem?.added_date || fallbackDate,
+            added_time: orderItem?.added_time || fallbackTime
           };
         });
+        
+        // Adisyon data'sı için, items'lardan personel ve zaman bilgisini al
+        // İlk item'ın bilgilerini kullan (tüm items aynı personel ve zamanda eklenmiş olmalı)
+        const firstItem = itemsWithStaff[0];
+        const adisyonDate = firstItem?.added_date || new Date().toLocaleDateString('tr-TR');
+        const adisyonTime = firstItem?.added_time || getFormattedTime(new Date());
+        const adisyonStaffName = firstItem?.staff_name || staffName || null;
         
         const adisyonData = {
           items: itemsWithStaff,
           tableName: tableName,
           tableType: tableType,
           orderNote: orderNote || null,
-          sale_date: isNewOrder ? new Date().toLocaleDateString('tr-TR') : (db.tableOrders.find(o => o.id === orderId)?.order_date || new Date().toLocaleDateString('tr-TR')),
-          sale_time: isNewOrder ? getFormattedTime(new Date()) : (db.tableOrders.find(o => o.id === orderId)?.order_time || getFormattedTime(new Date()))
+          // Items'lardan alınan tarih/saat ve personel bilgisini kullan
+          sale_date: adisyonDate,
+          sale_time: adisyonTime,
+          staff_name: adisyonStaffName
         };
         
         // Kategori bazlı adisyon yazdırma

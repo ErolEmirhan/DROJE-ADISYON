@@ -256,13 +256,26 @@ function App() {
           console.log('✨ Yeni sipariş oluşturuldu:', result.orderId);
         }
         // Sadece kategori bazlı yazıcılardan adisyon yazdır (kasa yazıcısından adisyon çıkmasın)
+        // Her sipariş için o anın tarih/saatini kullan
+        const now = new Date();
+        const currentDate = now.toLocaleDateString('tr-TR');
+        const currentTime = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        
+        // Items'lara added_time ve added_date ekle (masaüstünden eklenen ürünler için staff_name null olacak)
+        const itemsWithTime = cart.map(item => ({
+          ...item,
+          staff_name: null, // Masaüstünden eklenen ürünler için personel bilgisi yok
+          added_date: currentDate,
+          added_time: currentTime
+        }));
+        
         const adisyonData = {
-          items: cart,
+          items: itemsWithTime,
           tableName: selectedTable.name,
           tableType: selectedTable.type,
           orderNote: orderNote || null,
-          sale_date: new Date().toLocaleDateString('tr-TR'),
-          sale_time: new Date().toLocaleTimeString('tr-TR')
+          sale_date: currentDate,
+          sale_time: currentTime
         };
         
         if (window.electronAPI && window.electronAPI.printAdisyon) {

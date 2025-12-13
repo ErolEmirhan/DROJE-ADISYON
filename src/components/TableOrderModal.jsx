@@ -5,6 +5,7 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
   const [selectedItemDetail, setSelectedItemDetail] = useState(null);
   const [cancellingItemId, setCancellingItemId] = useState(null);
   const [cancelConfirmItem, setCancelConfirmItem] = useState(null);
+  const [cancelQuantity, setCancelQuantity] = useState(1);
 
   if (!order) return null;
 
@@ -58,18 +59,25 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
       return;
     }
     setCancelConfirmItem(item);
+    setCancelQuantity(item.quantity > 1 ? 1 : item.quantity); // Varsayılan olarak 1 veya tümü
   };
 
   // İptal onayı
   const confirmCancelItem = async () => {
     if (!cancelConfirmItem) return;
 
+    if (cancelQuantity <= 0 || cancelQuantity > cancelConfirmItem.quantity) {
+      alert('Geçersiz iptal miktarı');
+      return;
+    }
+
     setCancellingItemId(cancelConfirmItem.id);
     try {
-      const result = await window.electronAPI.cancelTableOrderItem(cancelConfirmItem.id);
+      const result = await window.electronAPI.cancelTableOrderItem(cancelConfirmItem.id, cancelQuantity);
       if (result.success) {
         // Başarılı - parent component'e bildir
         setCancelConfirmItem(null);
+        setCancelQuantity(1);
         if (onItemCancelled) {
           onItemCancelled();
         }
@@ -343,13 +351,59 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-xs font-semibold text-gray-500 mb-1">Adet</p>
+                    <p className="text-xs font-semibold text-gray-500 mb-1">Mevcut Adet</p>
                     <p className="text-base font-bold text-gray-900">{cancelConfirmItem.quantity} adet</p>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-gray-500 mb-1">Toplam Tutar</p>
-                    <p className="text-base font-bold text-red-600">
-                      ₺{(cancelConfirmItem.price * cancelConfirmItem.quantity).toFixed(2)}
+                    <p className="text-xs font-semibold text-gray-500 mb-1">Birim Fiyat</p>
+                    <p className="text-base font-bold text-gray-900">₺{cancelConfirmItem.price.toFixed(2)}</p>
+                  </div>
+                </div>
+                
+                {/* Miktar Seçimi - Sadece 1'den fazla varsa göster */}
+                {cancelConfirmItem.quantity > 1 && (
+                  <div className="mt-4 pt-4 border-t border-red-200">
+                    <p className="text-xs font-semibold text-gray-500 mb-2">İptal Edilecek Adet</p>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setCancelQuantity(Math.max(1, cancelQuantity - 1))}
+                        disabled={cancelQuantity <= 1}
+                        className="w-10 h-10 rounded-lg bg-white border-2 border-red-300 text-red-600 font-bold hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min="1"
+                        max={cancelConfirmItem.quantity}
+                        value={cancelQuantity}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 1;
+                          setCancelQuantity(Math.max(1, Math.min(val, cancelConfirmItem.quantity)));
+                        }}
+                        className="flex-1 px-4 py-2 text-center text-lg font-bold border-2 border-red-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
+                      />
+                      <button
+                        onClick={() => setCancelQuantity(Math.min(cancelConfirmItem.quantity, cancelQuantity + 1))}
+                        disabled={cancelQuantity >= cancelConfirmItem.quantity}
+                        className="w-10 h-10 rounded-lg bg-white border-2 border-red-300 text-red-600 font-bold hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                      >
+                        +
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2 text-center">
+                      {cancelQuantity === cancelConfirmItem.quantity 
+                        ? 'Tüm ürün iptal edilecek' 
+                        : `${cancelConfirmItem.quantity - cancelQuantity} adet kalacak`}
+                    </p>
+                  </div>
+                )}
+                
+                <div className="mt-4 pt-4 border-t-2 border-red-300">
+                  <div className="flex justify-between items-center">
+                    <p className="text-xs font-semibold text-gray-500">İptal Edilecek Tutar</p>
+                    <p className="text-lg font-bold text-red-600">
+                      ₺{(cancelConfirmItem.price * cancelQuantity).toFixed(2)}
                     </p>
                   </div>
                 </div>
