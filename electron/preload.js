@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createProduct: (productData) => ipcRenderer.invoke('create-product', productData),
   updateProduct: (productData) => ipcRenderer.invoke('update-product', productData),
   deleteProduct: (productId) => ipcRenderer.invoke('delete-product', productId),
-  selectImageFile: () => ipcRenderer.invoke('select-image-file'),
+  selectImageFile: (productId) => ipcRenderer.invoke('select-image-file', productId),
   // Update API
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),

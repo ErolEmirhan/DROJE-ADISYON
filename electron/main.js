@@ -13,6 +13,7 @@ const os = require('os');
 // Firebase entegrasyonu
 let firebaseApp = null;
 let firestore = null;
+let storage = null;
 let firebaseCollection = null;
 let firebaseAddDoc = null;
 let firebaseServerTimestamp = null;
@@ -21,11 +22,16 @@ let firebaseDeleteDoc = null;
 let firebaseDoc = null;
 let firebaseSetDoc = null;
 let firebaseOnSnapshot = null;
+let storageRef = null;
+let storageUploadBytes = null;
+let storageGetDownloadURL = null;
+let storageDeleteObject = null;
 
 try {
   // Firebase modüllerini dinamik olarak yükle
   const firebaseAppModule = require('firebase/app');
   const firebaseFirestoreModule = require('firebase/firestore');
+  const firebaseStorageModule = require('firebase/storage');
   
   const firebaseConfig = {
     apiKey: "AIzaSyCdf-c13e0wCafRYHXhIls1epJgD1RjPUA",
@@ -39,6 +45,7 @@ try {
 
   firebaseApp = firebaseAppModule.initializeApp(firebaseConfig);
   firestore = firebaseFirestoreModule.getFirestore(firebaseApp);
+  storage = firebaseStorageModule.getStorage(firebaseApp);
   firebaseCollection = firebaseFirestoreModule.collection;
   firebaseAddDoc = firebaseFirestoreModule.addDoc;
   firebaseServerTimestamp = firebaseFirestoreModule.serverTimestamp;
@@ -47,7 +54,11 @@ try {
   firebaseDoc = firebaseFirestoreModule.doc;
   firebaseSetDoc = firebaseFirestoreModule.setDoc;
   firebaseOnSnapshot = firebaseFirestoreModule.onSnapshot;
-  console.log('Firebase başarıyla başlatıldı');
+  storageRef = firebaseStorageModule.ref;
+  storageUploadBytes = firebaseStorageModule.uploadBytes;
+  storageGetDownloadURL = firebaseStorageModule.getDownloadURL;
+  storageDeleteObject = firebaseStorageModule.deleteObject;
+  console.log('Firebase başarıyla başlatıldı (Firestore + Storage)');
 } catch (error) {
   console.error('Firebase başlatılamadı:', error);
   console.log('Firebase olmadan devam ediliyor...');
@@ -222,6 +233,96 @@ async function saveProductToFirebase(product) {
     console.log(`✅ Ürün Firebase'e kaydedildi: ${product.name} (ID: ${product.id}, Fiyat: ${parseFloat(product.price) || 0})`);
   } catch (error) {
     console.error(`❌ Ürün Firebase'e kaydedilemedi (${product.name}):`, error);
+  }
+}
+
+// Local path'leri Firebase Storage'a yükleme (migration)
+async function migrateLocalImagesToFirebase() {
+  if (!storage || !storageRef || !storageUploadBytes || !storageGetDownloadURL) {
+    console.warn('⚠️ Firebase Storage başlatılamadı, görsel migration yapılamadı');
+    return;
+  }
+
+  try {
+    console.log('🔄 Local görseller Firebase Storage\'a yükleniyor...');
+    let migratedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
+
+    for (const product of db.products) {
+      // Eğer görsel yoksa veya zaten Firebase Storage URL'si ise atla
+      if (!product.image) {
+        skippedCount++;
+        continue;
+      }
+
+      // Firebase Storage URL kontrolü
+      if (product.image.includes('firebasestorage.googleapis.com')) {
+        skippedCount++;
+        continue;
+      }
+
+      // Local path kontrolü (örn: /image.jpg veya C:\... veya relative path)
+      let imagePath = product.image;
+      
+      // Eğer absolute path değilse (relative path), public klasöründen al
+      // Windows: C:\ veya \\ ile başlıyorsa absolute
+      // Unix: / ile başlıyorsa absolute
+      const isAbsolutePath = path.isAbsolute(imagePath) || 
+                            imagePath.startsWith('http://') || 
+                            imagePath.startsWith('https://');
+      
+      if (!isAbsolutePath) {
+        // Relative path ise public klasöründen al
+        if (imagePath.startsWith('/')) {
+          const publicDir = path.join(__dirname, '../public');
+          imagePath = path.join(publicDir, imagePath.substring(1));
+        } else {
+          // Sadece dosya adı ise
+          const publicDir = path.join(__dirname, '../public');
+          imagePath = path.join(publicDir, imagePath);
+        }
+      }
+
+      // Dosya var mı kontrol et
+      if (!fs.existsSync(imagePath)) {
+        console.warn(`⚠️ Görsel bulunamadı: ${imagePath} (Ürün: ${product.name})`);
+        // Görseli temizle
+        product.image = null;
+        errorCount++;
+        continue;
+      }
+
+      try {
+        // Firebase Storage'a yükle
+        const downloadURL = await uploadImageToFirebaseStorage(imagePath, product.id);
+        
+        // Ürünü güncelle
+        product.image = downloadURL;
+        migratedCount++;
+        console.log(`✅ Görsel yüklendi: ${product.name} -> ${downloadURL}`);
+      } catch (uploadError) {
+        console.error(`❌ Görsel yüklenemedi (${product.name}):`, uploadError);
+        errorCount++;
+        // Hata olsa bile devam et
+      }
+    }
+
+    // Veritabanını kaydet
+    if (migratedCount > 0) {
+      saveDatabase();
+      
+      // Firebase'e de güncelle
+      for (const product of db.products) {
+        if (product.image && product.image.includes('firebasestorage.googleapis.com')) {
+          await saveProductToFirebase(product);
+        }
+      }
+    }
+
+    console.log(`✅ Görsel migration tamamlandı: ${migratedCount} yüklendi, ${skippedCount} atlandı, ${errorCount} hata`);
+  } catch (error) {
+    console.error('❌ Görsel migration hatası:', error);
   }
 }
 
@@ -1617,12 +1718,20 @@ ipcMain.handle('create-product', (event, productData) => {
   return { success: true, product: newProduct };
 });
 
-ipcMain.handle('update-product', (event, productData) => {
+ipcMain.handle('update-product', async (event, productData) => {
   const { id, name, category_id, price, image } = productData;
   
   const productIndex = db.products.findIndex(p => p.id === id);
   if (productIndex === -1) {
     return { success: false, error: 'Ürün bulunamadı' };
+  }
+  
+  const oldProduct = db.products[productIndex];
+  const oldImage = oldProduct.image;
+  
+  // Eğer görsel değiştiyse ve eski görsel Firebase Storage'da ise, eski görseli sil
+  if (oldImage && oldImage !== image && oldImage.includes('firebasestorage.googleapis.com')) {
+    await deleteImageFromFirebaseStorage(oldImage);
   }
   
   db.products[productIndex] = {
@@ -1657,6 +1766,11 @@ ipcMain.handle('delete-product', async (event, productId) => {
     return { success: false, error: 'Bu ürün satış geçmişinde kullanıldığı için silinemez' };
   }
   
+  // Eğer ürünün Firebase Storage'da görseli varsa, onu da sil
+  if (product.image && product.image.includes('firebasestorage.googleapis.com')) {
+    await deleteImageFromFirebaseStorage(product.image);
+  }
+  
   db.products.splice(productIndex, 1);
   saveDatabase();
   
@@ -1678,8 +1792,77 @@ ipcMain.handle('delete-product', async (event, productId) => {
   return { success: true };
 });
 
+// Firebase Storage'a görsel yükleme fonksiyonu
+async function uploadImageToFirebaseStorage(filePath, productId = null) {
+  if (!storage || !storageRef || !storageUploadBytes || !storageGetDownloadURL) {
+    throw new Error('Firebase Storage başlatılamadı');
+  }
+
+  try {
+    // Dosyayı oku
+    const fileBuffer = fs.readFileSync(filePath);
+    const fileName = path.basename(filePath);
+    const fileExt = path.extname(fileName);
+    
+    // Benzersiz dosya adı oluştur (ürün ID + timestamp)
+    const timestamp = Date.now();
+    const uniqueFileName = productId 
+      ? `products/${productId}_${timestamp}${fileExt}`
+      : `products/temp_${timestamp}${fileExt}`;
+    
+    // Storage referansı oluştur
+    const imageRef = storageRef(storage, uniqueFileName);
+    
+    // Dosyayı yükle
+    await storageUploadBytes(imageRef, fileBuffer);
+    console.log(`✅ Görsel Firebase Storage'a yüklendi: ${uniqueFileName}`);
+    
+    // Download URL'yi al
+    const downloadURL = await storageGetDownloadURL(imageRef);
+    console.log(`✅ Görsel URL alındı: ${downloadURL}`);
+    
+    return downloadURL;
+  } catch (error) {
+    console.error('❌ Firebase Storage yükleme hatası:', error);
+    throw error;
+  }
+}
+
+// Firebase Storage'dan görsel silme fonksiyonu
+async function deleteImageFromFirebaseStorage(imageURL) {
+  if (!storage || !storageRef || !storageDeleteObject) {
+    console.warn('⚠️ Firebase Storage başlatılamadı, görsel silinemedi');
+    return;
+  }
+
+  if (!imageURL || typeof imageURL !== 'string') {
+    return;
+  }
+
+  try {
+    // URL'den dosya yolunu çıkar
+    // Firebase Storage URL formatı: https://firebasestorage.googleapis.com/v0/b/BUCKET/o/PATH?alt=media&token=TOKEN
+    const urlMatch = imageURL.match(/\/o\/([^?]+)/);
+    if (!urlMatch || !urlMatch[1]) {
+      console.warn('⚠️ Geçersiz Storage URL formatı:', imageURL);
+      return;
+    }
+
+    // URL decode yap
+    const filePath = decodeURIComponent(urlMatch[1]);
+    
+    // Storage referansı oluştur ve sil
+    const imageRef = storageRef(storage, filePath);
+    await storageDeleteObject(imageRef);
+    console.log(`✅ Görsel Firebase Storage'dan silindi: ${filePath}`);
+  } catch (error) {
+    console.error('❌ Firebase Storage silme hatası:', error);
+    // Hata olsa bile devam et, kritik değil
+  }
+}
+
 // File selection handler
-ipcMain.handle('select-image-file', async (event) => {
+ipcMain.handle('select-image-file', async (event, productId = null) => {
   try {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Görsel Seç',
@@ -1699,31 +1882,40 @@ ipcMain.handle('select-image-file', async (event) => {
       return { success: false, error: 'Dosya seçilmedi' };
     }
 
-    // Dosyayı public klasörüne kopyala
-    const publicDir = path.join(__dirname, '../public');
-    if (!fs.existsSync(publicDir)) {
-      fs.mkdirSync(publicDir, { recursive: true });
+    // Dosya var mı kontrol et
+    if (!fs.existsSync(filePath)) {
+      return { success: false, error: 'Dosya bulunamadı' };
     }
 
-    const fileName = path.basename(filePath);
-    const destPath = path.join(publicDir, fileName);
-    
-    // Eğer aynı isimde dosya varsa, benzersiz isim oluştur
-    let finalDestPath = destPath;
-    let counter = 1;
-    while (fs.existsSync(finalDestPath)) {
-      const ext = path.extname(fileName);
-      const nameWithoutExt = path.basename(fileName, ext);
-      finalDestPath = path.join(publicDir, `${nameWithoutExt}_${counter}${ext}`);
-      counter++;
-    }
+    // Firebase Storage'a yükle
+    try {
+      const downloadURL = await uploadImageToFirebaseStorage(filePath, productId);
+      return { success: true, path: downloadURL, isFirebaseURL: true };
+    } catch (storageError) {
+      console.error('Firebase Storage yükleme hatası:', storageError);
+      // Firebase Storage başarısız olursa, eski yöntemle devam et (geriye dönük uyumluluk)
+      const publicDir = path.join(__dirname, '../public');
+      if (!fs.existsSync(publicDir)) {
+        fs.mkdirSync(publicDir, { recursive: true });
+      }
 
-    fs.copyFileSync(filePath, finalDestPath);
-    
-    // Public klasöründeki dosya için relative path döndür
-    const relativePath = `/${path.basename(finalDestPath)}`;
-    
-    return { success: true, path: relativePath };
+      const fileName = path.basename(filePath);
+      const destPath = path.join(publicDir, fileName);
+      
+      let finalDestPath = destPath;
+      let counter = 1;
+      while (fs.existsSync(finalDestPath)) {
+        const ext = path.extname(fileName);
+        const nameWithoutExt = path.basename(fileName, ext);
+        finalDestPath = path.join(publicDir, `${nameWithoutExt}_${counter}${ext}`);
+        counter++;
+      }
+
+      fs.copyFileSync(filePath, finalDestPath);
+      const relativePath = `/${path.basename(finalDestPath)}`;
+      
+      return { success: true, path: relativePath, isFirebaseURL: false };
+    }
   } catch (error) {
     console.error('Dosya seçme hatası:', error);
     return { success: false, error: error.message };
@@ -2841,11 +3033,14 @@ app.whenReady().then(() => {
     await syncCategoriesFromFirebase();
     await syncProductsFromFirebase();
     
-    // 2. Sonra local database'deki verileri Firebase'e gönder (iki yönlü senkronizasyon)
+    // 2. Local path'leri Firebase Storage'a yükle (migration)
+    await migrateLocalImagesToFirebase();
+    
+    // 3. Sonra local database'deki verileri Firebase'e gönder (iki yönlü senkronizasyon)
     await syncCategoriesToFirebase();
     await syncProductsToFirebase();
     
-    // 3. Gerçek zamanlı listener'ları başlat (anında güncellemeler için)
+    // 4. Gerçek zamanlı listener'ları başlat (anında güncellemeler için)
     setupCategoriesRealtimeListener();
     setupProductsRealtimeListener();
     

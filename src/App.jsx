@@ -551,10 +551,10 @@ function App() {
       ) : currentView === 'pos' ? (
         <div className="flex h-[calc(100vh-80px)]">
           {/* Sol Panel - Kategoriler ve Ürünler */}
-          <div className="flex-1 flex flex-col p-6 overflow-hidden">
+          <div className="flex-1 flex flex-col p-4 overflow-hidden">
             {selectedTable && (
-              <div className="mb-4 p-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl shadow-lg flex items-center justify-between">
-                <p className="text-lg font-semibold">
+              <div className="mb-3 p-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl shadow-lg flex items-center justify-between">
+                <p className="text-base font-semibold">
                   Masa: {selectedTable.name} için sipariş oluşturuyorsunuz
                 </p>
                 <button
@@ -562,10 +562,10 @@ function App() {
                     setSelectedTable(null);
                     clearCart();
                   }}
-                  className="ml-4 p-2 hover:bg-white/20 rounded-lg transition-colors"
+                  className="ml-4 p-1.5 hover:bg-white/20 rounded-lg transition-colors"
                   title="Masa seçimini iptal et"
                 >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
@@ -581,7 +581,7 @@ function App() {
             />
             
             {/* Arama Çubuğu */}
-            <div className="mb-4">
+            <div className="mb-3">
               <div className="relative">
                 <input
                   ref={searchInputRef}
@@ -589,10 +589,10 @@ function App() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Ürün ara..."
-                  className="w-full px-4 py-3 pl-12 bg-white/90 backdrop-blur-xl border-2 border-purple-200 rounded-xl shadow-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800 font-medium placeholder-gray-400 transition-all duration-300"
+                  className="w-full px-3 py-2 pl-10 bg-white/90 backdrop-blur-xl border-2 border-purple-200 rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800 font-medium placeholder-gray-400 transition-all duration-200 text-sm"
                 />
-                <div className="absolute left-4 top-1/2 transform -translate-y-1/2">
-                  <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+                  <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
                 </div>
@@ -604,16 +604,16 @@ function App() {
                         searchInputRef.current.focus();
                       }
                     }}
-                    className="absolute right-4 top-1/2 transform -translate-y-1/2 p-1 hover:bg-purple-100 rounded-lg transition-colors"
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 hover:bg-purple-100 rounded-lg transition-colors"
                   >
-                    <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
                 )}
               </div>
               {searchQuery && (
-                <p className="mt-2 text-sm text-gray-600 font-medium">
+                <p className="mt-1.5 text-xs text-gray-600 font-medium">
                   {filteredProducts.length > 0 
                     ? `${filteredProducts.length} ürün bulundu` 
                     : 'Ürün bulunamadı'}

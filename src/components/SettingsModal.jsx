@@ -794,7 +794,9 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                             }
                             
                             try {
-                              const result = await window.electronAPI.selectImageFile();
+                              // Ürün ID'sini parametre olarak gönder (düzenleme modunda)
+                              const productId = editingProduct ? editingProduct.id : null;
+                              const result = await window.electronAPI.selectImageFile(productId);
                               if (result.success && result.path) {
                                 setProductForm({ ...productForm, image: result.path });
                               } else if (!result.canceled) {
