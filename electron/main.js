@@ -1237,56 +1237,6 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity) 
   return { success: true, remainingAmount: order.total_amount };
 });
 
-// İptal fişi önizleme
-ipcMain.handle('preview-cancel-receipt', async (event, itemId, cancelQuantity) => {
-  const item = db.tableOrderItems.find(oi => oi.id === itemId);
-  if (!item) {
-    return { success: false, error: 'Ürün bulunamadı' };
-  }
-
-  const order = db.tableOrders.find(o => o.id === item.order_id);
-  if (!order) {
-    return { success: false, error: 'Sipariş bulunamadı' };
-  }
-
-  // İptal edilecek miktarı belirle
-  const quantityToCancel = cancelQuantity || item.quantity;
-  if (quantityToCancel <= 0 || quantityToCancel > item.quantity) {
-    return { success: false, error: 'Geçersiz iptal miktarı' };
-  }
-
-  // Ürün bilgilerini al (kategori için)
-  const product = db.products.find(p => p.id === item.product_id);
-  if (!product) {
-    return { success: false, error: 'Ürün bilgisi bulunamadı' };
-  }
-
-  // Kategori bilgisini al
-  const category = db.categories.find(c => c.id === product.category_id);
-  const categoryName = category ? category.name : 'Diğer';
-
-  // İptal fişi verilerini hazırla
-  const now = new Date();
-  const cancelDate = now.toLocaleDateString('tr-TR');
-  const cancelTime = getFormattedTime(now);
-
-  const cancelReceiptData = {
-    tableName: order.table_name,
-    tableType: order.table_type,
-    productName: item.product_name,
-    quantity: quantityToCancel,
-    price: item.price,
-    cancelDate: cancelDate,
-    cancelTime: cancelTime,
-    categoryName: categoryName
-  };
-
-  // İptal fişi HTML'ini oluştur
-  const cancelHTML = generateCancelReceiptHTML(cancelReceiptData);
-
-  return { success: true, html: cancelHTML, receiptData: cancelReceiptData };
-});
-
 ipcMain.handle('complete-table-order', async (event, orderId) => {
   const order = db.tableOrders.find(o => o.id === orderId);
   if (!order) {
@@ -1405,116 +1355,6 @@ ipcMain.handle('complete-table-order', async (event, orderId) => {
   }
 
   return { success: true, saleId };
-});
-
-// Masa aktar - Kaynak masadaki tüm pending siparişleri hedef masaya aktar
-ipcMain.handle('transfer-table-order', async (event, sourceTableId, targetTableId) => {
-  // Kaynak masayı kontrol et
-  const sourceOrders = (db.tableOrders || []).filter(
-    o => o.table_id === sourceTableId && o.status === 'pending'
-  );
-
-  if (sourceOrders.length === 0) {
-    return { success: false, error: 'Kaynak masada aktarılacak sipariş bulunamadı' };
-  }
-
-  // Hedef masayı kontrol et - boş olmalı
-  const targetOrders = (db.tableOrders || []).filter(
-    o => o.table_id === targetTableId && o.status === 'pending'
-  );
-
-  if (targetOrders.length > 0) {
-    return { success: false, error: 'Hedef masada zaten aktif sipariş var' };
-  }
-
-  // Hedef masa bilgilerini oluştur
-  let targetTableName, targetTableType;
-  
-  // Masa ID formatından bilgileri çıkar (örn: "inside-1" veya "outside-5")
-  if (targetTableId.startsWith('inside-')) {
-    const tableNumber = targetTableId.replace('inside-', '');
-    targetTableName = `İçeri ${tableNumber}`;
-    targetTableType = 'inside';
-  } else if (targetTableId.startsWith('outside-')) {
-    const tableNumber = targetTableId.replace('outside-', '');
-    targetTableName = `Dışarı ${tableNumber}`;
-    targetTableType = 'outside';
-  } else {
-    return { success: false, error: 'Geçersiz hedef masa ID formatı' };
-  }
-
-  // Tüm pending siparişleri ve itemlarını aktar
-  const transferredOrders = [];
-  const transferredItems = [];
-
-  sourceOrders.forEach(order => {
-    // Eski masa bilgilerini sakla
-    const oldTableName = order.table_name;
-    const oldTableType = order.table_type;
-    
-    // Sipariş bilgilerini güncelle
-    order.table_id = targetTableId;
-    order.table_name = targetTableName;
-    order.table_type = targetTableType;
-    
-    transferredOrders.push({
-      orderId: order.id,
-      oldTableName: oldTableName,
-      newTableName: targetTableName
-    });
-
-    // Bu siparişe ait tüm itemları bul ve güncelle
-    const orderItems = (db.tableOrderItems || []).filter(
-      oi => oi.order_id === order.id
-    );
-
-    orderItems.forEach(item => {
-      transferredItems.push({
-        itemId: item.id,
-        productName: item.product_name,
-        quantity: item.quantity
-      });
-    });
-  });
-
-  saveDatabase();
-
-  // Electron renderer process'e güncelleme gönder
-  if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send('table-order-transferred', {
-      sourceTableId,
-      targetTableId,
-      transferredOrdersCount: transferredOrders.length,
-      transferredItemsCount: transferredItems.length
-    });
-  }
-
-  // Mobil personel arayüzüne gerçek zamanlı güncelleme gönder
-  if (io) {
-    // Kaynak masa artık boş
-    io.emit('table-update', {
-      tableId: sourceTableId,
-      hasOrder: false
-    });
-    // Hedef masa artık dolu
-    io.emit('table-update', {
-      tableId: targetTableId,
-      hasOrder: true
-    });
-  }
-
-  console.log(`✅ Masa aktarımı tamamlandı: ${sourceTableId} -> ${targetTableId}`);
-  console.log(`   Aktarılan sipariş sayısı: ${transferredOrders.length}`);
-  console.log(`   Aktarılan ürün sayısı: ${transferredItems.length}`);
-
-  return {
-    success: true,
-    transferredOrders: transferredOrders.length,
-    transferredItems: transferredItems.length,
-    sourceTableId,
-    targetTableId,
-    targetTableName
-  };
 });
 
 // Kısmi ödeme için masa siparişi tutarını güncelle ve satış kaydı oluştur
@@ -2759,7 +2599,7 @@ function generateProductionReceiptHTML(items, receiptData) {
       
       ${receiptData.orderNote ? `
       <div style="margin: 10px 0; padding: 8px; background-color: #fef3c7; border: 1px solid #fbbf24; border-radius: 4px;">
-        <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #d97706; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu${receiptData.staff_name ? ' (' + receiptData.staff_name + ')' : ''}:</p>
+        <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #d97706; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu:</p>
         <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #92400e; margin: 0; font-family: 'Montserrat', sans-serif;">${receiptData.orderNote}</p>
       </div>
       ` : ''}
@@ -2995,7 +2835,7 @@ function generateReceiptHTML(receiptData) {
       
       ${receiptData.orderNote ? `
       <div style="margin: 10px 0; padding: 8px; background-color: #fef3c7; border: 1px solid #fbbf24; border-radius: 4px;">
-        <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #d97706; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu${receiptData.staff_name ? ' (' + receiptData.staff_name + ')' : ''}:</p>
+        <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #d97706; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu:</p>
         <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #92400e; margin: 0; font-family: 'Montserrat', sans-serif;">${receiptData.orderNote}</p>
       </div>
       ` : ''}
@@ -4148,7 +3988,7 @@ function generateAdisyonHTML(items, adisyonData) {
       
       ${adisyonData.orderNote ? `
       <div style="margin: 10px 0; padding: 8px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 6px; border-left: 3px solid #f59e0b; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-        <p style="font-size: 9px; font-weight: 900; color: #92400e; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu${adisyonData.staff_name ? ' (' + adisyonData.staff_name + ')' : ''}:</p>
+        <p style="font-size: 9px; font-weight: 900; color: #92400e; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu:</p>
         <p style="font-size: 9px; font-weight: 700; color: #78350f; margin: 0; font-family: 'Montserrat', sans-serif;">${adisyonData.orderNote}</p>
       </div>
       ` : ''}
@@ -4205,47 +4045,47 @@ function generateCancelReceiptHTML(cancelData) {
       </style>
     </head>
     <body>
-      <div style="text-align: center; margin-bottom: 16px; padding: 12px 8px; background: #ffffff; border: 3px solid #000000; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">
-        <h1 style="margin: 0; font-size: 24px; font-weight: 900; color: #000000; text-transform: uppercase; letter-spacing: 2px;">
+      <div style="text-align: center; margin-bottom: 16px; padding: 12px 8px; background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); border: 3px solid #dc2626; border-radius: 8px; box-shadow: 0 4px 8px rgba(220, 38, 38, 0.3);">
+        <h1 style="margin: 0; font-size: 24px; font-weight: 900; color: #dc2626; text-transform: uppercase; letter-spacing: 2px; text-shadow: 2px 2px 4px rgba(0,0,0,0.2);">
           İPTAL
         </h1>
       </div>
       
-      <div style="margin-bottom: 10px; padding: 8px; background: #f5f5f5; border-left: 3px solid #000000; border-radius: 6px;">
+      <div style="margin-bottom: 10px; padding: 8px; background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); border-left: 3px solid #dc2626; border-radius: 6px;">
         <div style="margin-bottom: 6px;">
-          <p style="margin: 0; font-size: 9px; color: #000000; font-weight: 700; text-transform: uppercase;">Masa</p>
-          <p style="margin: 4px 0 0 0; font-size: 13px; font-weight: 900; color: #000000;">${tableTypeText} ${cancelData.tableName}</p>
+          <p style="margin: 0; font-size: 9px; color: #991b1b; font-weight: 700; text-transform: uppercase;">Masa</p>
+          <p style="margin: 4px 0 0 0; font-size: 13px; font-weight: 900; color: #1e293b;">${tableTypeText} ${cancelData.tableName}</p>
         </div>
       </div>
       
-      <div style="margin-bottom: 10px; padding: 10px; background: #ffffff; border-left: 3px solid #000000; border-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.2);">
+      <div style="margin-bottom: 10px; padding: 10px; background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%); border-left: 3px solid #f59e0b; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
         <div style="margin-bottom: 6px;">
-          <p style="margin: 0; font-size: 9px; color: #000000; font-weight: 700; text-transform: uppercase;">Ürün</p>
-          <p style="margin: 4px 0 0 0; font-size: 12px; font-weight: 900; color: #000000; text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: #000000;">${cancelData.productName}</p>
+          <p style="margin: 0; font-size: 9px; color: #92400e; font-weight: 700; text-transform: uppercase;">Ürün</p>
+          <p style="margin: 4px 0 0 0; font-size: 12px; font-weight: 900; color: #1e293b; text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: #dc2626;">${cancelData.productName}</p>
         </div>
-        <div style="display: flex; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #000000;">
+        <div style="display: flex; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #f59e0b;">
           <div>
-            <p style="margin: 0; font-size: 8px; color: #000000; font-weight: 700;">Adet</p>
-            <p style="margin: 2px 0 0 0; font-size: 11px; font-weight: 900; color: #000000;">${cancelData.quantity} adet</p>
+            <p style="margin: 0; font-size: 8px; color: #92400e; font-weight: 700;">Adet</p>
+            <p style="margin: 2px 0 0 0; font-size: 11px; font-weight: 900; color: #1e293b;">${cancelData.quantity} adet</p>
           </div>
           <div style="text-align: right;">
-            <p style="margin: 0; font-size: 8px; color: #000000; font-weight: 700;">Birim Fiyat</p>
-            <p style="margin: 2px 0 0 0; font-size: 11px; font-weight: 900; color: #000000;">₺${cancelData.price.toFixed(2)}</p>
+            <p style="margin: 0; font-size: 8px; color: #92400e; font-weight: 700;">Birim Fiyat</p>
+            <p style="margin: 2px 0 0 0; font-size: 11px; font-weight: 900; color: #1e293b;">₺${cancelData.price.toFixed(2)}</p>
           </div>
         </div>
-        <div style="margin-top: 8px; padding-top: 8px; border-top: 2px solid #000000;">
+        <div style="margin-top: 8px; padding-top: 8px; border-top: 2px solid #f59e0b;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <p style="margin: 0; font-size: 9px; color: #000000; font-weight: 700; text-transform: uppercase;">Toplam</p>
-            <p style="margin: 0; font-size: 14px; font-weight: 900; color: #000000;">₺${(cancelData.price * cancelData.quantity).toFixed(2)}</p>
+            <p style="margin: 0; font-size: 9px; color: #92400e; font-weight: 700; text-transform: uppercase;">Toplam</p>
+            <p style="margin: 0; font-size: 14px; font-weight: 900; color: #dc2626;">₺${(cancelData.price * cancelData.quantity).toFixed(2)}</p>
           </div>
         </div>
       </div>
       
-      <div style="margin-top: 12px; padding-top: 8px; border-top: 2px dashed #000000; text-align: center;">
-        <p style="margin: 0; font-size: 8px; color: #000000; font-weight: 700;">
+      <div style="margin-top: 12px; padding-top: 8px; border-top: 2px dashed #d1d5db; text-align: center;">
+        <p style="margin: 0; font-size: 8px; color: #6b7280; font-weight: 700;">
           ${cancelData.cancelDate} ${cancelData.cancelTime}
         </p>
-        <p style="margin: 4px 0 0 0; font-size: 7px; color: #000000; font-weight: 600;">
+        <p style="margin: 4px 0 0 0; font-size: 7px; color: #9ca3af; font-weight: 600;">
           Kategori: ${cancelData.categoryName}
         </p>
       </div>
@@ -4409,8 +4249,8 @@ function generateMobileHTML(serverURL) {
     }
     .header {
       text-align: center;
-      margin-bottom: 20px;
-      padding-bottom: 15px;
+      margin-bottom: 4px;
+      padding-bottom: 6px;
       border-bottom: 2px solid #e0e0e0;
     }
     .header h1 {
@@ -4419,7 +4259,7 @@ function generateMobileHTML(serverURL) {
       -webkit-text-fill-color: transparent;
       background-clip: text;
       font-size: 24px;
-      margin-bottom: 5px;
+      margin-bottom: 2px;
       font-weight: bold;
     }
     .header p {
@@ -4474,6 +4314,11 @@ function generateMobileHTML(serverURL) {
       flex-direction: column;
       padding: 5px;
     }
+    .table-btn.outside-empty {
+      background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+      border-color: #374151;
+      color: white;
+    }
     .table-btn:active {
       transform: scale(0.95);
     }
@@ -4523,6 +4368,10 @@ function generateMobileHTML(serverURL) {
       font-size: 10px;
       opacity: 0.8;
       margin-top: 2px;
+    }
+    .table-btn.outside-empty .table-number,
+    .table-btn.outside-empty .table-label {
+      color: white;
     }
     .category-tabs {
       display: flex;
@@ -4586,20 +4435,35 @@ function generateMobileHTML(serverURL) {
     }
     .product-card {
       padding: 16px;
-      border: 2px solid #e5e7eb;
+      border: 2px solid rgba(255, 255, 255, 0.2);
       border-radius: 14px;
-      background: white;
+      background: #1f2937;
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
       cursor: pointer;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      min-height: 100px;
+      min-height: 120px;
+      position: relative;
+      overflow: hidden;
+    }
+    .product-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      z-index: 1;
     }
     .product-card:hover {
-      border-color: #a855f7;
-      box-shadow: 0 4px 12px rgba(168, 85, 247, 0.15);
+      border-color: rgba(255, 255, 255, 0.4);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
       transform: translateY(-2px);
     }
     .product-card:active {
@@ -4609,17 +4473,20 @@ function generateMobileHTML(serverURL) {
       font-weight: 700;
       margin-bottom: 8px;
       font-size: 15px;
-      color: #1f2937;
+      color: white;
       line-height: 1.4;
+      position: relative;
+      z-index: 2;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
     }
     .product-price {
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: white;
       font-weight: 800;
       font-size: 18px;
       margin-top: auto;
+      position: relative;
+      z-index: 2;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
     }
     .cart {
       position: fixed;
@@ -4797,14 +4664,14 @@ function generateMobileHTML(serverURL) {
       align-items: center;
       justify-content: center;
       min-height: 60vh;
-      padding: 40px 20px;
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(250, 245, 255, 0.95) 100%);
-      border-radius: 24px;
-      box-shadow: 0 20px 60px rgba(168, 85, 247, 0.15);
+      padding: 50px 30px;
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05);
       margin: 20px auto;
-      max-width: 420px;
+      max-width: 400px;
       position: relative;
-      overflow: hidden;
+      border: 1px solid #f0f0f0;
     }
     .pin-section::before {
       content: '';
@@ -4812,104 +4679,121 @@ function generateMobileHTML(serverURL) {
       top: 0;
       left: 0;
       right: 0;
-      height: 4px;
-      background: linear-gradient(90deg, #a855f7 0%, #ec4899 100%);
+      height: 3px;
+      background: #1f2937;
     }
     .pin-section h2 {
-      margin-bottom: 8px;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      font-size: 28px;
-      font-weight: 700;
-      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+      color: #1f2937;
+      font-size: 26px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+      text-align: center;
     }
     .pin-section .subtitle {
       color: #6b7280;
-      font-size: 14px;
-      margin-bottom: 32px;
-      font-weight: 500;
+      font-size: 13px;
+      margin-bottom: 36px;
+      font-weight: 400;
+      text-align: center;
+      line-height: 1.5;
     }
     .pin-input-wrapper {
       position: relative;
       width: 100%;
-      max-width: 320px;
-      margin-bottom: 20px;
+      max-width: 340px;
+      margin-bottom: 24px;
     }
     .pin-input {
       width: 100%;
-      padding: 18px 20px;
-      font-size: 18px;
-      border: 2px solid #e5e7eb;
-      border-radius: 12px;
+      padding: 16px 20px;
+      font-size: 16px;
+      border: 1.5px solid #d1d5db;
+      border-radius: 8px;
       text-align: center;
-      transition: all 0.3s ease;
-      background: white;
+      transition: all 0.2s ease;
+      background: #fafafa;
       font-weight: 500;
-      letter-spacing: 2px;
+      letter-spacing: 1.5px;
+      color: #1f2937;
     }
     .pin-input:focus {
       outline: none;
-      border-color: #a855f7;
-      box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.1);
-      transform: translateY(-2px);
+      border-color: #1f2937;
+      background: #ffffff;
+      box-shadow: 0 0 0 3px rgba(31, 41, 55, 0.08);
     }
     .pin-input::placeholder {
       color: #9ca3af;
       letter-spacing: 0;
+      font-weight: 400;
     }
     .pin-btn {
       width: 100%;
-      max-width: 320px;
-      padding: 16px 40px;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      max-width: 340px;
+      padding: 14px 40px;
+      background: #1f2937;
       color: white;
       border: none;
-      border-radius: 12px;
-      font-size: 16px;
+      border-radius: 8px;
+      font-size: 15px;
       font-weight: 600;
       cursor: pointer;
-      box-shadow: 0 4px 16px rgba(168, 85, 247, 0.4);
-      transition: all 0.3s ease;
-      letter-spacing: 0.5px;
+      box-shadow: 0 2px 8px rgba(31, 41, 55, 0.2);
+      transition: all 0.2s ease;
+      letter-spacing: 0.3px;
     }
     .pin-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 20px rgba(168, 85, 247, 0.5);
+      background: #111827;
+      box-shadow: 0 4px 12px rgba(31, 41, 55, 0.3);
     }
     .pin-btn:active {
-      transform: translateY(0);
+      transform: scale(0.98);
+      box-shadow: 0 1px 4px rgba(31, 41, 55, 0.2);
     }
     .pin-error {
-      color: #ef4444;
-      margin-top: 12px;
-      font-size: 14px;
+      color: #dc2626;
+      margin-top: 16px;
+      font-size: 13px;
       display: none;
       padding: 12px 16px;
       background: #fef2f2;
       border: 1px solid #fecaca;
-      border-radius: 8px;
-      max-width: 320px;
+      border-radius: 6px;
+      max-width: 340px;
       width: 100%;
+      text-align: center;
+      font-weight: 500;
     }
     .pin-error.show {
       display: block;
     }
     .login-icon {
-      width: 80px;
-      height: 80px;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
-      border-radius: 20px;
+      width: 64px;
+      height: 64px;
+      background: #1f2937;
+      border-radius: 12px;
       display: flex;
       align-items: center;
       justify-content: center;
+      margin-bottom: 28px;
+      box-shadow: 0 2px 8px rgba(31, 41, 55, 0.15);
+      font-size: 28px;
+    }
+    .login-image {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      object-fit: cover;
       margin-bottom: 24px;
-      box-shadow: 0 8px 24px rgba(168, 85, 247, 0.3);
-      font-size: 36px;
+      border: 4px solid #ffffff;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+      background: #f9fafb;
+      display: block;
     }
     .staff-info {
       text-align: center;
+      margin-top: 0;
       margin-bottom: 15px;
       padding: 10px;
       background: linear-gradient(135deg, #faf5ff 0%, #fdf2f8 100%);
@@ -5483,13 +5367,13 @@ function generateMobileHTML(serverURL) {
       <p>Hızlı ve Kolay Sipariş Alma</p>
     </div>
     
-    <!-- PIN Giriş Ekranı - Modern Login Screen -->
+    <!-- PIN Giriş Ekranı - Kurumsal ve Profesyonel -->
     <div id="pinSection" class="pin-section">
-      <div class="login-icon">🔐</div>
+      <img src="${serverURL}/assets/login.png" alt="Login" class="login-image" onerror="this.style.display='none';">
       <h2>Personel Girişi</h2>
-      <p class="subtitle">Güvenli giriş için şifrenizi girin</p>
+      <p class="subtitle">Lütfen şifrenizi giriniz</p>
       <div class="pin-input-wrapper">
-        <input type="password" id="pinInput" class="pin-input" placeholder="Şifrenizi girin" maxlength="20" autocomplete="off" onkeypress="if(event.key === 'Enter') verifyStaffPin()">
+        <input type="password" id="pinInput" class="pin-input" placeholder="Şifrenizi giriniz" maxlength="20" autocomplete="off" onkeypress="if(event.key === 'Enter') verifyStaffPin()">
       </div>
       <button onclick="verifyStaffPin()" class="pin-btn">Giriş Yap</button>
       <p id="pinError" class="pin-error"></p>
@@ -5508,7 +5392,7 @@ function generateMobileHTML(serverURL) {
     </div>
     
     <!-- Ana Sipariş Ekranı -->
-    <div id="mainSection" style="display: none; padding-top: 70px;">
+    <div id="mainSection" style="display: none; padding-top: 60px;">
       <!-- Çıkış Yap Butonu - Sol Üst -->
       <button class="logout-btn" onclick="showLogoutModal()" title="Çıkış Yap">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
@@ -5522,18 +5406,6 @@ function generateMobileHTML(serverURL) {
       </div>
       
       <div id="tableSelection">
-        <!-- Masa Aktar Butonu -->
-        <div style="margin-bottom: 15px;">
-          <button onclick="showTransferModal()" style="width: 100%; padding: 14px; background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%); color: white; border: none; border-radius: 14px; font-size: 16px; font-weight: 700; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); cursor: pointer; transition: all 0.3s;">
-            <span style="display: inline-flex; align-items: center; justify-content: center; gap: 8px;">
-              <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
-              </svg>
-              Masa Aktar
-            </span>
-          </button>
-        </div>
-        
         <!-- İç/Dış Tab'leri -->
         <div class="table-type-tabs">
           <button class="table-type-tab active" onclick="selectTableType('inside')">🏠 İç</button>
@@ -5607,16 +5479,7 @@ function generateMobileHTML(serverURL) {
     </div>
     <div class="cart-content">
       <div class="cart-items" id="cartItems"></div>
-      
-      <!-- Not Butonu -->
-      <button onclick="showOrderNoteModal()" style="width: 100%; padding: 14px; margin-top: 15px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; border: none; border-radius: 12px; font-size: 15px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3); transition: all 0.3s; display: flex; align-items: center; justify-content: center; gap: 8px;">
-        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/>
-        </svg>
-        <span id="orderNoteButtonText">Sipariş Notu Ekle</span>
-      </button>
-      
-      <button class="send-btn" onclick="sendOrder()" style="margin-top: 15px;">
+      <button class="send-btn" onclick="sendOrder()" style="margin-top: 20px;">
         <span style="display: inline-flex; align-items: center; gap: 8px;">
           <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/>
@@ -5637,24 +5500,6 @@ function generateMobileHTML(serverURL) {
     <button class="toast-close" onclick="hideToast()">×</button>
   </div>
   
-  <!-- Sipariş Notu Modal -->
-  <div id="orderNoteModal" class="logout-modal" style="display: none;" onclick="if(event.target === this) hideOrderNoteModal()">
-    <div class="logout-modal-content" style="max-width: 450px;">
-      <div class="logout-modal-icon" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">📝</div>
-      <h3 class="logout-modal-title">Sipariş Notu</h3>
-      <p class="logout-modal-message">Sipariş ile ilgili bir not ekleyebilirsiniz. Bu not fişte görünecektir.</p>
-      
-      <div style="margin-top: 20px;">
-        <textarea id="orderNoteInput" placeholder="Örn: Az baharatlı olsun, hızlı hazırlansın..." style="width: 100%; min-height: 120px; padding: 14px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 15px; font-family: inherit; resize: vertical; transition: all 0.3s;" onfocus="this.style.borderColor='#f59e0b'; this.style.outline='none';" onblur="this.style.borderColor='#e5e7eb';"></textarea>
-      </div>
-      
-      <div class="logout-modal-buttons" style="margin-top: 20px;">
-        <button class="logout-modal-btn logout-modal-btn-cancel" onclick="hideOrderNoteModal()">İptal</button>
-        <button class="logout-modal-btn logout-modal-btn-confirm" onclick="saveOrderNote()" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">Kaydet</button>
-      </div>
-    </div>
-  </div>
-  
   <!-- Çıkış Yap Onay Modal -->
   <div id="logoutModal" class="logout-modal" style="display: none;" onclick="if(event.target === this) hideLogoutModal()">
     <div class="logout-modal-content">
@@ -5666,49 +5511,6 @@ function generateMobileHTML(serverURL) {
       <div class="logout-modal-buttons">
         <button class="logout-modal-btn logout-modal-btn-cancel" onclick="hideLogoutModal()">İptal</button>
         <button class="logout-modal-btn logout-modal-btn-confirm" onclick="confirmLogout()">Evet, Çıkış Yap</button>
-      </div>
-    </div>
-  </div>
-  
-  <!-- Masa Aktar Modal -->
-  <div id="transferModal" class="logout-modal" style="display: none;" onclick="if(event.target === this) hideTransferModal()">
-    <div class="logout-modal-content" style="max-width: 500px; max-height: 90vh; overflow-y: auto;">
-      <div class="logout-modal-icon" style="background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);">🔄</div>
-      <h3 class="logout-modal-title">Masa Aktar</h3>
-      <p class="logout-modal-message">Kaynak masadaki tüm siparişleri hedef masaya aktarın</p>
-      
-      <div style="margin-top: 20px;">
-        <!-- Kaynak Masa -->
-        <div style="margin-bottom: 20px;">
-          <label style="display: block; font-size: 14px; font-weight: 700; color: #1f2937; margin-bottom: 10px;">
-            <span style="color: #10b981;">✓</span> Kaynak Masa (Dolu)
-          </label>
-          <div id="sourceTablesGrid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 200px; overflow-y: auto; padding: 10px; background: #f9fafb; border-radius: 12px;"></div>
-          <div id="selectedSourceTable" style="margin-top: 8px; font-size: 13px; color: #10b981; font-weight: 600;"></div>
-        </div>
-        
-        <!-- Ok İşareti -->
-        <div style="text-align: center; margin: 15px 0;">
-          <div style="display: inline-block; width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%); display: flex; align-items: center; justify-content: center;">
-            <svg width="20" height="20" fill="none" stroke="white" viewBox="0 0 24 24" stroke-width="3">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
-            </svg>
-          </div>
-        </div>
-        
-        <!-- Hedef Masa -->
-        <div style="margin-bottom: 20px;">
-          <label style="display: block; font-size: 14px; font-weight: 700; color: #1f2937; margin-bottom: 10px;">
-            <span style="color: #3b82f6;">+</span> Hedef Masa (Boş)
-          </label>
-          <div id="targetTablesGrid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 200px; overflow-y: auto; padding: 10px; background: #f9fafb; border-radius: 12px;"></div>
-          <div id="selectedTargetTable" style="margin-top: 8px; font-size: 13px; color: #3b82f6; font-weight: 600;"></div>
-        </div>
-      </div>
-      
-      <div class="logout-modal-buttons" style="margin-top: 20px;">
-        <button class="logout-modal-btn logout-modal-btn-cancel" onclick="hideTransferModal()">İptal</button>
-        <button class="logout-modal-btn logout-modal-btn-confirm" onclick="confirmTransfer()" id="confirmTransferBtn" style="background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);" disabled>Masayı Aktar</button>
       </div>
     </div>
   </div>
@@ -5726,10 +5528,6 @@ function generateMobileHTML(serverURL) {
     let socket = null;
     let tables = [];
     let currentTableType = 'inside';
-    let transferSourceTable = null;
-    let transferTargetTable = null;
-    let transferring = false;
-    let orderNote = '';
     
     // PIN oturum yönetimi (1 saat)
     const SESSION_DURATION = 60 * 60 * 1000;
@@ -5756,9 +5554,17 @@ function generateMobileHTML(serverURL) {
     }
     
     // Sayfa yüklendiğinde oturum kontrolü
-    window.addEventListener('load', () => {
+    window.addEventListener('load', async () => {
       // Cart'ı başlat
       initializeCart();
+      
+      // Resim cache'ini başlat
+      try {
+        await initImageCache();
+        console.log('✅ Resim cache başlatıldı');
+      } catch (error) {
+        console.error('❌ Resim cache başlatma hatası:', error);
+      }
       
       const savedStaff = getStaffSession();
       if (savedStaff) {
@@ -5940,7 +5746,8 @@ function generateMobileHTML(serverURL) {
           const typeStr = table.type.replace(/'/g, "\\'");
           const hasOrderClass = table.hasOrder ? ' has-order' : '';
           const selectedClass = selectedTable && selectedTable.id === table.id ? ' selected' : '';
-          return '<button class="table-btn' + hasOrderClass + selectedClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')">' +
+          const outsideEmptyClass = (table.type === 'outside' && !table.hasOrder) ? ' outside-empty' : '';
+          return '<button class="table-btn' + hasOrderClass + selectedClass + outsideEmptyClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')">' +
             '<div class="table-number">' + table.number + '</div>' +
             '<div class="table-label">Masa</div>' +
           '</button>';
@@ -6109,14 +5916,117 @@ function generateMobileHTML(serverURL) {
       renderProducts();
     }
     
-    function renderProducts() {
-      let filtered = products.filter(p => p.category_id === selectedCategoryId);
+    // Resim cache yönetimi (IndexedDB)
+    let imageCache = {};
+    
+    // IndexedDB başlatma
+    function initImageCache() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open('makaraImageCache', 2);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          // Tüm cache'lenmiş resimleri yükle
+          const transaction = db.transaction(['images'], 'readonly');
+          const store = transaction.objectStore('images');
+          const getAllRequest = store.getAll();
+          getAllRequest.onsuccess = async () => {
+            for (const item of getAllRequest.result) {
+              // Blob'u blob URL'ye çevir
+              if (item.blob) {
+                const blobUrl = URL.createObjectURL(item.blob);
+                imageCache[item.url] = blobUrl;
+              } else if (item.blobUrl) {
+                // Eski format (blobUrl) - yeni blob URL oluştur
+                imageCache[item.url] = item.blobUrl;
+              }
+            }
+            resolve();
+          };
+          getAllRequest.onerror = () => reject(getAllRequest.error);
+        };
+        request.onupgradeneeded = (event) => {
+          const db = event.target.result;
+          if (!db.objectStoreNames.contains('images')) {
+            const store = db.createObjectStore('images', { keyPath: 'url' });
+          } else if (event.oldVersion < 2) {
+            // Version 2'ye upgrade - blob ekle
+            const store = event.target.transaction.objectStore('images');
+            store.createIndex('timestamp', 'timestamp', { unique: false });
+          }
+        };
+      });
+    }
+    
+    // Resmi cache'le ve blob URL oluştur
+    async function cacheImage(imageUrl) {
+      if (!imageUrl || !imageUrl.includes('firebasestorage.googleapis.com')) {
+        return null;
+      }
       
-      // Arama sorgusu varsa filtrele
+      // Zaten cache'de varsa
+      if (imageCache[imageUrl]) {
+        return imageCache[imageUrl];
+      }
+      
+      try {
+        // Backend proxy üzerinden resmi çek (CORS sorununu çözmek için)
+        const proxyUrl = API_URL + '/image-proxy?url=' + encodeURIComponent(imageUrl);
+        const response = await fetch(proxyUrl);
+        if (!response.ok) throw new Error('Resim yüklenemedi');
+        
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        
+        // IndexedDB'ye kaydet
+        const db = await new Promise((resolve, reject) => {
+          const request = indexedDB.open('makaraImageCache', 2);
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => resolve(request.result);
+          request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains('images')) {
+              const store = db.createObjectStore('images', { keyPath: 'url' });
+              store.createIndex('timestamp', 'timestamp', { unique: false });
+            } else if (event.oldVersion < 2) {
+              // Version 2'ye upgrade
+              const store = event.target.transaction.objectStore('images');
+              if (!store.indexNames.contains('timestamp')) {
+                store.createIndex('timestamp', 'timestamp', { unique: false });
+              }
+            }
+          };
+        });
+        
+        const transaction = db.transaction(['images'], 'readwrite');
+        const store = transaction.objectStore('images');
+        await new Promise((resolve, reject) => {
+          const request = store.put({ url: imageUrl, blob: blob, timestamp: Date.now() });
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        });
+        
+        // Cache'e ekle
+        imageCache[imageUrl] = blobUrl;
+        return blobUrl;
+      } catch (error) {
+        console.error('Resim cache hatası:', error);
+        return null;
+      }
+    }
+    
+    async function renderProducts() {
+      let filtered;
+      
+      // Arama sorgusu varsa tüm kategorilerden ara, yoksa sadece seçili kategoriden göster
       if (searchQuery) {
-        filtered = filtered.filter(p => 
+        // Arama yapıldığında tüm kategorilerden ara
+        filtered = products.filter(p => 
           p.name.toLowerCase().includes(searchQuery)
         );
+      } else {
+        // Arama yoksa sadece seçili kategoriden göster
+        filtered = products.filter(p => p.category_id === selectedCategoryId);
       }
       
       const grid = document.getElementById('productsGrid');
@@ -6125,12 +6035,52 @@ function generateMobileHTML(serverURL) {
         return;
       }
       
-      grid.innerHTML = filtered.map(prod => 
-        '<div class="product-card" onclick="addToCart(' + prod.id + ', \\'' + prod.name.replace(/'/g, "\\'") + '\\', ' + prod.price + ')">' +
+      // Önce ürünleri hemen göster (resimler olmadan)
+      grid.innerHTML = filtered.map(prod => {
+        const cardId = 'product-card-' + prod.id;
+        // Cache'de varsa hemen göster, yoksa arka planda yüklenecek
+        const cachedImageUrl = prod.image && imageCache[prod.image] ? imageCache[prod.image] : null;
+        const backgroundStyle = cachedImageUrl ? 'background-image: url(' + cachedImageUrl + ');' : '';
+        return '<div id="' + cardId + '" class="product-card" onclick="addToCart(' + prod.id + ', \\'' + prod.name.replace(/'/g, "\\'") + '\\', ' + prod.price + ')" style="' + backgroundStyle + '">' +
           '<div class="product-name">' + prod.name + '</div>' +
           '<div class="product-price">' + prod.price.toFixed(2) + ' ₺</div>' +
-        '</div>'
-      ).join('');
+        '</div>';
+      }).join('');
+      
+      // Resimleri arka planda paralel olarak yükle ve kartları güncelle
+      // İlk 6 ürünü öncelikli yükle (görünen alan)
+      const productsToLoad = filtered.filter(prod => prod.image && !imageCache[prod.image]);
+      const priorityProducts = productsToLoad.slice(0, 6);
+      const otherProducts = productsToLoad.slice(6);
+      
+      // Öncelikli ürünleri önce yükle (3'erli gruplar halinde)
+      const loadProductImage = async (prod) => {
+        try {
+          const blobUrl = await cacheImage(prod.image);
+          if (blobUrl) {
+            const card = document.getElementById('product-card-' + prod.id);
+            if (card) {
+              card.style.backgroundImage = 'url(' + blobUrl + ')';
+            }
+          }
+        } catch (error) {
+          console.error('Resim yükleme hatası:', error);
+        }
+      };
+      
+      // Öncelikli ürünleri 3'erli gruplar halinde paralel yükle
+      for (let i = 0; i < priorityProducts.length; i += 3) {
+        const batch = priorityProducts.slice(i, i + 3);
+        Promise.all(batch.map(loadProductImage)).catch(() => {}); // Hataları sessizce yok say
+      }
+      
+      // Diğer ürünleri arka planda yükle (5'erli gruplar halinde)
+      for (let i = 0; i < otherProducts.length; i += 5) {
+        const batch = otherProducts.slice(i, i + 5);
+        setTimeout(() => {
+          Promise.all(batch.map(loadProductImage)).catch(() => {}); // Hataları sessizce yok say
+        }, 50 * (Math.floor(i / 5) + 1)); // Her grup için artan gecikme
+      }
     }
     
     function addToCart(productId, name, price) {
@@ -6285,199 +6235,6 @@ function generateMobileHTML(serverURL) {
       showToast('success', 'Çıkış Yapıldı', 'Başarıyla çıkış yaptınız. Tekrar giriş yapabilirsiniz.');
     }
     
-    // Masa Aktar Fonksiyonları
-    async function showTransferModal() {
-      transferSourceTable = null;
-      transferTargetTable = null;
-      // Masaları yeniden yükle (güncel durumu almak için)
-      if (tables.length === 0) {
-        await loadData();
-      }
-      renderTransferTables();
-      document.getElementById('transferModal').style.display = 'flex';
-    }
-    
-    function hideTransferModal() {
-      document.getElementById('transferModal').style.display = 'none';
-      transferSourceTable = null;
-      transferTargetTable = null;
-    }
-    
-    function renderTransferTables() {
-      // Dolu masaları al (hem iç hem dış)
-      const occupiedTables = tables.filter(t => t.hasOrder);
-      // Boş masaları al (hem iç hem dış)
-      const emptyTables = tables.filter(t => !t.hasOrder);
-      
-      // Kaynak masaları render et
-      const sourceGrid = document.getElementById('sourceTablesGrid');
-      if (occupiedTables.length === 0) {
-        sourceGrid.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 20px; color: #9ca3af; font-size: 14px;">Dolu masa bulunamadı</div>';
-      } else {
-        sourceGrid.innerHTML = occupiedTables.map(table => {
-          const isSelected = transferSourceTable && transferSourceTable.id === table.id;
-          const tableTypeIcon = table.type === 'inside' ? '🏠' : '🌳';
-          const tableIdEscaped = table.id.replace(/'/g, "\\'");
-          return '<button onclick="selectSourceTable(\\'' + tableIdEscaped + '\\')" style="padding: 12px 8px; border: 2px solid ' + (isSelected ? '#10b981' : '#e5e7eb') + '; border-radius: 10px; background: ' + (isSelected ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'white') + '; color: ' + (isSelected ? 'white' : '#1f2937') + '; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s; box-shadow: ' + (isSelected ? '0 4px 12px rgba(16, 185, 129, 0.3)' : 'none') + ';">' +
-            '<div style="font-size: 10px; margin-bottom: 4px; opacity: 0.8;">' + tableTypeIcon + ' ' + (table.type === 'inside' ? 'İç' : 'Dış') + '</div>' +
-            '<div>' + table.name + '</div>' +
-          '</button>';
-        }).join('');
-      }
-      
-      // Hedef masaları render et
-      const targetGrid = document.getElementById('targetTablesGrid');
-      if (emptyTables.length === 0) {
-        targetGrid.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 20px; color: #9ca3af; font-size: 14px;">Boş masa bulunamadı</div>';
-      } else {
-        targetGrid.innerHTML = emptyTables.map(table => {
-          const isSelected = transferTargetTable && transferTargetTable.id === table.id;
-          const tableTypeIcon = table.type === 'inside' ? '🏠' : '🌳';
-          const tableIdEscaped = table.id.replace(/'/g, "\\'");
-          return '<button onclick="selectTargetTable(\\'' + tableIdEscaped + '\\')" style="padding: 12px 8px; border: 2px solid ' + (isSelected ? '#3b82f6' : '#e5e7eb') + '; border-radius: 10px; background: ' + (isSelected ? 'linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%)' : 'white') + '; color: ' + (isSelected ? 'white' : '#1f2937') + '; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s; box-shadow: ' + (isSelected ? '0 4px 12px rgba(59, 130, 246, 0.3)' : 'none') + ';">' +
-            '<div style="font-size: 10px; margin-bottom: 4px; opacity: 0.8;">' + tableTypeIcon + ' ' + (table.type === 'inside' ? 'İç' : 'Dış') + '</div>' +
-            '<div>' + table.name + '</div>' +
-            '<div style="font-size: 10px; margin-top: 4px; opacity: 0.7;">Boş</div>' +
-          '</button>';
-        }).join('');
-      }
-      
-      // Seçili masaları göster
-      const selectedSource = document.getElementById('selectedSourceTable');
-      const selectedTarget = document.getElementById('selectedTargetTable');
-      const confirmBtn = document.getElementById('confirmTransferBtn');
-      
-      if (transferSourceTable) {
-        selectedSource.textContent = '✓ Seçili: ' + transferSourceTable.name;
-      } else {
-        selectedSource.textContent = '';
-      }
-      
-      if (transferTargetTable) {
-        selectedTarget.textContent = '✓ Seçili: ' + transferTargetTable.name;
-      } else {
-        selectedTarget.textContent = '';
-      }
-      
-      // Aktar butonunu aktif/pasif yap
-      if (confirmBtn) {
-        confirmBtn.disabled = !transferSourceTable || !transferTargetTable || transferring;
-      }
-    }
-    
-    function selectSourceTable(tableId) {
-      console.log('selectSourceTable çağrıldı, tableId:', tableId);
-      console.log('Mevcut tables:', tables);
-      const table = tables.find(t => t.id === tableId);
-      console.log('Bulunan table:', table);
-      if (table) {
-        transferSourceTable = table;
-        renderTransferTables();
-      } else {
-        console.error('Table bulunamadı, tableId:', tableId);
-      }
-    }
-    
-    function selectTargetTable(tableId) {
-      console.log('selectTargetTable çağrıldı, tableId:', tableId);
-      console.log('Mevcut tables:', tables);
-      const table = tables.find(t => t.id === tableId);
-      console.log('Bulunan table:', table);
-      if (table) {
-        transferTargetTable = table;
-        renderTransferTables();
-      } else {
-        console.error('Table bulunamadı, tableId:', tableId);
-      }
-    }
-    
-    async function confirmTransfer() {
-      if (!transferSourceTable || !transferTargetTable) {
-        showToast('error', 'Eksik Bilgi', 'Lütfen kaynak ve hedef masayı seçin');
-        return;
-      }
-      
-      if (transferSourceTable.id === transferTargetTable.id) {
-        showToast('error', 'Hata', 'Kaynak ve hedef masa aynı olamaz');
-        return;
-      }
-      
-      transferring = true;
-      const confirmBtn = document.getElementById('confirmTransferBtn');
-      if (confirmBtn) {
-        confirmBtn.disabled = true;
-        confirmBtn.textContent = 'Aktarılıyor...';
-      }
-      
-      try {
-        const response = await fetch(API_URL + '/transfer-table', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sourceTableId: transferSourceTable.id,
-            targetTableId: transferTargetTable.id
-          })
-        });
-        
-        const result = await response.json();
-        
-        if (result.success) {
-          showToast('success', 'Başarılı', 
-            'Masa başarıyla aktarıldı!\\n' +
-            'Kaynak: ' + transferSourceTable.name + '\\n' +
-            'Hedef: ' + transferTargetTable.name + '\\n' +
-            'Aktarılan sipariş: ' + result.transferredOrders + '\\n' +
-            'Aktarılan ürün: ' + result.transferredItems
-          );
-          
-          hideTransferModal();
-          await loadData(); // Masaları yenile
-        } else {
-          showToast('error', 'Hata', result.error || 'Masa aktarılamadı');
-        }
-      } catch (error) {
-        console.error('Masa aktarım hatası:', error);
-        showToast('error', 'Bağlantı Hatası', 'Sunucuya bağlanılamadı. Lütfen tekrar deneyin.');
-      } finally {
-        transferring = false;
-        if (confirmBtn) {
-          confirmBtn.disabled = false;
-          confirmBtn.textContent = 'Masayı Aktar';
-        }
-      }
-    }
-    
-    // Sipariş Notu Fonksiyonları
-    function showOrderNoteModal() {
-      const noteInput = document.getElementById('orderNoteInput');
-      if (noteInput) {
-        noteInput.value = orderNote;
-      }
-      document.getElementById('orderNoteModal').style.display = 'flex';
-    }
-    
-    function hideOrderNoteModal() {
-      document.getElementById('orderNoteModal').style.display = 'none';
-    }
-    
-    function saveOrderNote() {
-      const noteInput = document.getElementById('orderNoteInput');
-      if (noteInput) {
-        orderNote = noteInput.value.trim();
-        const buttonText = document.getElementById('orderNoteButtonText');
-        if (buttonText) {
-          if (orderNote) {
-            buttonText.textContent = 'Not: ' + (orderNote.length > 30 ? orderNote.substring(0, 30) + '...' : orderNote);
-            buttonText.style.color = 'white';
-          } else {
-            buttonText.textContent = 'Sipariş Notu Ekle';
-            buttonText.style.color = 'white';
-          }
-        }
-        hideOrderNoteModal();
-      }
-    }
-    
     async function sendOrder() {
       if (!selectedTable || cart.length === 0) { 
         showToast('error', 'Eksik Bilgi', 'Lütfen masa seçin ve ürün ekleyin');
@@ -6500,8 +6257,7 @@ function generateMobileHTML(serverURL) {
             tableId: selectedTable.id, 
             tableName: selectedTable.name, 
             tableType: selectedTable.type,
-            staffId: currentStaff.id,
-            orderNote: orderNote || null
+            staffId: currentStaff.id
           })
         });
         
@@ -6514,15 +6270,10 @@ function generateMobileHTML(serverURL) {
           
           showToast('success', 'Sipariş Başarılı', message);
           
-          // Sepeti ve notu temizle ama masada kal
+          // Sepeti temizle ama masada kal
           const currentTableId = selectedTable.id;
           cart = []; 
-          orderNote = '';
           updateCart();
-          const buttonText = document.getElementById('orderNoteButtonText');
-          if (buttonText) {
-            buttonText.textContent = 'Sipariş Notu Ekle';
-          }
           document.getElementById('searchInput').value = '';
           searchQuery = '';
           
@@ -6547,6 +6298,10 @@ function startAPIServer() {
   const appExpress = express();
   appExpress.use(cors());
   appExpress.use(express.json());
+  
+  // Assets klasörünü serve et
+  const assetsPath = path.join(__dirname, '../assets');
+  appExpress.use('/assets', express.static(assetsPath));
 
   const server = http.createServer(appExpress);
   io = new Server(server, {
@@ -6572,16 +6327,156 @@ function startAPIServer() {
   const serverURL = `http://${localIP}:${serverPort}`;
 
   // API Endpoints
-  appExpress.get('/api/categories', (req, res) => {
-    res.json(db.categories.sort((a, b) => a.order_index - b.order_index));
+  appExpress.get('/api/categories', async (req, res) => {
+    try {
+      // Firebase'den direkt çek
+      if (firestore && firebaseCollection && firebaseGetDocs) {
+        const categoriesRef = firebaseCollection(firestore, 'categories');
+        const snapshot = await firebaseGetDocs(categoriesRef);
+        
+        const categories = [];
+        snapshot.forEach((doc) => {
+          const firebaseCategory = doc.data();
+          categories.push({
+            id: typeof firebaseCategory.id === 'string' ? parseInt(firebaseCategory.id) : firebaseCategory.id,
+            name: firebaseCategory.name || '',
+            order_index: firebaseCategory.order_index || 0
+          });
+        });
+        
+        // order_index'e göre sırala
+        categories.sort((a, b) => {
+          if (a.order_index !== b.order_index) {
+            return a.order_index - b.order_index;
+          }
+          return a.id - b.id;
+        });
+        
+        res.json(categories);
+      } else {
+        // Firebase yoksa local database'den çek
+        res.json(db.categories.sort((a, b) => a.order_index - b.order_index));
+      }
+    } catch (error) {
+      console.error('❌ Kategoriler çekilirken hata:', error);
+      // Hata durumunda local database'den çek
+      res.json(db.categories.sort((a, b) => a.order_index - b.order_index));
+    }
   });
 
-  appExpress.get('/api/products', (req, res) => {
-    const categoryId = req.query.category_id;
-    if (categoryId) {
-      res.json(db.products.filter(p => p.category_id === Number(categoryId)));
-    } else {
-      res.json(db.products);
+  appExpress.get('/api/products', async (req, res) => {
+    try {
+      const categoryId = req.query.category_id;
+      
+      // Firebase'den direkt çek
+      if (firestore && firebaseCollection && firebaseGetDocs) {
+        const productsRef = firebaseCollection(firestore, 'products');
+        const snapshot = await firebaseGetDocs(productsRef);
+        
+        const products = [];
+        snapshot.forEach((doc) => {
+          const firebaseProduct = doc.data();
+          const product = {
+            id: typeof firebaseProduct.id === 'string' ? parseInt(firebaseProduct.id) : firebaseProduct.id,
+            name: firebaseProduct.name || '',
+            category_id: typeof firebaseProduct.category_id === 'string' ? parseInt(firebaseProduct.category_id) : firebaseProduct.category_id,
+            price: parseFloat(firebaseProduct.price) || 0,
+            image: firebaseProduct.image || null
+          };
+          
+          // Kategori filtresi varsa uygula
+          if (!categoryId || product.category_id === Number(categoryId)) {
+            products.push(product);
+          }
+        });
+        
+        res.json(products);
+      } else {
+        // Firebase yoksa local database'den çek
+        if (categoryId) {
+          res.json(db.products.filter(p => p.category_id === Number(categoryId)));
+        } else {
+          res.json(db.products);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Ürünler çekilirken hata:', error);
+      // Hata durumunda local database'den çek
+      if (categoryId) {
+        res.json(db.products.filter(p => p.category_id === Number(categoryId)));
+      } else {
+        res.json(db.products);
+      }
+    }
+  });
+
+  // Backend resim cache (memory cache - Firebase Storage kullanımını azaltmak için)
+  const imageCache = new Map();
+  const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 saat
+  const CACHE_MAX_SIZE = 100; // Maksimum 100 resim cache'de tut
+  
+  // Resim proxy endpoint - CORS sorununu çözmek için + Backend cache
+  appExpress.get('/api/image-proxy', async (req, res) => {
+    try {
+      const imageUrl = req.query.url;
+      if (!imageUrl) {
+        return res.status(400).json({ error: 'URL parametresi gerekli' });
+      }
+      
+      // Firebase Storage URL'si kontrolü
+      if (!imageUrl.includes('firebasestorage.googleapis.com')) {
+        return res.status(400).json({ error: 'Geçersiz resim URL\'si' });
+      }
+      
+      // Cache'de var mı kontrol et
+      const cached = imageCache.get(imageUrl);
+      if (cached && (Date.now() - cached.timestamp) < CACHE_MAX_AGE) {
+        // Cache'den döndür - Firebase Storage'a istek yok!
+        res.setHeader('Content-Type', cached.contentType);
+        res.setHeader('Cache-Control', 'public, max-age=31536000');
+        res.send(cached.buffer);
+        return;
+      }
+      
+      // Cache'de yoksa Firebase Storage'dan çek
+      const https = require('https');
+      const response = await new Promise((resolve, reject) => {
+        https.get(imageUrl, (response) => {
+          if (response.statusCode !== 200) {
+            reject(new Error(`HTTP ${response.statusCode}`));
+            return;
+          }
+          const chunks = [];
+          response.on('data', (chunk) => chunks.push(chunk));
+          response.on('end', () => resolve({
+            buffer: Buffer.concat(chunks),
+            contentType: response.headers['content-type'] || 'image/jpeg'
+          }));
+          response.on('error', reject);
+        }).on('error', reject);
+      });
+      
+      // Cache'e ekle (eski cache'leri temizle)
+      if (imageCache.size >= CACHE_MAX_SIZE) {
+        // En eski cache'i sil
+        const oldestKey = Array.from(imageCache.entries())
+          .sort((a, b) => a[1].timestamp - b[1].timestamp)[0][0];
+        imageCache.delete(oldestKey);
+      }
+      
+      imageCache.set(imageUrl, {
+        buffer: response.buffer,
+        contentType: response.contentType,
+        timestamp: Date.now()
+      });
+      
+      // Resmi döndür
+      res.setHeader('Content-Type', response.contentType);
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+      res.send(response.buffer);
+    } catch (error) {
+      console.error('❌ Resim proxy hatası:', error);
+      res.status(500).json({ error: 'Resim yüklenemedi' });
     }
   });
 
@@ -6696,104 +6591,6 @@ function startAPIServer() {
 
   appExpress.get('/mobile', (req, res) => {
     res.send(generateMobileHTML(serverURL));
-  });
-
-  // Masa aktar API endpoint
-  appExpress.post('/api/transfer-table', async (req, res) => {
-    try {
-      const { sourceTableId, targetTableId } = req.body;
-      
-      if (!sourceTableId || !targetTableId) {
-        return res.status(400).json({ success: false, error: 'Kaynak ve hedef masa ID\'si gerekli' });
-      }
-
-      // IPC handler'ı çağır (main process'te çalışan handler)
-      // Bu bir workaround - normalde IPC sadece Electron renderer process'ler arasında çalışır
-      // Ama burada Express server içindeyiz, bu yüzden doğrudan veritabanı işlemlerini yapacağız
-      
-      const sourceOrders = (db.tableOrders || []).filter(
-        o => o.table_id === sourceTableId && o.status === 'pending'
-      );
-
-      if (sourceOrders.length === 0) {
-        return res.status(400).json({ success: false, error: 'Kaynak masada aktarılacak sipariş bulunamadı' });
-      }
-
-      const targetOrders = (db.tableOrders || []).filter(
-        o => o.table_id === targetTableId && o.status === 'pending'
-      );
-
-      if (targetOrders.length > 0) {
-        return res.status(400).json({ success: false, error: 'Hedef masada zaten aktif sipariş var' });
-      }
-
-      let targetTableName, targetTableType;
-      
-      if (targetTableId.startsWith('inside-')) {
-        const tableNumber = targetTableId.replace('inside-', '');
-        targetTableName = `İçeri ${tableNumber}`;
-        targetTableType = 'inside';
-      } else if (targetTableId.startsWith('outside-')) {
-        const tableNumber = targetTableId.replace('outside-', '');
-        targetTableName = `Dışarı ${tableNumber}`;
-        targetTableType = 'outside';
-      } else {
-        return res.status(400).json({ success: false, error: 'Geçersiz hedef masa ID formatı' });
-      }
-
-      const transferredOrders = [];
-      const transferredItems = [];
-
-      sourceOrders.forEach(order => {
-        const oldTableName = order.table_name;
-        order.table_id = targetTableId;
-        order.table_name = targetTableName;
-        order.table_type = targetTableType;
-        
-        transferredOrders.push({
-          orderId: order.id,
-          oldTableName: oldTableName,
-          newTableName: targetTableName
-        });
-
-        const orderItems = (db.tableOrderItems || []).filter(
-          oi => oi.order_id === order.id
-        );
-
-        orderItems.forEach(item => {
-          transferredItems.push({
-            itemId: item.id,
-            productName: item.product_name,
-            quantity: item.quantity
-          });
-        });
-      });
-
-      saveDatabase();
-
-      if (io) {
-        io.emit('table-update', {
-          tableId: sourceTableId,
-          hasOrder: false
-        });
-        io.emit('table-update', {
-          tableId: targetTableId,
-          hasOrder: true
-        });
-      }
-
-      res.json({
-        success: true,
-        transferredOrders: transferredOrders.length,
-        transferredItems: transferredItems.length,
-        sourceTableId,
-        targetTableId,
-        targetTableName
-      });
-    } catch (error) {
-      console.error('Masa aktarım hatası:', error);
-      res.status(500).json({ success: false, error: error.message });
-    }
   });
 
   appExpress.post('/api/orders', async (req, res) => {
