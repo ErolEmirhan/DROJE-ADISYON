@@ -113,6 +113,37 @@ const SalesHistory = () => {
   // Tarihe göre gruplanmış satışlar
   const { grouped: salesByDate, sortedDates } = groupSalesByDate(filteredSales);
 
+  // Ödeme yöntemine göre istatistikler
+  const getPaymentStats = () => {
+    const nakitSales = filteredSales.filter(sale => 
+      sale.payment_method === 'Nakit' && !sale.isExpense && sale.payment_method !== 'Masraf'
+    );
+    const kartSales = filteredSales.filter(sale => 
+      sale.payment_method !== 'Nakit' && 
+      sale.payment_method !== 'Masraf' && 
+      !sale.isExpense &&
+      sale.payment_method !== 'Parçalı Ödeme'
+    );
+    const parcaliSales = filteredSales.filter(sale => 
+      sale.payment_method && sale.payment_method.includes('Parçalı Ödeme')
+    );
+    
+    const nakitTotal = nakitSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
+    const kartTotal = kartSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
+    const parcaliTotal = parcaliSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
+    
+    return {
+      nakitCount: nakitSales.length,
+      nakitTotal,
+      kartCount: kartSales.length,
+      kartTotal,
+      parcaliCount: parcaliSales.length,
+      parcaliTotal
+    };
+  };
+
+  const paymentStats = getPaymentStats();
+
   // Satış detaylarını al ve adisyon yazdır
   const handleReprintAdisyon = async (saleId) => {
     if (!window.electronAPI || !window.electronAPI.getSaleDetails || !window.electronAPI.printAdisyon) {
@@ -279,54 +310,72 @@ const SalesHistory = () => {
       );
     }
 
-    // Ürün istatistiklerini hesapla - Gerçek satış detaylarını kullan
+    // Ürün istatistiklerini hesapla - Firebase'den gelen gerçek satış detaylarını kullan
     const productStats = {};
     
-    // Önce items string'inden temel bilgileri topla
+    // Her satış için gerçek item detaylarını kullan
     reportSales.forEach(sale => {
-      const items = sale.items.split(', ');
-      items.forEach(item => {
-        const match = item.match(/(.+) x(\d+)/);
-        if (match) {
-          const [, productName, quantity] = match;
-          const isGift = item.includes('(İKRAM)');
-          
-          if (!productStats[productName]) {
-            productStats[productName] = { count: 0, revenue: 0 };
+      // items_array varsa gerçek verileri kullan, yoksa items string'ini parse et
+      let itemsArray = [];
+      
+      if (sale.items_array && Array.isArray(sale.items_array)) {
+        // Gerçek Firebase verileri
+        itemsArray = sale.items_array;
+      } else if (sale.items) {
+        // Eski format - string'den parse et
+        const items = sale.items.split(', ');
+        itemsArray = items.map(item => {
+          const match = item.match(/(.+) x(\d+)/);
+          if (match) {
+            const [, productName, quantity] = match;
+            const isGift = item.includes('(İKRAM)');
+            return {
+              product_name: productName.replace(' (İKRAM)', ''),
+              quantity: parseInt(quantity),
+              price: 0, // Eski verilerde fiyat yok, hesaplanacak
+              isGift: isGift
+            };
           }
-          
-          productStats[productName].count += parseInt(quantity);
-        }
-      });
-    });
-    
-    // Şimdi gerçek fiyat bilgilerini almak için her satışın detaylarını çek
-    // Not: Bu async bir işlem, bu yüzden önce temel bilgileri göster, sonra detayları yükle
-    // Şimdilik satış toplamını ürün sayısına göre dağıtarak yaklaşık gelir hesapla
-    reportSales.forEach(sale => {
-      const items = sale.items.split(', ');
-      const saleTotal = parseFloat(sale.total_amount);
-      const nonGiftItems = items.filter(item => !item.includes('(İKRAM)'));
+          return null;
+        }).filter(Boolean);
+      }
       
-      // İkram edilmeyen ürünlerin toplam adetini hesapla
-      let totalNonGiftQuantity = 0;
-      nonGiftItems.forEach(item => {
-        const match = item.match(/(.+) x(\d+)/);
-        if (match) {
-          totalNonGiftQuantity += parseInt(match[2]);
+      // Her item için istatistikleri hesapla
+      itemsArray.forEach(item => {
+        if (!item || !item.product_name) return;
+        
+        const productName = item.product_name;
+        const quantity = item.quantity || 1;
+        const isGift = item.isGift || false;
+        
+        // Ürün istatistiklerini başlat
+        if (!productStats[productName]) {
+          productStats[productName] = { 
+            count: 0, 
+            revenue: 0,
+            price: item.price || 0 // İlk fiyatı kaydet
+          };
         }
-      });
-      
-      // Her ürün için gelir hesapla (ikram edilenler hariç)
-      items.forEach(item => {
-        const match = item.match(/(.+) x(\d+)/);
-        if (match) {
-          const [, productName, quantity] = match;
-          const isGift = item.includes('(İKRAM)');
+        
+        // Adet sayısını artır (ikram edilenler dahil)
+        productStats[productName].count += quantity;
+        
+        // Gelir hesapla (sadece ikram edilmeyenler)
+        if (!isGift && item.price) {
+          // Gerçek fiyat varsa kullan
+          productStats[productName].revenue += item.price * quantity;
+          // Fiyatı güncelle (ortalama için)
+          if (productStats[productName].price === 0) {
+            productStats[productName].price = item.price;
+          }
+        } else if (!isGift && !item.price && sale.total_amount) {
+          // Eski veriler için: satış toplamını ürün adetine göre dağıt
+          const saleTotal = parseFloat(sale.total_amount);
+          const nonGiftItems = itemsArray.filter(i => !i.isGift);
+          const totalNonGiftQuantity = nonGiftItems.reduce((sum, i) => sum + (i.quantity || 1), 0);
           
-          if (!isGift && totalNonGiftQuantity > 0) {
-            // Satış toplamını ürün adetine göre orantılı dağıt
-            productStats[productName].revenue += (saleTotal / totalNonGiftQuantity) * parseInt(quantity);
+          if (totalNonGiftQuantity > 0) {
+            productStats[productName].revenue += (saleTotal / totalNonGiftQuantity) * quantity;
           }
         }
       });
@@ -447,15 +496,23 @@ const SalesHistory = () => {
             <div className="space-y-3">
               {topProductsByCount.length > 0 ? (
                 topProductsByCount.map(([product, stats], index) => (
-                  <div key={product} className="flex items-center justify-between p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl">
-                    <div className="flex items-center space-x-4">
+                  <div key={product} className="flex items-center justify-between p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-200">
+                    <div className="flex items-center space-x-4 flex-1">
                       <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
                         {index + 1}
                       </div>
-                      <div>
+                      <div className="flex-1">
                         <p className="font-semibold text-gray-900">{product}</p>
-                        <p className="text-sm text-gray-600">{stats.count} adet satıldı</p>
-                        <p className="text-sm font-semibold text-green-600">₺{stats.revenue.toFixed(2)} kazandırdı</p>
+                        <div className="flex items-center gap-3 mt-1">
+                          <p className="text-sm text-gray-600">{stats.count} adet</p>
+                          {stats.price > 0 && (
+                            <>
+                              <span className="text-gray-400">•</span>
+                              <p className="text-sm text-gray-600">Birim: ₺{stats.price.toFixed(2)}</p>
+                            </>
+                          )}
+                        </div>
+                        <p className="text-sm font-bold text-green-600 mt-1">Toplam: ₺{stats.revenue.toFixed(2)}</p>
                       </div>
                     </div>
                   </div>
@@ -477,15 +534,23 @@ const SalesHistory = () => {
             <div className="space-y-3">
               {bottomProductsByCount.length > 0 ? (
                 bottomProductsByCount.map(([product, stats], index) => (
-                  <div key={product} className="flex items-center justify-between p-4 bg-gradient-to-r from-red-50 to-pink-50 rounded-xl">
-                    <div className="flex items-center space-x-4">
+                  <div key={product} className="flex items-center justify-between p-4 bg-gradient-to-r from-red-50 to-pink-50 rounded-xl border border-red-200">
+                    <div className="flex items-center space-x-4 flex-1">
                       <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-pink-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
                         {index + 1}
                       </div>
-                      <div>
+                      <div className="flex-1">
                         <p className="font-semibold text-gray-900">{product}</p>
-                        <p className="text-sm text-gray-600">{stats.count} adet satıldı</p>
-                        <p className="text-sm font-semibold text-red-600">₺{stats.revenue.toFixed(2)} kazandırdı</p>
+                        <div className="flex items-center gap-3 mt-1">
+                          <p className="text-sm text-gray-600">{stats.count} adet</p>
+                          {stats.price > 0 && (
+                            <>
+                              <span className="text-gray-400">•</span>
+                              <p className="text-sm text-gray-600">Birim: ₺{stats.price.toFixed(2)}</p>
+                            </>
+                          )}
+                        </div>
+                        <p className="text-sm font-bold text-red-600 mt-1">Toplam: ₺{stats.revenue.toFixed(2)}</p>
                       </div>
                     </div>
                   </div>
@@ -507,15 +572,23 @@ const SalesHistory = () => {
             <div className="space-y-3">
               {topProductsByRevenue.length > 0 ? (
                 topProductsByRevenue.map(([product, stats], index) => (
-                  <div key={product} className="flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl">
-                    <div className="flex items-center space-x-4">
+                  <div key={product} className="flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200">
+                    <div className="flex items-center space-x-4 flex-1">
                       <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
                         {index + 1}
                       </div>
-                      <div>
+                      <div className="flex-1">
                         <p className="font-semibold text-gray-900">{product}</p>
-                        <p className="text-sm font-semibold text-blue-600">₺{stats.revenue.toFixed(2)} kazandırdı</p>
-                        <p className="text-sm text-gray-600">{stats.count} adet satıldı</p>
+                        <p className="text-lg font-bold text-blue-600 mt-1">₺{stats.revenue.toFixed(2)}</p>
+                        <div className="flex items-center gap-3 mt-1">
+                          <p className="text-sm text-gray-600">{stats.count} adet</p>
+                          {stats.price > 0 && (
+                            <>
+                              <span className="text-gray-400">•</span>
+                              <p className="text-sm text-gray-600">Birim: ₺{stats.price.toFixed(2)}</p>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -537,15 +610,23 @@ const SalesHistory = () => {
             <div className="space-y-3">
               {bottomProductsByRevenue.length > 0 ? (
                 bottomProductsByRevenue.map(([product, stats], index) => (
-                  <div key={product} className="flex items-center justify-between p-4 bg-gradient-to-r from-orange-50 to-amber-50 rounded-xl">
-                    <div className="flex items-center space-x-4">
+                  <div key={product} className="flex items-center justify-between p-4 bg-gradient-to-r from-orange-50 to-amber-50 rounded-xl border border-orange-200">
+                    <div className="flex items-center space-x-4 flex-1">
                       <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-amber-500 rounded-full flex items-center justify-center text-white font-bold text-lg">
                         {index + 1}
                       </div>
-                      <div>
+                      <div className="flex-1">
                         <p className="font-semibold text-gray-900">{product}</p>
-                        <p className="text-sm font-semibold text-orange-600">₺{stats.revenue.toFixed(2)} kazandırdı</p>
-                        <p className="text-sm text-gray-600">{stats.count} adet satıldı</p>
+                        <p className="text-lg font-bold text-orange-600 mt-1">₺{stats.revenue.toFixed(2)}</p>
+                        <div className="flex items-center gap-3 mt-1">
+                          <p className="text-sm text-gray-600">{stats.count} adet</p>
+                          {stats.price > 0 && (
+                            <>
+                              <span className="text-gray-400">•</span>
+                              <p className="text-sm text-gray-600">Birim: ₺{stats.price.toFixed(2)}</p>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1071,6 +1152,21 @@ const SalesHistory = () => {
             const dayTotal = daySales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
             const dayCount = daySales.length;
             
+            // Bu gün için ödeme yöntemi istatistikleri
+            const dayNakitSales = daySales.filter(sale => 
+              sale.payment_method === 'Nakit' && !sale.isExpense && sale.payment_method !== 'Masraf'
+            );
+            const dayKartSales = daySales.filter(sale => 
+              sale.payment_method !== 'Nakit' && 
+              sale.payment_method !== 'Masraf' && 
+              !sale.isExpense &&
+              sale.payment_method !== 'Parçalı Ödeme' &&
+              sale.payment_method
+            );
+            
+            const dayNakitTotal = dayNakitSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
+            const dayKartTotal = dayKartSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
+            
             return (
               <div key={date} className="space-y-4">
                 {/* Gün Başlığı */}
@@ -1092,18 +1188,66 @@ const SalesHistory = () => {
                   </div>
                 </div>
                 
+                {/* Ödeme Yöntemi İstatistikleri */}
+                {(dayNakitSales.length > 0 || dayKartSales.length > 0) && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200 shadow-md">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center">
+                            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                            </svg>
+                          </div>
+                          <span className="text-sm font-semibold text-gray-700">Nakit Satış</span>
+                        </div>
+                      </div>
+                      <p className="text-2xl font-bold text-green-700">{dayNakitSales.length}</p>
+                      <p className="text-xs text-gray-600 mt-1">Toplam: ₺{dayNakitTotal.toFixed(2)}</p>
+                    </div>
+                    
+                    <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl p-4 border border-blue-200 shadow-md">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
+                            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                            </svg>
+                          </div>
+                          <span className="text-sm font-semibold text-gray-700">Kart Satış</span>
+                        </div>
+                      </div>
+                      <p className="text-2xl font-bold text-blue-700">{dayKartSales.length}</p>
+                      <p className="text-xs text-gray-600 mt-1">Toplam: ₺{dayKartTotal.toFixed(2)}</p>
+                    </div>
+                  </div>
+                )}
+                
                 {/* O Günün Satışları */}
                 <div className="grid grid-cols-1 gap-4">
-                  {daySales.map((sale) => (
+                  {daySales.map((sale) => {
+                    const isExpense = sale.isExpense || sale.payment_method === 'Masraf';
+                    
+                    return (
             <div
               key={sale.id}
-              className="group relative bg-white rounded-2xl border border-gray-100 overflow-hidden transition-all duration-300 hover:shadow-xl hover:border-gray-200"
+              className={`group relative rounded-2xl border overflow-hidden transition-all duration-300 hover:shadow-xl ${
+                isExpense 
+                  ? 'bg-gradient-to-br from-red-500 to-red-600 border-red-400 hover:border-red-500' 
+                  : 'bg-white border-gray-100 hover:border-gray-200'
+              }`}
               style={{
-                boxShadow: '0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.1)'
+                boxShadow: isExpense 
+                  ? '0 4px 6px rgba(239, 68, 68, 0.3), 0 2px 4px rgba(239, 68, 68, 0.2)'
+                  : '0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.1)'
               }}
             >
               {/* Subtle accent line */}
-              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-gray-100 via-gray-50 to-gray-100"></div>
+              <div className={`absolute top-0 left-0 right-0 h-1 ${
+                isExpense 
+                  ? 'bg-gradient-to-r from-red-400 via-red-300 to-red-400' 
+                  : 'bg-gradient-to-r from-gray-100 via-gray-50 to-gray-100'
+              }`}></div>
               
               <div className="p-6">
                 <div className="flex items-start justify-between gap-6">
@@ -1112,21 +1256,35 @@ const SalesHistory = () => {
                     {/* Header Row */}
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center border border-gray-200">
-                          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center border ${
+                          isExpense
+                            ? 'bg-white/20 backdrop-blur-sm border-white/30'
+                            : 'bg-gradient-to-br from-gray-50 to-gray-100 border-gray-200'
+                        }`}>
+                          <svg className={`w-5 h-5 ${isExpense ? 'text-white' : 'text-gray-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            {isExpense ? (
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            ) : (
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            )}
                           </svg>
                         </div>
                         <div>
-                          <h3 className="text-lg font-semibold text-gray-900 tracking-tight">
-                            Satış #{sale.id}
+                          <h3 className={`text-lg font-semibold tracking-tight ${
+                            isExpense ? 'text-white' : 'text-gray-900'
+                          }`}>
+                            {isExpense ? 'Masraf' : `Satış #${sale.id}`}
                           </h3>
                           <div className="flex items-center space-x-3 mt-1">
-                            <span className="text-xs text-gray-500 font-medium">
+                            <span className={`text-xs font-medium ${
+                              isExpense ? 'text-red-100' : 'text-gray-500'
+                            }`}>
                               {sale.sale_date}
                             </span>
-                            <span className="text-xs text-gray-400">•</span>
-                            <span className="text-xs text-gray-500 font-medium">
+                            <span className={`text-xs ${isExpense ? 'text-red-200' : 'text-gray-400'}`}>•</span>
+                            <span className={`text-xs font-medium ${
+                              isExpense ? 'text-red-100' : 'text-gray-500'
+                            }`}>
                               {sale.sale_time}
                             </span>
                           </div>
@@ -1136,14 +1294,23 @@ const SalesHistory = () => {
 
                     {/* Payment Method & Table Badge */}
                     <div className="flex items-center space-x-2 mb-4 flex-wrap gap-2">
-                      <div className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium ${
-                        sale.payment_method === 'Nakit'
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : 'bg-blue-50 text-blue-700 border border-blue-200'
-                      }`}>
-                        {getPaymentMethodIcon(sale.payment_method)}
-                        <span>{sale.payment_method}</span>
-                      </div>
+                      {isExpense ? (
+                        <div className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/20 backdrop-blur-sm text-white border border-white/30">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span>Masraf</span>
+                        </div>
+                      ) : (
+                        <div className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium ${
+                          sale.payment_method === 'Nakit'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-blue-50 text-blue-700 border border-blue-200'
+                        }`}>
+                          {getPaymentMethodIcon(sale.payment_method)}
+                          <span>{sale.payment_method}</span>
+                        </div>
+                      )}
                       {sale.staff_name && (
                         <div className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200">
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1162,76 +1329,102 @@ const SalesHistory = () => {
                       )}
                     </div>
 
-                    {/* Products List */}
-                    <div className="mt-4 pt-4 border-t border-gray-100">
-                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
-                        Ürünler
-                      </p>
-                      <div className="text-sm text-gray-700 leading-relaxed font-normal space-y-1">
-                        {sale.items.split(', ').map((itemText, idx) => {
-                          const isGift = itemText.includes('(İKRAM)');
-                          const cleanText = itemText.replace(' (İKRAM)', '');
-                          
-                          return (
-                            <div key={idx} className="flex items-center space-x-2">
-                              <span className={isGift ? 'text-gray-400 line-through' : ''}>
-                                {cleanText}
-                              </span>
-                              {isGift && (
-                                <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded">
-                                  İKRAM
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
+                    {/* Products List or Expense Title */}
+                    {isExpense ? (
+                      <div className="mt-4 pt-4 border-t border-white/20">
+                        <p className="text-xs font-medium text-white/80 uppercase tracking-wider mb-2">
+                          Masraf Başlığı
+                        </p>
+                        <div className="text-base text-white leading-relaxed font-semibold">
+                          {sale.items && sale.items.split(', ')[0] ? sale.items.split(', ')[0] : 'Masraf'}
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="mt-4 pt-4 border-t border-gray-100">
+                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+                          Ürünler
+                        </p>
+                        <div className="text-sm text-gray-700 leading-relaxed font-normal space-y-1">
+                          {sale.items.split(', ').map((itemText, idx) => {
+                            const isGift = itemText.includes('(İKRAM)');
+                            const cleanText = itemText.replace(' (İKRAM)', '');
+                            
+                            return (
+                              <div key={idx} className="flex items-center space-x-2">
+                                <span className={isGift ? 'text-gray-400 line-through' : ''}>
+                                  {cleanText}
+                                </span>
+                                {isGift && (
+                                  <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded">
+                                    İKRAM
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Right Section - Amount & Actions */}
                   <div className="flex-shrink-0">
-                    <div className="bg-gradient-to-br from-gray-50 via-white to-gray-50 rounded-2xl p-5 border border-gray-200/60 shadow-sm min-w-[160px]">
-                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 text-center">
-                        Toplam
+                    <div className={`rounded-2xl p-5 border shadow-sm min-w-[160px] ${
+                      isExpense
+                        ? 'bg-white/10 backdrop-blur-sm border-white/20'
+                        : 'bg-gradient-to-br from-gray-50 via-white to-gray-50 border-gray-200/60'
+                    }`}>
+                      <p className={`text-xs font-semibold uppercase tracking-wider mb-3 text-center ${
+                        isExpense ? 'text-white/80' : 'text-gray-500'
+                      }`}>
+                        {isExpense ? 'Miktar' : 'Toplam'}
                       </p>
-                      <p className="text-3xl font-bold text-gray-900 tracking-tight text-center mb-3">
+                      <p className={`text-3xl font-bold tracking-tight text-center mb-3 ${
+                        isExpense ? 'text-white' : 'text-gray-900'
+                      }`}>
                         ₺{parseFloat(sale.total_amount).toFixed(2)}
                       </p>
-                      <div className="flex items-center justify-center space-x-1.5 text-xs text-gray-500 pt-2 pb-3 border-t border-b border-gray-200 mb-3">
-                        <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <div className={`flex items-center justify-center space-x-1.5 text-xs pt-2 pb-3 border-t border-b mb-3 ${
+                        isExpense
+                          ? 'text-white/80 border-white/20'
+                          : 'text-gray-500 border-gray-200'
+                      }`}>
+                        <svg className={`w-3.5 h-3.5 ${isExpense ? 'text-white' : 'text-emerald-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        <span className="font-medium">Tamamlandı</span>
+                        <span className="font-medium">{isExpense ? 'Kaydedildi' : 'Tamamlandı'}</span>
                       </div>
                       
-                      {/* Yeniden Yazdırma Butonları */}
-                      <div className="flex flex-col gap-2">
-                        <button
-                          onClick={() => handleReprintAdisyon(sale.id)}
-                          className="px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-semibold rounded-lg transition-all duration-200 hover:shadow-md active:scale-95 flex items-center justify-center space-x-1.5"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                          </svg>
-                          <span>Adisyonu Tekrar İste</span>
-                        </button>
-                        <button
-                          onClick={() => handleReprintReceipt(sale.id)}
-                          className="px-3 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white text-xs font-semibold rounded-lg transition-all duration-200 hover:shadow-md active:scale-95 flex items-center justify-center space-x-1.5"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                          </svg>
-                          <span>Fişi Tekrar Yazdır</span>
-                        </button>
-                      </div>
+                      {/* Yeniden Yazdırma Butonları - Sadece satışlar için */}
+                      {!isExpense && (
+                        <div className="flex flex-col gap-2">
+                          <button
+                            onClick={() => handleReprintAdisyon(sale.id)}
+                            className="px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-semibold rounded-lg transition-all duration-200 hover:shadow-md active:scale-95 flex items-center justify-center space-x-1.5"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span>Adisyonu Tekrar İste</span>
+                          </button>
+                          <button
+                            onClick={() => handleReprintReceipt(sale.id)}
+                            className="px-3 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white text-xs font-semibold rounded-lg transition-all duration-200 hover:shadow-md active:scale-95 flex items-center justify-center space-x-1.5"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                            </svg>
+                            <span>Fişi Tekrar Yazdır</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-                  ))}
+                  );
+                  })}
                 </div>
               </div>
             );

@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   getCategories: () => ipcRenderer.invoke('get-categories'),
   createCategory: (categoryData) => ipcRenderer.invoke('create-category', categoryData),
+  updateCategory: (categoryId, categoryData) => ipcRenderer.invoke('update-category', categoryId, categoryData),
   deleteCategory: (categoryId) => ipcRenderer.invoke('delete-category', categoryId),
   getProducts: (categoryId) => ipcRenderer.invoke('get-products', categoryId),
   createSale: (saleData) => ipcRenderer.invoke('create-sale', saleData),

@@ -28,6 +28,8 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
   const [deleteConfirmModal, setDeleteConfirmModal] = useState(null); // { productId, productName }
   const [deleteCategoryModal, setDeleteCategoryModal] = useState(null); // { categoryId, categoryName, productCount }
   const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
+  const [showEditCategoryModal, setShowEditCategoryModal] = useState(false);
+  const [editingCategory, setEditingCategory] = useState(null);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [categoryError, setCategoryError] = useState('');
   
@@ -484,6 +486,67 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
     }
   };
 
+  const handleEditCategory = (category) => {
+    setEditingCategory(category);
+    setNewCategoryName(category.name);
+    setCategoryError('');
+    setShowEditCategoryModal(true);
+  };
+
+  const handleUpdateCategory = async () => {
+    setCategoryError('');
+    
+    if (!newCategoryName || newCategoryName.trim() === '') {
+      setCategoryError('Kategori adı boş olamaz');
+      return;
+    }
+
+    if (!editingCategory) {
+      setCategoryError('Düzenlenecek kategori bulunamadı');
+      return;
+    }
+
+    // API kontrolü
+    if (!window.electronAPI) {
+      setCategoryError('Electron API yüklenemedi. Lütfen uygulamayı yeniden başlatın.');
+      return;
+    }
+    
+    if (typeof window.electronAPI.updateCategory !== 'function') {
+      setCategoryError('Kategori güncelleme özelliği yüklenemedi. Lütfen uygulamayı tamamen kapatıp yeniden başlatın.');
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.updateCategory(editingCategory.id, { name: newCategoryName.trim() });
+      
+      if (result && result.success) {
+        // Kategorileri yenile
+        await loadCategories();
+        // Güncellenen kategoriyi seç
+        if (result.category) {
+          setSelectedCategory(result.category);
+          setProductForm(prev => ({ ...prev, category_id: result.category.id }));
+        }
+        // Modal'ı kapat ve formu temizle
+        setShowEditCategoryModal(false);
+        setEditingCategory(null);
+        setNewCategoryName('');
+        setCategoryError('');
+        
+        // Ana uygulamayı yenile
+        if (onProductsUpdated) {
+          onProductsUpdated();
+        }
+      } else {
+        setCategoryError(result?.error || 'Kategori güncellenemedi');
+      }
+    } catch (error) {
+      console.error('Kategori güncelleme hatası:', error);
+      setCategoryError('Bir hata oluştu: ' + (error.message || 'Bilinmeyen hata'));
+    }
+  };
+
   const handleDeleteCategory = async () => {
     if (!deleteCategoryModal) return;
     
@@ -906,18 +969,32 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                               )}
                             </div>
                           </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteCategoryModal({ categoryId: cat.id, categoryName: cat.name });
-                            }}
-                            className="absolute -top-1 -right-1 w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 shadow-lg z-10"
-                            title="Kategoriyi Sil"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
+                          <div className="absolute -top-1 -right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEditCategory(cat);
+                              }}
+                              className="w-6 h-6 bg-blue-500 hover:bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg transition-all"
+                              title="Kategoriyi Düzenle"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteCategoryModal({ categoryId: cat.id, categoryName: cat.name });
+                              }}
+                              className="w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center shadow-lg transition-all"
+                              title="Kategoriyi Sil"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
                         </div>
                       ))}
                       <button
@@ -1339,6 +1416,96 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
                     <span>Ekle</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Category Modal */}
+      {showEditCategoryModal && editingCategory && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-lg flex items-center justify-center z-[1000] animate-fade-in px-4">
+          <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl transform animate-scale-in relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 via-indigo-500 to-blue-500"></div>
+            
+            <button
+              onClick={() => {
+                setShowEditCategoryModal(false);
+                setEditingCategory(null);
+                setNewCategoryName('');
+                setCategoryError('');
+              }}
+              className="absolute top-6 right-6 w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+            >
+              <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-800 mb-2">Kategori Düzenle</h3>
+              <p className="text-gray-600 text-sm">
+                <span className="font-semibold text-blue-600">{editingCategory.name}</span> kategorisinin adını değiştirin
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Kategori Adı
+                </label>
+                <input
+                  type="text"
+                  value={newCategoryName}
+                  onChange={(e) => {
+                    setNewCategoryName(e.target.value);
+                    setCategoryError('');
+                  }}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      handleUpdateCategory();
+                    }
+                  }}
+                  className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-blue-500 focus:outline-none transition-all"
+                  placeholder="Kategori adını girin"
+                  autoFocus
+                />
+              </div>
+
+              {categoryError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+                  {categoryError}
+                </div>
+              )}
+
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => {
+                    setShowEditCategoryModal(false);
+                    setEditingCategory(null);
+                    setNewCategoryName('');
+                    setCategoryError('');
+                  }}
+                  className="flex-1 px-6 py-3 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-all transform hover:scale-105"
+                >
+                  İptal
+                </button>
+                <button
+                  onClick={handleUpdateCategory}
+                  className="flex-1 px-6 py-3 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all transform hover:scale-105"
+                >
+                  <div className="flex items-center justify-center space-x-2">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>Güncelle</span>
                   </div>
                 </button>
               </div>

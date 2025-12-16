@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 
 const DatePickerDropdown = ({ selectedDate, onDateChange }) => {
   const [showPicker, setShowPicker] = useState(false);
-  const [selectedDay, setSelectedDay] = useState(null);
-  const [selectedMonth, setSelectedMonth] = useState(null);
-  const [selectedYear, setSelectedYear] = useState(null);
+  const today = new Date();
+  const [selectedDay, setSelectedDay] = useState(today.getDate());
+  const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
 
   // Mevcut tarihi parse et
   useEffect(() => {
@@ -15,11 +16,24 @@ const DatePickerDropdown = ({ selectedDate, onDateChange }) => {
       setSelectedYear(parseInt(year));
     } else {
       const today = new Date();
+      const day = today.getDate();
+      const month = today.getMonth() + 1;
+      const year = today.getFullYear();
+      setSelectedDay(day);
+      setSelectedMonth(month);
+      setSelectedYear(year);
+    }
+  }, [selectedDate]);
+
+  // İlk yüklemede bugünün tarihini ayarla
+  useEffect(() => {
+    if (!selectedDay || !selectedMonth || !selectedYear) {
+      const today = new Date();
       setSelectedDay(today.getDate());
       setSelectedMonth(today.getMonth() + 1);
       setSelectedYear(today.getFullYear());
     }
-  }, [selectedDate]);
+  }, []);
 
   // Günleri oluştur (seçilen ay ve yıla göre)
   const getDaysInMonth = (month, year) => {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import TableOrderModal from './TableOrderModal';
 import TablePartialPaymentModal from './TablePartialPaymentModal';
+import TableTransferModal from './TableTransferModal';
 
 const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
   const [selectedType, setSelectedType] = useState('inside'); // 'inside' or 'outside'
@@ -9,6 +10,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
   const [orderItems, setOrderItems] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [showPartialPaymentModal, setShowPartialPaymentModal] = useState(false);
+  const [showTransferModal, setShowTransferModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
   const insideTables = Array.from({ length: 20 }, (_, i) => ({
@@ -130,8 +132,11 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
   const handleAddItems = () => {
     if (!selectedOrder) return;
     
+    // Tüm masaları birleştir
+    const allTables = [...insideTables, ...outsideTables, ...packageTables];
+    
     // Masayı bul
-    const table = tables.find(t => t.id === selectedOrder.table_id);
+    const table = allTables.find(t => t.id === selectedOrder.table_id);
     if (table) {
       // Modal'ı kapat
       setShowModal(false);
@@ -139,6 +144,47 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
       setOrderItems([]);
       // Masayı seç ve sipariş ekleme moduna geç
       onSelectTable(table);
+    } else {
+      // Eğer masa bulunamazsa, selectedOrder'dan masa bilgisini oluştur
+      const tableId = selectedOrder.table_id;
+      let table = null;
+      
+      if (tableId.startsWith('inside-')) {
+        const number = parseInt(tableId.replace('inside-', ''));
+        table = {
+          id: tableId,
+          number: number,
+          type: 'inside',
+          name: `İçeri ${number}`
+        };
+      } else if (tableId.startsWith('outside-')) {
+        const number = parseInt(tableId.replace('outside-', ''));
+        table = {
+          id: tableId,
+          number: number,
+          type: 'outside',
+          name: `Dışarı ${number}`
+        };
+      } else if (tableId.startsWith('package-')) {
+        const parts = tableId.split('-');
+        const number = parseInt(parts[parts.length - 1]);
+        const type = parts[1] || 'inside';
+        table = {
+          id: tableId,
+          number: number,
+          type: type,
+          name: `Paket ${number}`
+        };
+      }
+      
+      if (table) {
+        // Modal'ı kapat
+        setShowModal(false);
+        setSelectedOrder(null);
+        setOrderItems([]);
+        // Masayı seç ve sipariş ekleme moduna geç
+        onSelectTable(table);
+      }
     }
   };
 
@@ -229,6 +275,37 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
     }
   };
 
+  // Masa aktar
+  const handleTransferTable = async (sourceTableId, targetTableId) => {
+    if (!window.electronAPI || !window.electronAPI.transferTableOrder) {
+      alert('Masa aktarımı şu anda kullanılamıyor');
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.transferTableOrder(sourceTableId, targetTableId);
+      
+      if (result.success) {
+        // Modal'ı kapat ve siparişleri yenile
+        setShowTransferModal(false);
+        setShowModal(false);
+        setSelectedOrder(null);
+        setOrderItems([]);
+        await loadTableOrders();
+        // Başarı toast'ı göster
+        setShowSuccessToast(true);
+        setTimeout(() => {
+          setShowSuccessToast(false);
+        }, 2000);
+      } else {
+        alert('Masa aktarılamadı: ' + (result.error || 'Bilinmeyen hata'));
+      }
+    } catch (error) {
+      console.error('Masa aktarılırken hata:', error);
+      alert('Masa aktarılamadı: ' + error.message);
+    }
+  };
+
   // Kısmi ödemeyi tamamla
   const handleCompletePartialPayment = async (payments) => {
     if (!selectedOrder || !window.electronAPI) {
@@ -308,7 +385,18 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
 
   return (
     <div className="mb-4">
-      <h2 className="text-xl font-bold mb-2 gradient-text">Masalar</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-bold gradient-text">Masalar</h2>
+        <button
+          onClick={() => setShowTransferModal(true)}
+          className="px-6 py-3 bg-gradient-to-r from-indigo-500 to-blue-500 hover:from-indigo-600 hover:to-blue-600 text-white font-bold rounded-xl transition-all duration-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center gap-2"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+          </svg>
+          <span>Masa Aktar</span>
+        </button>
+      </div>
       
       {/* Masa Tipi Seçimi - Büyük ve Ortalanmış */}
       <div className="flex justify-center gap-4 mb-4">
@@ -316,8 +404,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
           onClick={() => setSelectedType('inside')}
           className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 text-lg ${
             selectedType === 'inside'
-              ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg transform scale-105'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800'
+              ? 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-lg transform scale-105'
+              : 'bg-blue-50 text-blue-600 hover:bg-blue-100 hover:text-blue-700'
           }`}
         >
           <div className="flex items-center space-x-3">
@@ -332,8 +420,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
           onClick={() => setSelectedType('outside')}
           className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 text-lg ${
             selectedType === 'outside'
-              ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg transform scale-105'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800'
+              ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg transform scale-105'
+              : 'bg-orange-50 text-orange-600 hover:bg-orange-100 hover:text-orange-700'
           }`}
         >
           <div className="flex items-center space-x-3">
@@ -368,7 +456,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
                     ? 'bg-gradient-to-br from-green-400 to-emerald-500'
                     : isOutside
                     ? 'bg-gradient-to-br from-gray-700 to-gray-900'
-                    : 'bg-gradient-to-br from-purple-400 to-pink-400'
+                    : 'bg-gray-50'
                 }`}>
                   {hasOrder ? (
                     <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -376,8 +464,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                     </svg>
                   ) : (
-                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                    <svg className={`w-5 h-5 ${isOutside ? 'text-white' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                     </svg>
                   )}
                 </div>
@@ -483,6 +571,19 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
           }}
           onRequestAdisyon={handleRequestAdisyon}
           onAddItems={handleAddItems}
+        />
+      )}
+
+      {/* Masa Aktar Modal */}
+      {showTransferModal && (
+        <TableTransferModal
+          currentOrder={null}
+          currentTableId={null}
+          currentTableType={selectedType}
+          onClose={() => {
+            setShowTransferModal(false);
+          }}
+          onTransfer={handleTransferTable}
         />
       )}
 

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import PinModal from './PinModal';
 import SettingsModal from './SettingsModal';
 import SettingsSplash from './SettingsSplash';
+import DateTimeDisplay from './DateTimeDisplay';
 
 const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType, onRoleSplash, onProductsUpdated, onExit }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -185,8 +186,11 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
           />
         </div>
         <div>
-          <h1 className="text-3xl font-bold text-pink-500">Makara Satış Sistemi</h1>
-          <p className="text-xs text-gray-500 font-medium">v2.1.6</p>
+          <h1 className="text-lg font-bold text-pink-500">Makara Satış Sistemi</h1>
+          <p className="text-xs text-gray-500 font-medium">v2.2.4</p>
+        </div>
+        <div className="ml-4 pl-4 border-l border-gray-300">
+          <DateTimeDisplay />
         </div>
       </div>
 

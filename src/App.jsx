@@ -13,6 +13,7 @@ import PrintToast from './components/PrintToast';
 import SplashScreen from './components/SplashScreen';
 import ExitSplash from './components/ExitSplash';
 import UpdateModal from './components/UpdateModal';
+import ExpenseModal from './components/ExpenseModal';
 function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [currentView, setCurrentView] = useState('pos'); // 'pos', 'sales', or 'tables'
@@ -36,6 +37,7 @@ function App() {
   const [tableRefreshTrigger, setTableRefreshTrigger] = useState(0);
   const [showExitSplash, setShowExitSplash] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
   const searchInputRef = useRef(null);
   const triggerRoleSplash = (role) => {
     setActiveRoleSplash(role);
@@ -523,6 +525,33 @@ function App() {
     }
   };
 
+  const handleSaveExpense = async (expenseData) => {
+    // Masrafı normal satış gibi Firebase Sales'e kaydet
+    const saleData = {
+      items: [{
+        id: 'expense-' + Date.now(),
+        name: expenseData.title,
+        price: expenseData.amount,
+        quantity: 1,
+        isExpense: true // Masraf olduğunu belirt
+      }],
+      totalAmount: expenseData.amount,
+      paymentMethod: 'Masraf',
+      orderNote: null,
+      isExpense: true // Satış değil, masraf
+    };
+
+    const result = await window.electronAPI.createSale(saleData);
+    
+    if (result.success) {
+      setSaleSuccessInfo({ 
+        totalAmount: expenseData.amount, 
+        paymentMethod: 'Masraf',
+        expenseTitle: expenseData.title
+      });
+    }
+  };
+
   return (
     <>
       {showSplash && (
@@ -594,9 +623,9 @@ function App() {
               }}
             />
             
-            {/* Arama Çubuğu */}
-            <div className="mb-3">
-              <div className="relative">
+            {/* Arama Çubuğu ve Masraf Ekle Butonu */}
+            <div className="mb-3 flex gap-2">
+              <div className="flex-1 relative">
                 <input
                   ref={searchInputRef}
                   type="text"
@@ -626,14 +655,23 @@ function App() {
                   </button>
                 )}
               </div>
-              {searchQuery && (
-                <p className="mt-1.5 text-xs text-gray-600 font-medium">
-                  {filteredProducts.length > 0 
-                    ? `${filteredProducts.length} ürün bulundu` 
-                    : 'Ürün bulunamadı'}
-                </p>
-              )}
+              <button
+                onClick={() => setShowExpenseModal(true)}
+                className="px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-semibold rounded-lg shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-2 whitespace-nowrap"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                <span>Masraf Ekle</span>
+              </button>
             </div>
+            {searchQuery && (
+              <p className="mb-3 text-xs text-gray-600 font-medium">
+                {filteredProducts.length > 0 
+                  ? `${filteredProducts.length} ürün bulundu` 
+                  : 'Ürün bulunamadı'}
+              </p>
+            )}
             
             <ProductGrid
               products={filteredProducts}
@@ -682,6 +720,12 @@ function App() {
         />
       )}
 
+      {showExpenseModal && (
+        <ExpenseModal
+          onClose={() => setShowExpenseModal(false)}
+          onSave={handleSaveExpense}
+        />
+      )}
 
       {activeRoleSplash && <RoleSplash role={activeRoleSplash} />}
       <SaleSuccessToast

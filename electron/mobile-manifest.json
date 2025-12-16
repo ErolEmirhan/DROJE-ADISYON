@@ -1,0 +1,25 @@
+{
+  "name": "MAKARA Mobil Sipariş",
+  "short_name": "MAKARA Mobil",
+  "description": "MAKARA Satış Sistemi - Mobil Personel Arayüzü",
+  "start_url": "/mobile",
+  "display": "standalone",
+  "background_color": "#ec4899",
+  "theme_color": "#ec4899",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/mobilpersonel.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/mobilpersonel.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

@@ -720,6 +720,39 @@ ipcMain.handle('create-category', (event, categoryData) => {
 });
 
 // Kategori silme handler'ı
+ipcMain.handle('update-category', (event, categoryId, categoryData) => {
+  const { name } = categoryData;
+  
+  if (!name || name.trim() === '') {
+    return { success: false, error: 'Kategori adı boş olamaz' };
+  }
+  
+  const category = db.categories.find(c => c.id === categoryId);
+  if (!category) {
+    return { success: false, error: 'Kategori bulunamadı' };
+  }
+  
+  // Aynı isimde başka bir kategori var mı kontrol et (kendisi hariç)
+  const existingCategory = db.categories.find(c => 
+    c.id !== categoryId && c.name.toLowerCase().trim() === name.toLowerCase().trim()
+  );
+  if (existingCategory) {
+    return { success: false, error: 'Bu isimde bir kategori zaten mevcut' };
+  }
+  
+  // Kategori adını güncelle
+  category.name = name.trim();
+  
+  saveDatabase();
+  
+  // Firebase'e kaydet
+  saveCategoryToFirebase(category).catch(err => {
+    console.error('Firebase kategori güncelleme hatası:', err);
+  });
+  
+  return { success: true, category };
+});
+
 ipcMain.handle('delete-category', async (event, categoryId) => {
   const category = db.categories.find(c => c.id === categoryId);
   
@@ -1235,6 +1268,95 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity) 
   }
 
   return { success: true, remainingAmount: order.total_amount };
+});
+
+// Masa siparişini başka bir masaya aktar
+ipcMain.handle('transfer-table-order', async (event, sourceTableId, targetTableId) => {
+  // Kaynak masanın siparişini bul
+  const sourceOrder = db.tableOrders.find(
+    o => o.table_id === sourceTableId && o.status === 'pending'
+  );
+
+  if (!sourceOrder) {
+    return { success: false, error: 'Kaynak masada aktif sipariş bulunamadı' };
+  }
+
+  // Hedef masada aktif sipariş var mı kontrol et
+  const targetOrder = db.tableOrders.find(
+    o => o.table_id === targetTableId && o.status === 'pending'
+  );
+
+  if (targetOrder) {
+    return { success: false, error: 'Hedef masada zaten aktif bir sipariş var' };
+  }
+
+  // Kaynak masanın sipariş itemlarını al
+  const sourceItems = db.tableOrderItems.filter(oi => oi.order_id === sourceOrder.id);
+
+  if (sourceItems.length === 0) {
+    return { success: false, error: 'Aktarılacak ürün bulunamadı' };
+  }
+
+  // Hedef masa bilgilerini al (masa adı ve tipi)
+  let targetTableName = '';
+  let targetTableType = sourceOrder.table_type; // Varsayılan olarak kaynak masanın tipi
+
+  // Masa ID'sinden masa bilgilerini çıkar
+  if (targetTableId.startsWith('inside-')) {
+    targetTableName = `İçeri ${targetTableId.replace('inside-', '')}`;
+    targetTableType = 'inside';
+  } else if (targetTableId.startsWith('outside-')) {
+    targetTableName = `Dışarı ${targetTableId.replace('outside-', '')}`;
+    targetTableType = 'outside';
+  } else if (targetTableId.startsWith('package-')) {
+    const parts = targetTableId.split('-');
+    targetTableName = `Paket ${parts[parts.length - 1]}`;
+    targetTableType = parts[1] || sourceOrder.table_type; // package-{type}-{number}
+  }
+
+  // Kaynak siparişin tüm bilgilerini koru (order_date, order_time, order_note, total_amount)
+  // Sadece table_id, table_name ve table_type'ı güncelle
+  sourceOrder.table_id = targetTableId;
+  sourceOrder.table_name = targetTableName;
+  sourceOrder.table_type = targetTableType;
+
+  // Tüm itemların order_id'si zaten doğru (aynı order'a ait oldukları için değişmeyecek)
+  // Ancak emin olmak için kontrol edelim
+  sourceItems.forEach(item => {
+    if (item.order_id !== sourceOrder.id) {
+      item.order_id = sourceOrder.id;
+    }
+  });
+
+  saveDatabase();
+
+  // Electron renderer process'e güncelleme gönder
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('table-order-updated', { 
+      orderId: sourceOrder.id,
+      tableId: targetTableId,
+      sourceTableId: sourceTableId
+    });
+  }
+
+  // Mobil personel arayüzüne gerçek zamanlı güncelleme gönder
+  if (io) {
+    io.emit('table-update', {
+      tableId: sourceTableId,
+      hasOrder: false
+    });
+    io.emit('table-update', {
+      tableId: targetTableId,
+      hasOrder: true
+    });
+  }
+
+  return { 
+    success: true, 
+    orderId: sourceOrder.id,
+    sourceTableId: sourceTableId,
+    targetTableId: targetTableId
+  };
 });
 
 ipcMain.handle('complete-table-order', async (event, orderId) => {
@@ -4029,6 +4151,7 @@ function generateCancelReceiptHTML(cancelData) {
           }
           * {
             color: #000 !important;
+            background: white !important;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
           }
@@ -4045,47 +4168,42 @@ function generateCancelReceiptHTML(cancelData) {
       </style>
     </head>
     <body>
-      <div style="text-align: center; margin-bottom: 16px; padding: 12px 8px; background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); border: 3px solid #dc2626; border-radius: 8px; box-shadow: 0 4px 8px rgba(220, 38, 38, 0.3);">
-        <h1 style="margin: 0; font-size: 24px; font-weight: 900; color: #dc2626; text-transform: uppercase; letter-spacing: 2px; text-shadow: 2px 2px 4px rgba(0,0,0,0.2);">
-          İPTAL
-        </h1>
-      </div>
-      
-      <div style="margin-bottom: 10px; padding: 8px; background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); border-left: 3px solid #dc2626; border-radius: 6px;">
+      <div style="margin-bottom: 12px; padding: 8px; background: white; border: 2px solid #000; border-radius: 4px;">
         <div style="margin-bottom: 6px;">
-          <p style="margin: 0; font-size: 9px; color: #991b1b; font-weight: 700; text-transform: uppercase;">Masa</p>
-          <p style="margin: 4px 0 0 0; font-size: 13px; font-weight: 900; color: #1e293b;">${tableTypeText} ${cancelData.tableName}</p>
+          <p style="margin: 0; font-size: 9px; color: #000; font-weight: 700; text-transform: uppercase;">Masa</p>
+          <p style="margin: 4px 0 0 0; font-size: 13px; font-weight: 900; color: #000;">${tableTypeText} ${cancelData.tableName}</p>
         </div>
       </div>
       
-      <div style="margin-bottom: 10px; padding: 10px; background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%); border-left: 3px solid #f59e0b; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+      <div style="margin-bottom: 12px; padding: 10px; background: white; border: 2px solid #000; border-radius: 4px;">
         <div style="margin-bottom: 6px;">
-          <p style="margin: 0; font-size: 9px; color: #92400e; font-weight: 700; text-transform: uppercase;">Ürün</p>
-          <p style="margin: 4px 0 0 0; font-size: 12px; font-weight: 900; color: #1e293b; text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: #dc2626;">${cancelData.productName}</p>
+          <p style="margin: 0; font-size: 9px; color: #000; font-weight: 700; text-transform: uppercase;">Ürün</p>
+          <p style="margin: 4px 0 0 0; font-size: 12px; font-weight: 900; color: #000; text-decoration: line-through; text-decoration-thickness: 3px;">${cancelData.productName}</p>
+          <span style="display: inline-block; font-size: 8px; color: #000; font-weight: 700; padding: 2px 6px; border: 1px solid #000; border-radius: 3px; margin-top: 4px;">iptal</span>
         </div>
-        <div style="display: flex; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #f59e0b;">
+        <div style="display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 2px solid #000;">
           <div>
-            <p style="margin: 0; font-size: 8px; color: #92400e; font-weight: 700;">Adet</p>
-            <p style="margin: 2px 0 0 0; font-size: 11px; font-weight: 900; color: #1e293b;">${cancelData.quantity} adet</p>
+            <p style="margin: 0; font-size: 8px; color: #000; font-weight: 700;">Adet</p>
+            <p style="margin: 2px 0 0 0; font-size: 11px; font-weight: 900; color: #000;">${cancelData.quantity} adet</p>
           </div>
           <div style="text-align: right;">
-            <p style="margin: 0; font-size: 8px; color: #92400e; font-weight: 700;">Birim Fiyat</p>
-            <p style="margin: 2px 0 0 0; font-size: 11px; font-weight: 900; color: #1e293b;">₺${cancelData.price.toFixed(2)}</p>
+            <p style="margin: 0; font-size: 8px; color: #000; font-weight: 700;">Birim Fiyat</p>
+            <p style="margin: 2px 0 0 0; font-size: 11px; font-weight: 900; color: #000;">₺${cancelData.price.toFixed(2)}</p>
           </div>
         </div>
-        <div style="margin-top: 8px; padding-top: 8px; border-top: 2px solid #f59e0b;">
+        <div style="margin-top: 10px; padding-top: 10px; border-top: 3px solid #000;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <p style="margin: 0; font-size: 9px; color: #92400e; font-weight: 700; text-transform: uppercase;">Toplam</p>
-            <p style="margin: 0; font-size: 14px; font-weight: 900; color: #dc2626;">₺${(cancelData.price * cancelData.quantity).toFixed(2)}</p>
+            <p style="margin: 0; font-size: 9px; color: #000; font-weight: 700; text-transform: uppercase;">Toplam</p>
+            <p style="margin: 0; font-size: 16px; font-weight: 900; color: #000;">₺${(cancelData.price * cancelData.quantity).toFixed(2)}</p>
           </div>
         </div>
       </div>
       
-      <div style="margin-top: 12px; padding-top: 8px; border-top: 2px dashed #d1d5db; text-align: center;">
-        <p style="margin: 0; font-size: 8px; color: #6b7280; font-weight: 700;">
+      <div style="margin-top: 12px; padding-top: 8px; border-top: 2px solid #000; text-align: center;">
+        <p style="margin: 0; font-size: 8px; color: #000; font-weight: 700;">
           ${cancelData.cancelDate} ${cancelData.cancelTime}
         </p>
-        <p style="margin: 4px 0 0 0; font-size: 7px; color: #9ca3af; font-weight: 600;">
+        <p style="margin: 4px 0 0 0; font-size: 7px; color: #000; font-weight: 600;">
           Kategori: ${cancelData.categoryName}
         </p>
       </div>
@@ -4229,6 +4347,13 @@ function generateMobileHTML(serverURL) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#ec4899">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MAKARA Mobil">
+  <link rel="manifest" href="${serverURL}/mobile-manifest.json">
+  <link rel="icon" type="image/png" href="${serverURL}/mobilpersonel.png">
+  <link rel="apple-touch-icon" href="${serverURL}/mobilpersonel.png">
   <title>MAKARA - Mobil Sipariş</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -4286,10 +4411,23 @@ function generateMobileHTML(serverURL) {
       cursor: pointer;
       transition: all 0.3s;
     }
-    .table-type-tab.active {
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+    .table-type-tab[data-type="inside"] {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+    .table-type-tab[data-type="inside"].active {
+      background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
       color: white;
-      box-shadow: 0 4px 12px rgba(168, 85, 247, 0.4);
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    }
+    .table-type-tab[data-type="outside"] {
+      background: #fff7ed;
+      color: #c2410c;
+    }
+    .table-type-tab[data-type="outside"].active {
+      background: linear-gradient(135deg, #f97316 0%, #fbbf24 100%);
+      color: white;
+      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4);
     }
     .table-grid {
       display: grid;
@@ -4325,6 +4463,10 @@ function generateMobileHTML(serverURL) {
     .table-btn:hover {
       transform: translateY(-2px);
       box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    }
+    .transfer-table-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 6px 16px rgba(79, 70, 229, 0.4);
     }
     .package-table-btn:hover {
       transform: translateY(-3px) scale(1.02);
@@ -5447,10 +5589,20 @@ function generateMobileHTML(serverURL) {
       </div>
       
       <div id="tableSelection">
+        <!-- Masa Aktar Butonu -->
+        <div style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
+          <button onclick="showTransferModal()" class="transfer-table-btn" style="display: flex; align-items: center; gap: 8px; padding: 12px 20px; background: linear-gradient(135deg, #4f46e5 0%, #2563eb 100%); color: white; border: none; border-radius: 12px; font-size: 15px; font-weight: 700; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3); transition: all 0.3s; cursor: pointer;">
+            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+            </svg>
+            <span>Masa Aktar</span>
+          </button>
+        </div>
+        
         <!-- İç/Dış Tab'leri -->
         <div class="table-type-tabs">
-          <button class="table-type-tab active" onclick="selectTableType('inside')">🏠 İç</button>
-          <button class="table-type-tab" onclick="selectTableType('outside')">🌳 Dış</button>
+          <button class="table-type-tab active" data-type="inside" onclick="selectTableType('inside')">🏠 İç</button>
+          <button class="table-type-tab" data-type="outside" onclick="selectTableType('outside')">🌳 Dış</button>
         </div>
         
         <!-- Masa Grid -->
@@ -5520,14 +5672,22 @@ function generateMobileHTML(serverURL) {
     </div>
     <div class="cart-content">
       <div class="cart-items" id="cartItems"></div>
-      <button class="send-btn" onclick="sendOrder()" style="margin-top: 20px;">
-        <span style="display: inline-flex; align-items: center; gap: 8px;">
-          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/>
+      <div style="display: flex; gap: 10px; margin-top: 20px;">
+        <button onclick="showNoteModal()" style="flex: 0 0 auto; padding: 12px 16px; background: #f3f4f6; color: #374151; border: 2px solid #d1d5db; border-radius: 12px; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.3s; display: flex; align-items: center; gap: 6px;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">
+          <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/>
           </svg>
-          Siparişi Gönder
-        </span>
-      </button>
+          <span id="noteButtonText">Not Ekle</span>
+        </button>
+        <button class="send-btn" onclick="sendOrder()" style="flex: 1; margin-top: 0;">
+          <span style="display: inline-flex; align-items: center; gap: 8px;">
+            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/>
+            </svg>
+            Siparişi Gönder
+          </span>
+        </button>
+      </div>
     </div>
   </div>
   
@@ -5556,6 +5716,93 @@ function generateMobileHTML(serverURL) {
     </div>
   </div>
   
+  <!-- Not Ekle Modal -->
+  <div id="noteModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; align-items: center; justify-content: center; padding: 20px;" onclick="if(event.target === this) hideNoteModal()">
+    <div style="background: white; border-radius: 20px; width: 100%; max-width: 400px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+      <div style="background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); color: white; padding: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="margin: 0; font-size: 20px; font-weight: 800;">Sipariş Notu</h2>
+          <button onclick="hideNoteModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold;">×</button>
+        </div>
+      </div>
+      <div style="padding: 20px;">
+        <textarea id="noteInput" placeholder="Sipariş notu yazın..." style="width: 100%; min-height: 120px; padding: 12px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 15px; font-family: inherit; resize: vertical; outline: none;" onfocus="this.style.borderColor='#a855f7';" onblur="this.style.borderColor='#e5e7eb';"></textarea>
+      </div>
+      <div style="border-top: 1px solid #e5e7eb; padding: 16px; display: flex; justify-content: flex-end; gap: 12px;">
+        <button onclick="hideNoteModal()" style="padding: 12px 24px; background: #f3f4f6; color: #374151; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">İptal</button>
+        <button onclick="saveNote()" style="padding: 12px 24px; background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(168, 85, 247, 0.3);" onmouseover="this.style.transform='scale(1.02)'; this.style.boxShadow='0 6px 16px rgba(168, 85, 247, 0.4)';" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(168, 85, 247, 0.3)';">Kaydet</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Ürün İptal Modal -->
+  <div id="cancelItemModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px);" onclick="if(event.target === this) hideCancelItemModal()">
+    <div style="background: white; border-radius: 24px; width: 100%; max-width: 420px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 25px 70px rgba(0,0,0,0.4); animation: slideUp 0.3s ease;">
+      <div style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="margin: 0; font-size: 22px; font-weight: 900;">Ürün İptal</h2>
+          <button onclick="hideCancelItemModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 36px; height: 36px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; transition: all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.3)';" onmouseout="this.style.background='rgba(255,255,255,0.2)';">×</button>
+        </div>
+      </div>
+      <div style="padding: 24px;">
+        <div style="margin-bottom: 20px;">
+          <p style="margin: 0 0 12px 0; font-size: 15px; color: #6b7280; font-weight: 600;">Ürün:</p>
+          <p style="margin: 0; font-size: 18px; font-weight: 800; color: #1f2937;" id="cancelItemName"></p>
+        </div>
+        <div style="margin-bottom: 20px;">
+          <p style="margin: 0 0 12px 0; font-size: 15px; color: #6b7280; font-weight: 600;">Mevcut Miktar:</p>
+          <p style="margin: 0; font-size: 18px; font-weight: 800; color: #1f2937;" id="cancelItemMaxQuantity"></p>
+        </div>
+        <div style="margin-bottom: 24px;">
+          <label style="display: block; margin-bottom: 8px; font-size: 15px; color: #374151; font-weight: 700;">İptal Edilecek Miktar:</label>
+          <input type="number" id="cancelItemQuantity" min="1" value="1" style="width: 100%; padding: 14px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 18px; font-weight: 700; text-align: center; outline: none; transition: all 0.3s;" onfocus="this.style.borderColor='#ef4444';" onblur="this.style.borderColor='#e5e7eb';" oninput="validateCancelQuantity()">
+        </div>
+        <div style="background: #fef2f2; border: 2px solid #fecaca; border-radius: 12px; padding: 16px; margin-bottom: 24px;">
+          <p style="margin: 0; font-size: 13px; color: #991b1b; font-weight: 600; line-height: 1.6;">
+            ⚠️ İptal edildiğinde bu ürünün kategorisine atanan yazıcıdan iptal fişi yazdırılacaktır.
+          </p>
+        </div>
+      </div>
+      <div style="border-top: 1px solid #e5e7eb; padding: 20px; display: flex; justify-content: flex-end; gap: 12px; background: #f9fafb;">
+        <button onclick="hideCancelItemModal()" style="padding: 14px 28px; background: #f3f4f6; color: #374151; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">İptal</button>
+        <button onclick="confirmCancelItem()" style="padding: 14px 28px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);" onmouseover="this.style.transform='scale(1.02)'; this.style.boxShadow='0 6px 16px rgba(239, 68, 68, 0.4)';" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(239, 68, 68, 0.3)';">İptal Et</button>
+      </div>
+    </div>
+  </div>
+  
+  <style>
+    @keyframes slideUp {
+      from { transform: translateY(30px) scale(0.95); opacity: 0; }
+      to { transform: translateY(0) scale(1); opacity: 1; }
+    }
+  </style>
+        <button onclick="saveNote()" style="padding: 12px 24px; background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.opacity='0.9';" onmouseout="this.style.opacity='1';">Kaydet</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Masa Aktar Modal -->
+  <div id="transferModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; align-items: center; justify-content: center; padding: 20px;" onclick="if(event.target === this) hideTransferModal()">
+    <div style="background: white; border-radius: 20px; width: 100%; max-width: 500px; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+      <div style="background: linear-gradient(135deg, #4f46e5 0%, #2563eb 100%); color: white; padding: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="margin: 0; font-size: 20px; font-weight: 800;" id="transferModalTitle">Aktarılacak Masayı Seçin (Dolu)</h2>
+          <button onclick="hideTransferModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold;">×</button>
+        </div>
+        <p id="transferModalSubtitle" style="margin: 8px 0 0 0; font-size: 13px; opacity: 0.9;"></p>
+      </div>
+      <div style="flex: 1; overflow-y: auto; padding: 20px;">
+        <p id="transferModalDescription" style="color: #6b7280; margin-bottom: 16px; font-weight: 600; font-size: 14px;"></p>
+        <div id="transferTablesGrid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;"></div>
+      </div>
+      <div style="border-top: 1px solid #e5e7eb; padding: 16px; display: flex; justify-content: space-between; gap: 12px;">
+        <button onclick="handleTransferBack()" id="transferBackBtn" style="padding: 12px 24px; background: #f3f4f6; color: #374151; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';" style="display: none;">Geri</button>
+        <button onclick="handleTransferConfirm()" id="transferConfirmBtn" style="padding: 12px 24px; background: linear-gradient(135deg, #4f46e5 0%, #2563eb 100%); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s; flex: 1; display: none;" onmouseover="this.style.opacity='0.9';" onmouseout="this.style.opacity='1';">Aktar</button>
+        <button onclick="hideTransferModal()" id="transferCancelBtn" style="padding: 12px 24px; background: #f3f4f6; color: #374151; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">İptal</button>
+      </div>
+    </div>
+  </div>
+  
   <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
   <script>
     const API_URL = '${serverURL}/api';
@@ -5569,6 +5816,7 @@ function generateMobileHTML(serverURL) {
     let socket = null;
     let tables = [];
     let currentTableType = 'inside';
+    let orderNote = '';
     
     // PIN oturum yönetimi (1 saat)
     const SESSION_DURATION = 60 * 60 * 1000;
@@ -5745,8 +5993,12 @@ function generateMobileHTML(serverURL) {
     // Masa tipi seçimi
     function selectTableType(type) {
       currentTableType = type;
-      document.querySelectorAll('.table-type-tab').forEach(tab => tab.classList.remove('active'));
-      event.target.classList.add('active');
+      document.querySelectorAll('.table-type-tab').forEach(tab => {
+        tab.classList.remove('active');
+        if (tab.getAttribute('data-type') === type) {
+          tab.classList.add('active');
+        }
+      });
       renderTables();
     }
     
@@ -5894,11 +6146,14 @@ function generateMobileHTML(serverURL) {
           const itemTotal = (item.price * item.quantity).toFixed(2);
           const giftClass = item.isGift ? ' gift' : '';
           const itemStaffName = item.staff_name || 'Bilinmiyor';
-          return '<div class="order-item">' +
+          return '<div class="order-item" style="position: relative;">' +
             '<div class="order-item-name' + giftClass + '">' + item.product_name + '</div>' +
-            '<div class="order-item-details">' +
-              '<span class="order-item-qty">×' + item.quantity + '</span>' +
-              '<span class="order-item-price">' + itemTotal + ' ₺</span>' +
+            '<div class="order-item-details" style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">' +
+              '<div style="display: flex; align-items: center; gap: 8px;">' +
+                '<span class="order-item-qty">×' + item.quantity + '</span>' +
+                '<span class="order-item-price">' + itemTotal + ' ₺</span>' +
+              '</div>' +
+              '<button onclick="showCancelItemModal(' + item.id + ', ' + item.quantity + ', \\'' + item.product_name.replace(/'/g, "\\'") + '\\')" style="padding: 6px 12px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3); transition: all 0.3s; white-space: nowrap;" onmouseover="this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(239, 68, 68, 0.4)\\';" onmouseout="this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'0 2px 8px rgba(239, 68, 68, 0.3)\\';" ontouchstart="this.style.transform=\\'scale(0.95)\\';" ontouchend="this.style.transform=\\'scale(1)\\';" class="cancel-item-btn">İptal</button>' +
             '</div>' +
           '</div>' +
           '<div style="font-size: 11px; color: #9ca3af; margin-top: 4px; margin-bottom: 8px; padding-left: 4px;">👤 ' + itemStaffName + ' • ' + (item.added_date || '') + ' ' + (item.added_time || '') + '</div>';
@@ -5935,6 +6190,164 @@ function generateMobileHTML(serverURL) {
       }
       document.getElementById('searchInput').value = '';
       renderTables();
+    }
+    
+    // Masa Aktar Modal İşlemleri
+    let transferStep = 1; // 1: source table, 2: target table
+    let selectedSourceTableId = null;
+    let selectedTargetTableId = null;
+    
+    function showTransferModal() {
+      transferStep = 1;
+      selectedSourceTableId = null;
+      selectedTargetTableId = null;
+      document.getElementById('transferModal').style.display = 'flex';
+      renderTransferTables();
+    }
+    
+    function hideTransferModal() {
+      document.getElementById('transferModal').style.display = 'none';
+      transferStep = 1;
+      selectedSourceTableId = null;
+      selectedTargetTableId = null;
+    }
+    
+    function renderTransferTables() {
+      const grid = document.getElementById('transferTablesGrid');
+      // Tüm masaları göster (iç, dış ve paket masaları) - tip kısıtlaması yok
+      const allTables = [...tables];
+      
+      if (transferStep === 1) {
+        // Adım 1: Dolu masaları göster
+        document.getElementById('transferModalTitle').textContent = 'Aktarılacak Masayı Seçin (Dolu)';
+        document.getElementById('transferModalDescription').textContent = 'Lütfen içeriği aktarılacak dolu masayı seçin:';
+        document.getElementById('transferBackBtn').style.display = 'none';
+        document.getElementById('transferConfirmBtn').style.display = 'none';
+        document.getElementById('transferCancelBtn').style.display = 'block';
+        document.getElementById('transferModalSubtitle').textContent = '';
+        
+        const html = allTables.map(table => {
+          const hasOrder = table.hasOrder;
+          const isSelected = selectedSourceTableId === table.id;
+          
+          if (!hasOrder) {
+            return '<div style="opacity: 0.3; cursor: not-allowed; padding: 12px; border: 2px solid #d1d5db; border-radius: 12px; background: #f3f4f6; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px;">' +
+              '<div style="width: 40px; height: 40px; border-radius: 50%; background: #9ca3af; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: white; margin-bottom: 8px;">' + table.number + '</div>' +
+              '<span style="font-size: 11px; color: #6b7280; font-weight: 600;">' + table.name + '</span>' +
+            '</div>';
+          }
+          
+          return '<button onclick="selectSourceTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + (isSelected ? '#10b981' : '#10b981') + '; border-radius: 12px; background: ' + (isSelected ? '#d1fae5' : '#ecfdf5') + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(16, 185, 129, 0.3)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
+            '<div style="width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #10b981 0%, #059669 100%); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: white; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);">' + table.number + '</div>' +
+            '<span style="font-size: 11px; color: #047857; font-weight: 700;">' + table.name + '</span>' +
+            '<span style="font-size: 9px; color: #10b981; margin-top: 4px; font-weight: 600;">Dolu</span>' +
+          '</button>';
+        }).join('');
+        
+        grid.innerHTML = html;
+      } else {
+        // Adım 2: Boş masaları göster
+        document.getElementById('transferModalTitle').textContent = 'Aktarılacak Masayı Seçin (Boş)';
+        const sourceTable = allTables.find(t => t.id === selectedSourceTableId);
+        document.getElementById('transferModalDescription').textContent = 'Lütfen içeriğin aktarılacağı boş masayı seçin:';
+        document.getElementById('transferModalSubtitle').textContent = sourceTable ? 'Kaynak: ' + sourceTable.name : '';
+        document.getElementById('transferBackBtn').style.display = 'block';
+        document.getElementById('transferConfirmBtn').style.display = selectedTargetTableId ? 'block' : 'none';
+        document.getElementById('transferCancelBtn').style.display = 'none';
+        
+        const html = allTables.map(table => {
+          const hasOrder = table.hasOrder;
+          const isSelected = selectedTargetTableId === table.id;
+          const isSourceTable = selectedSourceTableId === table.id;
+          
+          if (hasOrder || isSourceTable) {
+            return '<div style="opacity: 0.3; cursor: not-allowed; padding: 12px; border: 2px solid #d1d5db; border-radius: 12px; background: #f3f4f6; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px;">' +
+              '<div style="width: 40px; height: 40px; border-radius: 50%; background: #9ca3af; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: white; margin-bottom: 8px;">' + table.number + '</div>' +
+              '<span style="font-size: 11px; color: #6b7280; font-weight: 600;">' + table.name + '</span>' +
+              (isSourceTable ? '<span style="font-size: 9px; color: #dc2626; margin-top: 4px; font-weight: 600;">Kaynak</span>' : '') +
+            '</div>';
+          }
+          
+          return '<button onclick="selectTargetTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + (isSelected ? '#2563eb' : '#e5e7eb') + '; border-radius: 12px; background: ' + (isSelected ? '#dbeafe' : 'white') + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(37, 99, 235, 0.3)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
+            '<div style="width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: white; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(100, 116, 139, 0.3);">' + table.number + '</div>' +
+            '<span style="font-size: 11px; color: #1e293b; font-weight: 700;">' + table.name + '</span>' +
+            '<span style="font-size: 9px; color: #64748b; margin-top: 4px; font-weight: 600;">Boş</span>' +
+          '</button>';
+        }).join('');
+        
+        grid.innerHTML = html;
+      }
+    }
+    
+    function selectSourceTable(tableId) {
+      const table = tables.find(t => t.id === tableId);
+      if (!table || !table.hasOrder) {
+        showToast('error', 'Hata', 'Bu masa boş! Lütfen dolu bir masa seçin.');
+        return;
+      }
+      selectedSourceTableId = tableId;
+      transferStep = 2;
+      renderTransferTables();
+    }
+    
+    function selectTargetTable(tableId) {
+      const table = tables.find(t => t.id === tableId);
+      if (table && table.hasOrder) {
+        showToast('error', 'Hata', 'Bu masa dolu! Lütfen boş bir masa seçin.');
+        return;
+      }
+      if (tableId === selectedSourceTableId) {
+        showToast('error', 'Hata', 'Aynı masayı seçemezsiniz!');
+        return;
+      }
+      selectedTargetTableId = tableId;
+      document.getElementById('transferConfirmBtn').style.display = 'block';
+      renderTransferTables();
+    }
+    
+    function handleTransferBack() {
+      transferStep = 1;
+      selectedTargetTableId = null;
+      renderTransferTables();
+    }
+    
+    async function handleTransferConfirm() {
+      if (!selectedSourceTableId || !selectedTargetTableId) {
+        showToast('error', 'Hata', 'Lütfen hem kaynak hem de hedef masayı seçin.');
+        return;
+      }
+      
+      if (selectedSourceTableId === selectedTargetTableId) {
+        showToast('error', 'Hata', 'Aynı masayı seçemezsiniz!');
+        return;
+      }
+      
+      try {
+        const response = await fetch(API_URL + '/transfer-table-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourceTableId: selectedSourceTableId,
+            targetTableId: selectedTargetTableId
+          })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          showToast('success', 'Başarılı', 'Masa başarıyla aktarıldı!');
+          hideTransferModal();
+          // Masaları yenile
+          const tablesRes = await fetch(API_URL + '/tables');
+          tables = await tablesRes.json();
+          renderTables();
+        } else {
+          showToast('error', 'Hata', result.error || 'Masa aktarılamadı');
+        }
+      } catch (error) {
+        console.error('Masa aktarım hatası:', error);
+        showToast('error', 'Hata', 'Masa aktarılırken bir hata oluştu');
+      }
     }
     
     function renderCategories() {
@@ -6276,6 +6689,108 @@ function generateMobileHTML(serverURL) {
       showToast('success', 'Çıkış Yapıldı', 'Başarıyla çıkış yaptınız. Tekrar giriş yapabilirsiniz.');
     }
     
+    // Not Modal İşlemleri
+    function showNoteModal() {
+      document.getElementById('noteInput').value = orderNote;
+      document.getElementById('noteModal').style.display = 'flex';
+    }
+    
+    // Ürün İptal Modal İşlemleri
+    let cancelItemId = null;
+    let cancelItemMaxQuantity = 1;
+    
+    function showCancelItemModal(itemId, maxQuantity, productName) {
+      cancelItemId = itemId;
+      cancelItemMaxQuantity = maxQuantity;
+      document.getElementById('cancelItemName').textContent = productName;
+      document.getElementById('cancelItemMaxQuantity').textContent = maxQuantity + ' adet';
+      document.getElementById('cancelItemQuantity').value = 1;
+      document.getElementById('cancelItemQuantity').max = maxQuantity;
+      document.getElementById('cancelItemModal').style.display = 'flex';
+    }
+    
+    function hideCancelItemModal() {
+      document.getElementById('cancelItemModal').style.display = 'none';
+      cancelItemId = null;
+      cancelItemMaxQuantity = 1;
+    }
+    
+    function validateCancelQuantity() {
+      const input = document.getElementById('cancelItemQuantity');
+      let value = parseInt(input.value);
+      if (isNaN(value) || value < 1) {
+        value = 1;
+      } else if (value > cancelItemMaxQuantity) {
+        value = cancelItemMaxQuantity;
+      }
+      input.value = value;
+    }
+    
+    function confirmCancelItem() {
+      if (!cancelItemId) return;
+      
+      const cancelQuantity = parseInt(document.getElementById('cancelItemQuantity').value);
+      if (isNaN(cancelQuantity) || cancelQuantity < 1 || cancelQuantity > cancelItemMaxQuantity) {
+        showToast('error', 'Hata', 'Geçersiz iptal miktarı');
+        return;
+      }
+      
+      // Modal'ı hemen kapat
+      const itemIdToCancel = cancelItemId;
+      const quantityToCancel = cancelQuantity;
+      hideCancelItemModal();
+      
+      // İptal işlemini arka planda gerçekleştir
+      (async () => {
+        try {
+          const response = await fetch(API_URL + '/cancel-table-order-item', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              itemId: itemIdToCancel,
+              cancelQuantity: quantityToCancel
+            })
+          });
+          
+          const result = await response.json();
+          
+          if (result.success) {
+            showToast('success', 'Başarılı', 'Ürün başarıyla iptal edildi');
+            // Siparişleri yenile
+            if (selectedTable) {
+              await loadExistingOrders(selectedTable.id);
+            }
+          } else {
+            showToast('error', 'Hata', result.error || 'Ürün iptal edilemedi');
+          }
+        } catch (error) {
+          console.error('İptal hatası:', error);
+          showToast('error', 'Hata', 'Ürün iptal edilirken bir hata oluştu');
+        }
+      })();
+    }
+    
+    function hideNoteModal() {
+      document.getElementById('noteModal').style.display = 'none';
+    }
+    
+    function saveNote() {
+      orderNote = document.getElementById('noteInput').value.trim();
+      updateNoteButton();
+      hideNoteModal();
+    }
+    
+    function updateNoteButton() {
+      const noteButtonText = document.getElementById('noteButtonText');
+      if (orderNote) {
+        noteButtonText.textContent = 'Not Düzenle';
+      } else {
+        noteButtonText.textContent = 'Not Ekle';
+      }
+    }
+    
     async function sendOrder() {
       if (!selectedTable || cart.length === 0) { 
         showToast('error', 'Eksik Bilgi', 'Lütfen masa seçin ve ürün ekleyin');
@@ -6298,7 +6813,8 @@ function generateMobileHTML(serverURL) {
             tableId: selectedTable.id, 
             tableName: selectedTable.name, 
             tableType: selectedTable.type,
-            staffId: currentStaff.id
+            staffId: currentStaff.id,
+            orderNote: orderNote || null
           })
         });
         
@@ -6314,7 +6830,9 @@ function generateMobileHTML(serverURL) {
           // Sepeti temizle ama masada kal
           const currentTableId = selectedTable.id;
           cart = []; 
+          orderNote = '';
           updateCart();
+          updateNoteButton();
           document.getElementById('searchInput').value = '';
           searchQuery = '';
           
@@ -6605,6 +7123,206 @@ function startAPIServer() {
     res.json(tables);
   });
 
+  // Masa aktar
+  appExpress.post('/api/transfer-table-order', async (req, res) => {
+    try {
+      const { sourceTableId, targetTableId } = req.body;
+      
+      if (!sourceTableId || !targetTableId) {
+        return res.status(400).json({ success: false, error: 'Kaynak ve hedef masa ID\'leri gerekli' });
+      }
+      
+      // Kaynak masanın siparişini bul
+      const sourceOrder = db.tableOrders.find(
+        o => o.table_id === sourceTableId && o.status === 'pending'
+      );
+
+      if (!sourceOrder) {
+        return res.status(404).json({ success: false, error: 'Kaynak masada aktif sipariş bulunamadı' });
+      }
+
+      // Hedef masada aktif sipariş var mı kontrol et
+      const targetOrder = db.tableOrders.find(
+        o => o.table_id === targetTableId && o.status === 'pending'
+      );
+
+      if (targetOrder) {
+        return res.status(400).json({ success: false, error: 'Hedef masada zaten aktif bir sipariş var' });
+      }
+
+      // Kaynak masanın sipariş itemlarını al
+      const sourceItems = db.tableOrderItems.filter(oi => oi.order_id === sourceOrder.id);
+
+      if (sourceItems.length === 0) {
+        return res.status(400).json({ success: false, error: 'Aktarılacak ürün bulunamadı' });
+      }
+
+      // Hedef masa bilgilerini al (masa adı ve tipi)
+      let targetTableName = '';
+      let targetTableType = sourceOrder.table_type; // Varsayılan olarak kaynak masanın tipi
+
+      // Masa ID'sinden masa bilgilerini çıkar
+      if (targetTableId.startsWith('inside-')) {
+        targetTableName = `İçeri ${targetTableId.replace('inside-', '')}`;
+        targetTableType = 'inside';
+      } else if (targetTableId.startsWith('outside-')) {
+        targetTableName = `Dışarı ${targetTableId.replace('outside-', '')}`;
+        targetTableType = 'outside';
+      } else if (targetTableId.startsWith('package-')) {
+        const parts = targetTableId.split('-');
+        targetTableName = `Paket ${parts[parts.length - 1]}`;
+        targetTableType = parts[1] || sourceOrder.table_type; // package-{type}-{number}
+      }
+
+      // Kaynak siparişin tüm bilgilerini koru (order_date, order_time, order_note, total_amount)
+      // Sadece table_id, table_name ve table_type'ı güncelle
+      sourceOrder.table_id = targetTableId;
+      sourceOrder.table_name = targetTableName;
+      sourceOrder.table_type = targetTableType;
+
+      // Tüm itemların order_id'si zaten doğru (aynı order'a ait oldukları için değişmeyecek)
+      // Ancak emin olmak için kontrol edelim
+      sourceItems.forEach(item => {
+        if (item.order_id !== sourceOrder.id) {
+          item.order_id = sourceOrder.id;
+        }
+      });
+
+      saveDatabase();
+
+      // Mobil personel arayüzüne gerçek zamanlı güncelleme gönder
+      if (io) {
+        io.emit('table-update', {
+          tableId: sourceTableId,
+          hasOrder: false
+        });
+        io.emit('table-update', {
+          tableId: targetTableId,
+          hasOrder: true
+        });
+      }
+
+      res.json({ 
+        success: true, 
+        orderId: sourceOrder.id,
+        sourceTableId: sourceTableId,
+        targetTableId: targetTableId
+      });
+    } catch (error) {
+      console.error('Masa aktarım hatası:', error);
+      res.status(500).json({ success: false, error: 'Masa aktarılırken bir hata oluştu' });
+    }
+  });
+
+  // Ürün iptal etme (mobil arayüz için)
+  appExpress.post('/api/cancel-table-order-item', async (req, res) => {
+    try {
+      const { itemId, cancelQuantity } = req.body;
+      
+      if (!itemId) {
+        return res.status(400).json({ success: false, error: 'Ürün ID\'si gerekli' });
+      }
+
+      const item = db.tableOrderItems.find(oi => oi.id === itemId);
+      if (!item) {
+        return res.status(404).json({ success: false, error: 'Ürün bulunamadı' });
+      }
+
+      const order = db.tableOrders.find(o => o.id === item.order_id);
+      if (!order) {
+        return res.status(404).json({ success: false, error: 'Sipariş bulunamadı' });
+      }
+
+      if (order.status !== 'pending') {
+        return res.status(400).json({ success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' });
+      }
+
+      // İptal edilecek miktarı belirle
+      const quantityToCancel = cancelQuantity || item.quantity;
+      if (quantityToCancel <= 0 || quantityToCancel > item.quantity) {
+        return res.status(400).json({ success: false, error: 'Geçersiz iptal miktarı' });
+      }
+
+      // Ürün bilgilerini al (kategori ve yazıcı için)
+      const product = db.products.find(p => p.id === item.product_id);
+      if (!product) {
+        return res.status(404).json({ success: false, error: 'Ürün bilgisi bulunamadı' });
+      }
+
+      // Kategori bilgisini al
+      const category = db.categories.find(c => c.id === product.category_id);
+      const categoryName = category ? category.name : 'Diğer';
+
+      // Bu kategoriye atanmış yazıcıyı bul
+      const assignment = db.printerAssignments.find(a => {
+        const assignmentCategoryId = typeof a.category_id === 'string' ? parseInt(a.category_id) : a.category_id;
+        return assignmentCategoryId === product.category_id;
+      });
+
+      if (!assignment) {
+        return res.status(400).json({ success: false, error: 'Bu ürünün kategorisine yazıcı atanmamış' });
+      }
+
+      // İptal fişi yazdır
+      try {
+        const now = new Date();
+        const cancelDate = now.toLocaleDateString('tr-TR');
+        const cancelTime = getFormattedTime(now);
+
+        const cancelReceiptData = {
+          tableName: order.table_name,
+          tableType: order.table_type,
+          productName: item.product_name,
+          quantity: quantityToCancel,
+          price: item.price,
+          cancelDate: cancelDate,
+          cancelTime: cancelTime,
+          categoryName: categoryName
+        };
+
+        await printCancelReceipt(assignment.printerName, assignment.printerType, cancelReceiptData);
+      } catch (error) {
+        console.error('İptal fişi yazdırma hatası:', error);
+        // Yazdırma hatası olsa bile iptal işlemini devam ettir
+      }
+
+      // İptal edilecek tutarı hesapla (ikram değilse)
+      const cancelAmount = item.isGift ? 0 : (item.price * quantityToCancel);
+
+      // Masa siparişinin toplam tutarını güncelle
+      order.total_amount = Math.max(0, order.total_amount - cancelAmount);
+
+      // Eğer tüm ürün iptal ediliyorsa, item'ı sil
+      if (quantityToCancel >= item.quantity) {
+        const itemIndex = db.tableOrderItems.findIndex(oi => oi.id === itemId);
+        if (itemIndex !== -1) {
+          db.tableOrderItems.splice(itemIndex, 1);
+        }
+      } else {
+        // Sadece bir kısmı iptal ediliyorsa, quantity'yi azalt
+        item.quantity -= quantityToCancel;
+      }
+
+      saveDatabase();
+
+      // Mobil personel arayüzüne gerçek zamanlı güncelleme gönder
+      if (io) {
+        io.emit('table-update', {
+          tableId: order.table_id,
+          hasOrder: order.total_amount > 0
+        });
+      }
+
+      res.json({ 
+        success: true, 
+        remainingAmount: order.total_amount
+      });
+    } catch (error) {
+      console.error('Ürün iptal hatası:', error);
+      res.status(500).json({ success: false, error: 'Ürün iptal edilirken bir hata oluştu' });
+    }
+  });
+
   // Masa siparişlerini getir
   appExpress.get('/api/table-orders', (req, res) => {
     const { tableId } = req.query;
@@ -6628,6 +7346,53 @@ function startAPIServer() {
     });
     
     res.json(ordersWithItems);
+  });
+
+  // Mobil personel arayüzü için static dosyalar
+  appExpress.get('/mobile-manifest.json', (req, res) => {
+    // Manifest'i dinamik olarak oluştur - icon path'leri tam URL olmalı
+    const protocol = req.protocol || 'http';
+    const host = req.get('host') || 'localhost:3000';
+    const baseURL = `${protocol}://${host}`;
+    
+    const manifest = {
+      "name": "MAKARA Mobil Sipariş",
+      "short_name": "MAKARA Mobil",
+      "description": "MAKARA Satış Sistemi - Mobil Personel Arayüzü",
+      "start_url": `${baseURL}/mobile`,
+      "display": "standalone",
+      "background_color": "#ec4899",
+      "theme_color": "#ec4899",
+      "orientation": "portrait",
+      "icons": [
+        {
+          "src": `${baseURL}/mobilpersonel.png`,
+          "sizes": "512x512",
+          "type": "image/png",
+          "purpose": "any maskable"
+        },
+        {
+          "src": `${baseURL}/mobilpersonel.png`,
+          "sizes": "192x192",
+          "type": "image/png",
+          "purpose": "any maskable"
+        }
+      ]
+    };
+    
+    res.setHeader('Content-Type', 'application/manifest+json');
+    res.json(manifest);
+  });
+  
+  // Mobil personel icon'u - public klasöründen serve et
+  appExpress.get('/mobilpersonel.png', (req, res) => {
+    const iconPath = path.join(__dirname, '..', 'public', 'mobilpersonel.png');
+    if (fs.existsSync(iconPath)) {
+      res.setHeader('Content-Type', 'image/png');
+      res.sendFile(iconPath);
+    } else {
+      res.status(404).send('Icon not found');
+    }
   });
 
   appExpress.get('/mobile', (req, res) => {
