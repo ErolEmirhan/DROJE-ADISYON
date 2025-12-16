@@ -168,16 +168,16 @@ const TableTransferModal = ({
                       onClick={() => handleSourceTableSelect(table)}
                       className={`rounded-md p-2 border-2 transition-all ${
                         isSelected
-                          ? 'bg-green-100 border-green-500 scale-105'
-                          : 'bg-green-50 border-green-300 hover:border-green-400 hover:scale-105'
+                          ? 'bg-gradient-to-br from-emerald-600 to-emerald-800 border-emerald-700 scale-105 text-emerald-50'
+                          : 'bg-gradient-to-br from-emerald-500 to-emerald-700 border-emerald-600 hover:border-emerald-700 hover:scale-105 text-emerald-50'
                       }`}
                     >
                       <div className="flex flex-col items-center justify-center">
-                        <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-700 to-emerald-900 flex items-center justify-center shadow-md">
                           <span className="text-white text-xs font-bold">{table.number}</span>
                         </div>
-                        <span className="text-xs text-gray-800 mt-1 font-semibold">{table.name}</span>
-                        <span className="text-[10px] text-green-600 mt-0.5">Dolu</span>
+                        <span className="text-xs mt-1 font-semibold text-emerald-50">{table.name}</span>
+                        <span className="text-[10px] text-emerald-200 mt-0.5">Dolu</span>
                       </div>
                     </button>
                   );
@@ -194,6 +194,7 @@ const TableTransferModal = ({
                   const tableHasOrder = hasOrder(table.id);
                   const isSelected = selectedTargetTable?.id === table.id;
                   const isSourceTable = selectedSourceTable?.id === table.id;
+                  const isOutside = table.type === 'outside';
 
                   if (tableHasOrder || isSourceTable) {
                     return (
@@ -220,16 +221,38 @@ const TableTransferModal = ({
                       onClick={() => handleTargetTableSelect(table)}
                       className={`rounded-md p-2 border-2 transition-all ${
                         isSelected
-                          ? 'bg-blue-100 border-blue-500 scale-105'
-                          : 'bg-white border-gray-300 hover:border-blue-400 hover:scale-105'
+                          ? isOutside
+                            ? 'bg-amber-100 border-amber-400 scale-105'
+                            : 'bg-purple-50 border-purple-400 scale-105'
+                          : isOutside
+                            ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-300 hover:border-amber-400 hover:scale-105'
+                            : 'bg-gradient-to-br from-white to-purple-50 border-purple-200 hover:border-purple-400 hover:scale-105'
                       }`}
                     >
                       <div className="flex flex-col items-center justify-center">
-                        <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center">
-                          <span className="text-white text-xs font-bold">{table.number}</span>
+                        <div
+                          className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                            isOutside
+                              ? 'bg-gradient-to-br from-amber-200 to-amber-300 text-amber-900'
+                              : 'bg-gray-50 text-gray-600'
+                          }`}
+                        >
+                          <span className="text-xs font-bold">{table.number}</span>
                         </div>
-                        <span className="text-xs text-gray-800 mt-1 font-semibold">{table.name}</span>
-                        <span className="text-[10px] text-gray-600 mt-0.5">Boş</span>
+                        <span
+                          className={`text-xs mt-1 font-semibold ${
+                            isOutside ? 'text-amber-900' : 'text-gray-800'
+                          }`}
+                        >
+                          {table.name}
+                        </span>
+                        <span
+                          className={`text-[10px] mt-0.5 ${
+                            isOutside ? 'text-amber-800' : 'text-gray-600'
+                          }`}
+                        >
+                          Boş
+                        </span>
                       </div>
                     </button>
                   );

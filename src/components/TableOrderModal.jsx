@@ -49,10 +49,14 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
     if (item.isGift) return sum;
     return sum + (item.price * item.quantity);
   }, 0);
+  // Ödemesi alınan ürünlerin toplam tutarı (kısmi ödemeler dahil)
+  const paidAmount = items.reduce((sum, item) => {
+    if (item.isGift) return sum;
+    const paidQty = item.paid_quantity || 0;
+    return sum + (item.price * paidQty);
+  }, 0);
   // Şu anki kalan tutar (order.total_amount)
   const remainingAmount = order.total_amount || 0;
-  // Ödenen kısmi ödeme tutarı
-  const paidAmount = originalTotalAmount - remainingAmount;
 
   // Ürün iptal etme fonksiyonu
   const handleCancelItem = (item) => {
@@ -182,17 +186,42 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
             <div className="space-y-3">
               {items.map((item) => {
                 const isGift = item.isGift || false;
+                const isPaid = item.is_paid || false;
+                const paidQuantity = item.paid_quantity || 0;
+                const remainingQuantity = item.quantity - paidQuantity;
+                const paymentMethod = item.payment_method || null;
                 const displayTotal = isGift ? 0 : (item.price * item.quantity);
+                const paidTotal = isGift ? 0 : (item.price * paidQuantity);
                 const originalTotal = item.price * item.quantity;
                 
                 return (
                 <div
                   key={item.id}
-                  className={`flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-200 hover:bg-gray-100 transition-colors ${isGift ? 'opacity-75' : ''}`}
+                  className={`flex items-center justify-between p-4 rounded-xl border-2 transition-all ${
+                    isPaid
+                      ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-300'
+                      : isGift
+                      ? 'bg-gradient-to-r from-yellow-50 to-amber-50 border-yellow-300 opacity-75'
+                      : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                  }`}
                 >
                   <div className="flex-1">
                     <div className="flex items-center space-x-2 mb-1">
-                      <p className={`font-semibold ${isGift ? 'text-gray-500 line-through' : 'text-gray-800'}`}>
+                      {isPaid && (
+                        <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
+                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                      )}
+                      {paidQuantity > 0 && !isPaid && (
+                        <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center flex-shrink-0">
+                          <span className="text-white text-xs font-bold">{paidQuantity}/{item.quantity}</span>
+                        </div>
+                      )}
+                      <p className={`font-semibold ${
+                        isPaid ? 'text-green-700 line-through' : isGift ? 'text-gray-500 line-through' : 'text-gray-800'
+                      }`}>
                         {item.product_name}
                       </p>
                       {isGift && (
@@ -201,6 +230,14 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                         </span>
                       )}
                     </div>
+                    {paidQuantity > 0 && paymentMethod && (
+                      <p className={`text-xs mt-1 ${
+                        isPaid ? 'text-green-600' : 'text-blue-600'
+                      }`}>
+                        ✅ {paidQuantity} adet {paymentMethod} ile ödendi
+                        {!isPaid && ` (Kalan: ${remainingQuantity} adet)`}
+                      </p>
+                    )}
                     <p className="text-sm text-gray-500">
                       {item.quantity} adet × {isGift ? (
                         <>
@@ -210,6 +247,11 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                       ) : (
                         `₺${item.price.toFixed(2)}`
                       )}
+                      {paidQuantity > 0 && !isPaid && (
+                        <span className="ml-2 text-blue-600 font-semibold text-xs">
+                          (Ödenen: {paidQuantity} adet)
+                        </span>
+                      )}
                     </p>
                   </div>
                   <div className="flex items-center space-x-4">
@@ -218,6 +260,17 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                       <div>
                         <p className="text-xs text-gray-400 line-through">₺{originalTotal.toFixed(2)}</p>
                         <p className="font-bold text-lg text-green-600">₺0.00</p>
+                      </div>
+                    ) : isPaid ? (
+                      <p className="font-bold text-lg text-green-600 line-through">
+                        ₺{displayTotal.toFixed(2)}
+                      </p>
+                    ) : paidQuantity > 0 ? (
+                      <div>
+                        <p className="text-xs text-gray-400 line-through">₺{displayTotal.toFixed(2)}</p>
+                        <p className="font-bold text-lg text-blue-600">
+                          ₺{paidTotal.toFixed(2)} / ₺{displayTotal.toFixed(2)}
+                        </p>
                       </div>
                     ) : (
                       <p className="font-bold text-lg text-purple-600">

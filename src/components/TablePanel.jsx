@@ -306,80 +306,27 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
     }
   };
 
-  // Kısmi ödemeyi tamamla
+  // Ürün bazlı ödeme tamamlandı (siparişleri yenile)
   const handleCompletePartialPayment = async (payments) => {
     if (!selectedOrder || !window.electronAPI) {
-      console.error('API mevcut değil');
       return;
     }
 
     try {
-      console.log('window.electronAPI:', window.electronAPI);
-      console.log('updateTableOrderAmount fonksiyonu var mı?', typeof window.electronAPI.updateTableOrderAmount);
+      // Siparişleri yenile
+      await loadTableOrders();
       
-      const paidAmount = payments.reduce((sum, p) => sum + p.amount, 0);
-      const paymentDetails = payments.map(p => `${p.method}: ₺${p.amount.toFixed(2)}`).join(', ');
-
-      // Masa siparişi tutarını güncelle
-      if (!window.electronAPI.updateTableOrderAmount) {
-        alert('Hata: updateTableOrderAmount API fonksiyonu bulunamadı. Lütfen uygulamayı yeniden başlatın.');
-        return;
-      }
+      // Sipariş detaylarını yeniden yükle
+      const updatedItems = await window.electronAPI.getTableOrderItems(selectedOrder.id);
+      setOrderItems(updatedItems || []);
       
-      const result = await window.electronAPI.updateTableOrderAmount(selectedOrder.id, paidAmount);
-      
-      if (result.success) {
-        // Kısmi ödeme için satış kaydı oluştur
-        const saleData = {
-          orderId: selectedOrder.id,
-          totalAmount: paidAmount,
-          paymentMethod: `Kısmi Ödeme (${paymentDetails})`,
-          tableName: selectedOrder.table_name,
-          tableType: selectedOrder.table_type,
-          items: orderItems
-        };
-
-        const saleResult = await window.electronAPI.createPartialPaymentSale(saleData);
-        
-        if (saleResult.success) {
-          // Kısmi ödeme için fiş oluştur
-          const receiptData = {
-            sale_id: saleResult.saleId,
-            order_id: selectedOrder.id,
-            totalAmount: paidAmount,
-            paymentMethod: `Kısmi Ödeme (${paymentDetails})`,
-            sale_date: new Date().toLocaleDateString('tr-TR'),
-            sale_time: new Date().toLocaleTimeString('tr-TR'),
-            items: orderItems,
-            tableName: selectedOrder.table_name,
-            tableType: selectedOrder.table_type,
-            isPartialPayment: true
-          };
-
-          // Fiş modal'ını göster
-          if (onShowReceipt) {
-            onShowReceipt(receiptData);
-          }
-        } else {
-          alert('Kısmi ödeme satış kaydı oluşturulamadı: ' + (saleResult.error || 'Bilinmeyen hata'));
-        }
-
-        // Modal'ı kapat ve siparişleri yenile
+      // Eğer tüm ürünlerin ödemesi alındıysa modal'ı kapat
+      const unpaidItems = updatedItems.filter(item => !item.is_paid && !item.isGift);
+      if (unpaidItems.length === 0) {
         setShowPartialPaymentModal(false);
-        await loadTableOrders();
-        
-        // Sipariş detaylarını yeniden yükle
-        const updatedItems = await window.electronAPI.getTableOrderItems(selectedOrder.id);
-        setOrderItems(updatedItems || []);
-        
-        // Modal'ı tekrar aç
-        setShowModal(true);
-      } else {
-        alert('Kısmi ödeme kaydedilemedi: ' + (result.error || 'Bilinmeyen hata'));
       }
     } catch (error) {
-      console.error('Kısmi ödeme kaydedilirken hata:', error);
-      alert('Kısmi ödeme kaydedilemedi: ' + error.message);
+      console.error('Sipariş yenileme hatası:', error);
     }
   };
 
@@ -444,18 +391,18 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
               onClick={() => handleTableClick(table)}
               className={`table-btn group relative overflow-hidden rounded-md p-1 border transition-all duration-300 hover:shadow-sm hover:scale-105 active:scale-95 aspect-square ${
                 hasOrder
-                  ? 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-300 hover:border-green-400'
+                  ? 'bg-gradient-to-br from-emerald-600 to-emerald-800 border-emerald-700 hover:border-emerald-900'
                   : isOutside
-                  ? 'bg-gradient-to-br from-gray-900 to-black border-gray-700 hover:border-gray-600'
+                  ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-300 hover:border-amber-400'
                   : 'bg-gradient-to-br from-white to-purple-50 border-purple-200 hover:border-purple-400'
               }`}
             >
               <div className="flex flex-col items-center justify-center space-y-1 h-full">
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow ${
                   hasOrder
-                    ? 'bg-gradient-to-br from-green-400 to-emerald-500'
+                    ? 'bg-gradient-to-br from-emerald-700 to-emerald-900'
                     : isOutside
-                    ? 'bg-gradient-to-br from-gray-700 to-gray-900'
+                    ? 'bg-gradient-to-br from-amber-200 to-amber-300'
                     : 'bg-gray-50'
                 }`}>
                   {hasOrder ? (
@@ -471,13 +418,24 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
                 </div>
                 <span className={`font-bold text-sm leading-tight ${
                   hasOrder
-                    ? 'text-gray-800'
+                    ? 'text-emerald-50'
                     : isOutside
-                    ? 'text-white'
+                    ? 'text-amber-900'
                     : 'text-gray-800'
                 }`}>{table.name}</span>
+                <div
+                  className={`text-[10px] font-semibold mt-1 px-2 py-0.5 rounded-md ${
+                    hasOrder
+                      ? 'bg-emerald-900 text-emerald-100'
+                      : isOutside
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  {hasOrder ? 'Dolu' : 'Boş'}
+                </div>
                 {hasOrder && (
-                  <span className="absolute top-1 right-1 w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>
                 )}
               </div>
             </button>
@@ -513,7 +471,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
                 <div className="flex flex-col items-center justify-center space-y-1.5 h-full">
                   <div className={`w-12 h-12 rounded-full flex items-center justify-center shadow-md group-hover:shadow-lg transition-shadow ${
                     hasOrder
-                      ? 'bg-gradient-to-br from-green-400 to-emerald-500'
+                      ? 'bg-gradient-to-br from-emerald-700 to-emerald-900'
                       : 'bg-gradient-to-br from-orange-400 to-yellow-400'
                   }`}>
                     {hasOrder ? (
@@ -528,8 +486,17 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
                     )}
                   </div>
                   <span className="font-extrabold text-sm text-gray-800 leading-tight">{table.name}</span>
+                  <div
+                    className={`text-[10px] font-semibold mt-1 px-2 py-0.5 rounded-md ${
+                      hasOrder
+                        ? 'bg-emerald-900 text-emerald-100'
+                        : 'bg-orange-100 text-orange-700'
+                    }`}
+                  >
+                    {hasOrder ? 'Dolu' : 'Boş'}
+                  </div>
                   {hasOrder && (
-                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></span>
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse"></span>
                   )}
                 </div>
               </button>

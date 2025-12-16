@@ -1610,6 +1610,170 @@ ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
   return { success: true, saleId };
 });
 
+// Ürün bazlı ödeme al (yeni sistem)
+ipcMain.handle('pay-table-order-item', async (event, itemId, paymentMethod, paidQuantity = null) => {
+  const item = db.tableOrderItems.find(oi => oi.id === itemId);
+  if (!item) {
+    return { success: false, error: 'Ürün bulunamadı' };
+  }
+
+  const order = db.tableOrders.find(o => o.id === item.order_id);
+  if (!order) {
+    return { success: false, error: 'Sipariş bulunamadı' };
+  }
+
+  if (order.status !== 'pending') {
+    return { success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' };
+  }
+
+  // Ödenecek miktarı belirle
+  const quantityToPay = paidQuantity !== null ? paidQuantity : item.quantity;
+  
+  // Miktar kontrolü
+  if (quantityToPay <= 0 || quantityToPay > item.quantity) {
+    return { success: false, error: 'Geçersiz miktar' };
+  }
+
+  // Ödenmiş miktarı kontrol et
+  const currentPaidQuantity = item.paid_quantity || 0;
+  const remainingQuantity = item.quantity - currentPaidQuantity;
+  
+  if (quantityToPay > remainingQuantity) {
+    return { success: false, error: `Sadece ${remainingQuantity} adet için ödeme alınabilir` };
+  }
+
+  // Yeni ödenen miktar
+  const newPaidQuantity = currentPaidQuantity + quantityToPay;
+
+  // Ürün tutarını hesapla (ikram değilse)
+  const itemAmount = item.isGift ? 0 : (item.price * quantityToPay);
+
+  // Ödenen miktarı güncelle
+  item.paid_quantity = newPaidQuantity;
+  
+  // Eğer tüm miktar ödendiyse, ürünü tamamen ödendi olarak işaretle
+  if (newPaidQuantity >= item.quantity) {
+    item.is_paid = true;
+  }
+  
+  // Ödeme yöntemi ve tarih bilgilerini güncelle (ilk ödeme ise)
+  if (currentPaidQuantity === 0) {
+    item.payment_method = paymentMethod;
+    item.paid_date = new Date().toLocaleDateString('tr-TR');
+    item.paid_time = getFormattedTime(new Date());
+  } else {
+    // Kısmi ödemeler için ödeme yöntemlerini birleştir
+    item.payment_method = `${item.payment_method}, ${paymentMethod}`;
+  }
+
+  // Masa siparişi tutarını güncelle
+  order.total_amount = Math.max(0, order.total_amount - itemAmount);
+
+  // Eğer tüm ürünlerin ödemesi alındıysa siparişi tamamlandı olarak işaretle
+  const unpaidItems = db.tableOrderItems.filter(oi => {
+    if (oi.order_id !== order.id || oi.isGift) return false;
+    const paidQty = oi.paid_quantity || 0;
+    return paidQty < oi.quantity;
+  });
+  if (unpaidItems.length === 0) {
+    order.status = 'completed';
+  }
+
+  saveDatabase();
+
+  // Satış kaydı oluştur (sadece bu ürün için)
+  const now = new Date();
+  const saleDate = now.toLocaleDateString('tr-TR');
+  const saleTime = getFormattedTime(now);
+
+  const saleId = db.sales.length > 0 
+    ? Math.max(...db.sales.map(s => s.id)) + 1 
+    : 1;
+
+  // Satış ekle
+  db.sales.push({
+    id: saleId,
+    total_amount: itemAmount,
+    payment_method: paymentMethod,
+    sale_date: saleDate,
+    sale_time: saleTime,
+    table_name: order.table_name,
+    table_type: order.table_type,
+    staff_name: item.staff_name || null
+  });
+
+  // Satış itemını ekle (sadece ödenen miktar için)
+  const saleItemId = db.saleItems.length > 0 
+    ? Math.max(...db.saleItems.map(si => si.id)) + 1 
+    : 1;
+    
+  db.saleItems.push({
+    id: saleItemId,
+    sale_id: saleId,
+    product_id: item.product_id,
+    product_name: item.product_name,
+    quantity: quantityToPay, // Ödenen miktar
+    price: item.price,
+    isGift: item.isGift || false,
+    staff_id: item.staff_id || null,
+    staff_name: item.staff_name || null
+  });
+
+  saveDatabase();
+
+  // Firebase'e kaydet
+  if (firestore && firebaseCollection && firebaseAddDoc && firebaseServerTimestamp) {
+    try {
+      const salesRef = firebaseCollection(firestore, 'sales');
+      
+      const itemsText = `${item.product_name} x${quantityToPay}${item.isGift ? ' (İKRAM)' : ''}`;
+
+      await firebaseAddDoc(salesRef, {
+        sale_id: saleId,
+        total_amount: itemAmount,
+        payment_method: paymentMethod,
+        sale_date: saleDate,
+        sale_time: saleTime,
+        table_name: order.table_name,
+        table_type: order.table_type,
+        staff_name: item.staff_name || null,
+        items: itemsText,
+        items_array: [{
+          product_id: item.product_id,
+          product_name: item.product_name,
+          quantity: quantityToPay, // Ödenen miktar
+          price: item.price,
+          isGift: item.isGift || false,
+          staff_id: item.staff_id || null,
+          staff_name: item.staff_name || null
+        }],
+        created_at: firebaseServerTimestamp()
+      });
+      console.log('Ürün ödemesi Firebase\'e kaydedildi:', saleId);
+    } catch (error) {
+      console.error('Firebase\'e kaydetme hatası:', error);
+    }
+  }
+
+  // Electron renderer process'e güncelleme gönder
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('table-order-updated', { 
+      orderId: order.id,
+      tableId: order.table_id
+    });
+  }
+
+  // Mobil personel arayüzüne gerçek zamanlı güncelleme gönder
+  if (io) {
+    io.emit('table-update', {
+      tableId: order.table_id,
+      hasOrder: order.total_amount > 0
+    });
+  }
+
+  return { success: true, remainingAmount: order.total_amount, saleId };
+});
+
 // Settings IPC Handlers
 ipcMain.handle('change-password', (event, currentPin, newPin) => {
   try {
@@ -4453,9 +4617,9 @@ function generateMobileHTML(serverURL) {
       padding: 5px;
     }
     .table-btn.outside-empty {
-      background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
-      border-color: #374151;
-      color: white;
+      background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+      border-color: #facc15;
+      color: #92400e;
     }
     .table-btn:active {
       transform: scale(0.95);
@@ -4483,20 +4647,22 @@ function generateMobileHTML(serverURL) {
       box-shadow: 0 4px 12px rgba(168, 85, 247, 0.4);
     }
     .table-btn.has-order {
-      border-color: #4caf50;
-      background: #e8f5e9;
+      border-color: #047857;
+      background: linear-gradient(135deg, #065f46 0%, #022c22 100%);
+      color: #ecfdf5;
     }
     .table-btn.has-order.selected {
-      border-color: #4caf50;
-      background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
-      color: white;
+      border-color: #22c55e;
+      background: linear-gradient(135deg, #047857 0%, #022c22 100%);
+      color: #ecfdf5;
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.5);
     }
     .table-btn.has-order::before {
       content: '●';
       position: absolute;
       top: 5px;
       right: 5px;
-      color: #4caf50;
+      color: #22c55e;
       font-size: 16px;
     }
     .table-btn.has-order.selected::before {
@@ -4513,7 +4679,7 @@ function generateMobileHTML(serverURL) {
     }
     .table-btn.outside-empty .table-number,
     .table-btn.outside-empty .table-label {
-      color: white;
+      color: #92400e;
     }
     .category-tabs {
       display: flex;
@@ -5576,31 +5742,70 @@ function generateMobileHTML(serverURL) {
     
     <!-- Ana Sipariş Ekranı -->
     <div id="mainSection" style="display: none; padding-top: 60px;">
-      <!-- Çıkış Yap Butonu - Sol Üst -->
-      <button class="logout-btn" onclick="showLogoutModal()" title="Çıkış Yap">
+      <!-- Çıkış Yap Butonu - Sol Üst (masalar ekranında görünecek) -->
+      <button class="logout-btn" id="mainLogoutBtn" onclick="showLogoutModal()" title="Çıkış Yap" style="display: none;">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
         </svg>
         <span>Çıkış Yap</span>
       </button>
       
-      <div class="staff-info">
+      <div class="staff-info" id="staffInfo" style="display: none;">
         <p>Garson: <span id="staffName"></span></p>
       </div>
       
-      <div id="tableSelection">
-        <!-- Masa Aktar Butonu -->
-        <div style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
-          <button onclick="showTransferModal()" class="transfer-table-btn" style="display: flex; align-items: center; gap: 8px; padding: 12px 20px; background: linear-gradient(135deg, #4f46e5 0%, #2563eb 100%); color: white; border: none; border-radius: 12px; font-size: 15px; font-weight: 700; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3); transition: all 0.3s; cursor: pointer;">
-            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+      <!-- Masa Tipi Seçim Ekranı -->
+      <div id="tableTypeSelection" style="display: block; position: fixed; inset: 0; background: white; z-index: 1000; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px;">
+        <!-- Çıkış Yap Butonu - Sadece bu ekranda görünsün -->
+        <div style="position: absolute; top: 20px; right: 20px;">
+          <button onclick="showLogoutModal()" style="display: flex; align-items: center; gap: 8px; padding: 10px 20px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 12px; font-size: 14px; font-weight: 700; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3); transition: all 0.3s; cursor: pointer;" onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 6px 16px rgba(239, 68, 68, 0.4)'" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(239, 68, 68, 0.3)'">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
             </svg>
-            <span>Masa Aktar</span>
+            <span>Çıkış Yap</span>
           </button>
         </div>
         
-        <!-- İç/Dış Tab'leri -->
-        <div class="table-type-tabs">
+        <div style="display: flex; flex-direction: column; gap: 32px; width: 100%; max-width: 500px; flex: 1; justify-content: center; padding: 20px;">
+          <!-- İçeri Butonu -->
+          <button onclick="selectTableTypeScreen('inside')" style="width: 100%; min-height: 280px; background: #fdf2f8; border: 3px solid #fbcfe8; border-radius: 20px; color: #111827; font-size: 24px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; position: relative; box-shadow: 0 4px 16px rgba(244, 114, 182, 0.25);" onmouseover="this.style.borderColor='#f472b6'; this.style.boxShadow='0 12px 32px rgba(244, 114, 182, 0.35)'; this.style.transform='translateY(-6px)'" onmouseout="this.style.borderColor='#fbcfe8'; this.style.boxShadow='0 4px 16px rgba(244, 114, 182, 0.25)'; this.style.transform='translateY(0)'">
+            <svg width="80" height="80" fill="none" stroke="#f472b6" viewBox="0 0 24 24" stroke-width="1.5" style="transition: all 0.2s;">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"/>
+            </svg>
+            <div style="font-size: 32px; font-weight: 800; color: #111827; letter-spacing: 1px;">İÇERİ</div>
+          </button>
+          
+          <!-- Dışarı Butonu -->
+          <button onclick="selectTableTypeScreen('outside')" style="width: 100%; min-height: 280px; background: #fffbeb; border: 3px solid #fde68a; border-radius: 20px; color: #111827; font-size: 24px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; position: relative; box-shadow: 0 4px 16px rgba(250, 204, 21, 0.25);" onmouseover="this.style.borderColor='#facc15'; this.style.boxShadow='0 12px 32px rgba(250, 204, 21, 0.35)'; this.style.transform='translateY(-6px)'" onmouseout="this.style.borderColor='#fde68a'; this.style.boxShadow='0 4px 16px rgba(250, 204, 21, 0.25)'; this.style.transform='translateY(0)'">
+            <svg width="80" height="80" fill="none" stroke="#facc15" viewBox="0 0 24 24" stroke-width="1.5" style="transition: all 0.2s;">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.944 11.944 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418"/>
+            </svg>
+            <div style="font-size: 32px; font-weight: 800; color: #111827; letter-spacing: 1px;">DIŞARI</div>
+          </button>
+        </div>
+      </div>
+      
+      <div id="tableSelection" style="display: none;">
+        <!-- Geri Dönüş Butonu -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <button onclick="goBackToTypeSelection()" style="display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); color: white; border: none; border-radius: 12px; font-size: 14px; font-weight: 700; box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3); transition: all 0.3s; cursor: pointer;" onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 6px 16px rgba(107, 114, 128, 0.4)'" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(107, 114, 128, 0.3)'">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+            </svg>
+            Geri Dön
+          </button>
+          
+          <!-- Masa Aktar Butonu -->
+          <button onclick="showTransferModal()" class="transfer-table-btn" style="display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: linear-gradient(135deg, #4f46e5 0%, #2563eb 100%); color: white; border: none; border-radius: 12px; font-size: 14px; font-weight: 700; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3); transition: all 0.3s; cursor: pointer;" onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 6px 16px rgba(79, 70, 229, 0.4)'" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(79, 70, 229, 0.3)'">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+            </svg>
+            Masa Aktar
+          </button>
+        </div>
+        
+        <!-- İç/Dış Tab'leri (Gizli - sadece geri dönüş için) -->
+        <div class="table-type-tabs" style="display: none;">
           <button class="table-type-tab active" data-type="inside" onclick="selectTableType('inside')">🏠 İç</button>
           <button class="table-type-tab" data-type="outside" onclick="selectTableType('outside')">🌳 Dış</button>
         </div>
@@ -5765,7 +5970,12 @@ function generateMobileHTML(serverURL) {
       </div>
       <div style="border-top: 1px solid #e5e7eb; padding: 20px; display: flex; justify-content: flex-end; gap: 12px; background: #f9fafb;">
         <button onclick="hideCancelItemModal()" style="padding: 14px 28px; background: #f3f4f6; color: #374151; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">İptal</button>
-        <button onclick="confirmCancelItem()" style="padding: 14px 28px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);" onmouseover="this.style.transform='scale(1.02)'; this.style.boxShadow='0 6px 16px rgba(239, 68, 68, 0.4)';" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(239, 68, 68, 0.3)';">İptal Et</button>
+        <button id="confirmCancelBtn" onclick="confirmCancelItem()" style="padding: 14px 28px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3); display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 140px;" onmouseover="if(!this.disabled) { this.style.transform='scale(1.02)'; this.style.boxShadow='0 6px 16px rgba(239, 68, 68, 0.4)'; }" onmouseout="if(!this.disabled) { this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(239, 68, 68, 0.3)'; }">
+          <span id="confirmCancelBtnText">İptal Et</span>
+          <svg id="confirmCancelBtnSpinner" style="display: none; width: 18px; height: 18px; animation: spin 1s linear infinite;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>
       </div>
     </div>
   </div>
@@ -5774,6 +5984,10 @@ function generateMobileHTML(serverURL) {
     @keyframes slideUp {
       from { transform: translateY(30px) scale(0.95); opacity: 0; }
       to { transform: translateY(0) scale(1); opacity: 1; }
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
     }
   </style>
         <button onclick="saveNote()" style="padding: 12px 24px; background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.opacity='0.9';" onmouseout="this.style.opacity='1';">Kaydet</button>
@@ -5861,6 +6075,11 @@ function generateMobileHTML(serverURL) {
         document.getElementById('pinSection').style.display = 'none';
         document.getElementById('mainSection').style.display = 'block';
         document.getElementById('staffName').textContent = currentStaff.name + ' ' + currentStaff.surname;
+        // İlk girişte staff-info'yu gizle, sadece çıkış yap butonu görünsün
+        document.getElementById('staffInfo').style.display = 'none';
+        document.getElementById('tableTypeSelection').style.display = 'flex';
+        // Sipariş gönder modalını gizle
+        document.getElementById('cart').style.display = 'none';
         loadData();
         initWebSocket();
       }
@@ -5902,8 +6121,13 @@ function generateMobileHTML(serverURL) {
             document.getElementById('splashScreen').style.display = 'none';
             document.getElementById('mainSection').style.display = 'block';
             document.getElementById('staffName').textContent = currentStaff.name + ' ' + currentStaff.surname;
-            loadData();
-            initWebSocket();
+        // İlk girişte staff-info'yu gizle, sadece çıkış yap butonu görünsün
+        document.getElementById('staffInfo').style.display = 'none';
+        document.getElementById('tableTypeSelection').style.display = 'flex';
+        // Sipariş gönder modalını gizle
+        document.getElementById('cart').style.display = 'none';
+        loadData();
+        initWebSocket();
           }, 2000);
         } else {
           errorDiv.textContent = result.error || 'Şifre hatalı';
@@ -5990,7 +6214,31 @@ function generateMobileHTML(serverURL) {
       }
     }
     
-    // Masa tipi seçimi
+    // Masa tipi seçim ekranından seçim
+    function selectTableTypeScreen(type) {
+      currentTableType = type;
+      document.getElementById('tableTypeSelection').style.display = 'none';
+      document.getElementById('tableSelection').style.display = 'block';
+      document.getElementById('staffInfo').style.display = 'block';
+      document.getElementById('mainLogoutBtn').style.display = 'flex';
+      // Sipariş gönder modalını göster
+      document.getElementById('cart').style.display = 'block';
+      renderTables();
+    }
+    
+    // Geri dönüş butonu
+    function goBackToTypeSelection() {
+      document.getElementById('tableSelection').style.display = 'none';
+      document.getElementById('tableTypeSelection').style.display = 'flex';
+      document.getElementById('staffInfo').style.display = 'none';
+      document.getElementById('mainLogoutBtn').style.display = 'none';
+      // Sipariş gönder modalını gizle
+      document.getElementById('cart').style.display = 'none';
+      selectedTable = null;
+      renderTables();
+    }
+    
+    // Masa tipi seçimi (masalar ekranında)
     function selectTableType(type) {
       currentTableType = type;
       document.querySelectorAll('.table-type-tab').forEach(tab => {
@@ -6040,9 +6288,20 @@ function generateMobileHTML(serverURL) {
           const hasOrderClass = table.hasOrder ? ' has-order' : '';
           const selectedClass = selectedTable && selectedTable.id === table.id ? ' selected' : '';
           const outsideEmptyClass = (table.type === 'outside' && !table.hasOrder) ? ' outside-empty' : '';
+          
+          // Masa numaralandırması: İç Masa 1, Dış Masa 1 gibi
+          const tableTypeLabel = table.type === 'inside' ? 'İç Masa' : 'Dış Masa';
+          const tableDisplayName = tableTypeLabel + ' ' + table.number;
+          
+          // Durum etiketi: Dolu veya Boş
+          const statusLabel = table.hasOrder ? 'Dolu' : 'Boş';
+          // Dolu masalar için daha koyu yeşil ton
+          const statusColor = table.hasOrder ? '#166534' : '#6b7280';
+          
           return '<button class="table-btn' + hasOrderClass + selectedClass + outsideEmptyClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')">' +
             '<div class="table-number">' + table.number + '</div>' +
-            '<div class="table-label">Masa</div>' +
+            '<div class="table-label">' + tableDisplayName + '</div>' +
+            '<div style="font-size: 10px; font-weight: 600; color: ' + statusColor + '; margin-top: 4px; padding: 2px 6px; background: ' + (table.hasOrder ? 'rgba(22, 101, 52, 0.15)' : 'rgba(107, 114, 128, 0.1)') + '; border-radius: 6px;">' + statusLabel + '</div>' +
           '</button>';
         }).join('');
       }
@@ -6153,7 +6412,7 @@ function generateMobileHTML(serverURL) {
                 '<span class="order-item-qty">×' + item.quantity + '</span>' +
                 '<span class="order-item-price">' + itemTotal + ' ₺</span>' +
               '</div>' +
-              '<button onclick="showCancelItemModal(' + item.id + ', ' + item.quantity + ', \\'' + item.product_name.replace(/'/g, "\\'") + '\\')" style="padding: 6px 12px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3); transition: all 0.3s; white-space: nowrap;" onmouseover="this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(239, 68, 68, 0.4)\\';" onmouseout="this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'0 2px 8px rgba(239, 68, 68, 0.3)\\';" ontouchstart="this.style.transform=\\'scale(0.95)\\';" ontouchend="this.style.transform=\\'scale(1)\\';" class="cancel-item-btn">İptal</button>' +
+              '<button id="cancelBtn_' + item.id + '" onclick="showCancelItemModal(' + item.id + ', ' + item.quantity + ', \\'' + item.product_name.replace(/'/g, "\\'") + '\\')" style="padding: 6px 12px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3); transition: all 0.3s; white-space: nowrap; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 70px;" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(239, 68, 68, 0.4)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'0 2px 8px rgba(239, 68, 68, 0.3)\\'; }" ontouchstart="if(!this.disabled) { this.style.transform=\\'scale(0.95)\\'; }" ontouchend="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; }" class="cancel-item-btn"><span id="cancelBtnText_' + item.id + '">İptal</span><svg id="cancelBtnSpinner_' + item.id + '" style="display: none; width: 14px; height: 14px; animation: spin 1s linear infinite;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></button>' +
             '</div>' +
           '</div>' +
           '<div style="font-size: 11px; color: #9ca3af; margin-top: 4px; margin-bottom: 8px; padding-left: 4px;">👤 ' + itemStaffName + ' • ' + (item.added_date || '') + ' ' + (item.added_time || '') + '</div>';
@@ -6182,6 +6441,7 @@ function generateMobileHTML(serverURL) {
     function goBackToTables() {
       selectedTable = null;
       document.getElementById('tableSelection').style.display = 'block';
+      document.getElementById('tableTypeSelection').style.display = 'none';
       document.getElementById('orderSection').style.display = 'none';
       const cartEl = document.getElementById('cart');
       if (cartEl) {
@@ -6237,10 +6497,10 @@ function generateMobileHTML(serverURL) {
             '</div>';
           }
           
-          return '<button onclick="selectSourceTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + (isSelected ? '#10b981' : '#10b981') + '; border-radius: 12px; background: ' + (isSelected ? '#d1fae5' : '#ecfdf5') + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(16, 185, 129, 0.3)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
-            '<div style="width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #10b981 0%, #059669 100%); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: white; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);">' + table.number + '</div>' +
-            '<span style="font-size: 11px; color: #047857; font-weight: 700;">' + table.name + '</span>' +
-            '<span style="font-size: 9px; color: #10b981; margin-top: 4px; font-weight: 600;">Dolu</span>' +
+          return '<button onclick="selectSourceTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + (isSelected ? '#059669' : '#065f46') + '; border-radius: 12px; background: ' + (isSelected ? 'linear-gradient(135deg, #065f46 0%, #022c22 100%)' : 'linear-gradient(135deg, #047857 0%, #065f46 100%)') + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(5, 150, 105, 0.45)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
+            '<div style="width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #047857 0%, #022c22 100%); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: white; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(5, 150, 105, 0.6);">' + table.number + '</div>' +
+            '<span style="font-size: 11px; color: #ecfdf5; font-weight: 700;">' + table.name + '</span>' +
+            '<span style="font-size: 9px; color: #bbf7d0; margin-top: 4px; font-weight: 600;">Dolu</span>' +
           '</button>';
         }).join('');
         
@@ -6259,6 +6519,7 @@ function generateMobileHTML(serverURL) {
           const hasOrder = table.hasOrder;
           const isSelected = selectedTargetTableId === table.id;
           const isSourceTable = selectedSourceTableId === table.id;
+          const isOutside = table.type === 'outside';
           
           if (hasOrder || isSourceTable) {
             return '<div style="opacity: 0.3; cursor: not-allowed; padding: 12px; border: 2px solid #d1d5db; border-radius: 12px; background: #f3f4f6; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px;">' +
@@ -6268,10 +6529,22 @@ function generateMobileHTML(serverURL) {
             '</div>';
           }
           
-          return '<button onclick="selectTargetTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + (isSelected ? '#2563eb' : '#e5e7eb') + '; border-radius: 12px; background: ' + (isSelected ? '#dbeafe' : 'white') + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(37, 99, 235, 0.3)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
-            '<div style="width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: white; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(100, 116, 139, 0.3);">' + table.number + '</div>' +
-            '<span style="font-size: 11px; color: #1e293b; font-weight: 700;">' + table.name + '</span>' +
-            '<span style="font-size: 9px; color: #64748b; margin-top: 4px; font-weight: 600;">Boş</span>' +
+          const bgColor = isOutside
+            ? (isSelected ? '#fef3c7' : '#fffbeb')
+            : (isSelected ? '#ede9fe' : '#faf5ff');
+          const borderColor = isOutside
+            ? (isSelected ? '#fbbf24' : '#facc15')
+            : (isSelected ? '#a855f7' : '#c4b5fd');
+          const circleBg = isOutside
+            ? 'linear-gradient(135deg, #facc15 0%, #eab308 100%)'
+            : '#f3f4f6';
+          const nameColor = isOutside ? '#92400e' : '#111827';
+          const statusColor = isOutside ? '#b45309' : '#4b5563';
+          
+          return '<button onclick="selectTargetTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + borderColor + '; border-radius: 12px; background: ' + bgColor + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(148, 163, 184, 0.3)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
+            '<div style="width: 40px; height: 40px; border-radius: 50%; background: ' + circleBg + '; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: ' + (isOutside ? '#78350f' : '#4b5563') + '; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(148, 163, 184, 0.3);">' + table.number + '</div>' +
+            '<span style="font-size: 11px; color: ' + nameColor + '; font-weight: 700;">' + table.name + '</span>' +
+            '<span style="font-size: 9px; color: ' + statusColor + '; margin-top: 4px; font-weight: 600;">Boş</span>' +
           '</button>';
         }).join('');
         
@@ -6706,6 +6979,20 @@ function generateMobileHTML(serverURL) {
       document.getElementById('cancelItemMaxQuantity').textContent = maxQuantity + ' adet';
       document.getElementById('cancelItemQuantity').value = 1;
       document.getElementById('cancelItemQuantity').max = maxQuantity;
+      
+      // Butonu sıfırla (modal her açıldığında)
+      const confirmBtn = document.getElementById('confirmCancelBtn');
+      const confirmBtnText = document.getElementById('confirmCancelBtnText');
+      const confirmBtnSpinner = document.getElementById('confirmCancelBtnSpinner');
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.style.opacity = '1';
+        confirmBtn.style.cursor = 'pointer';
+        confirmBtn.style.pointerEvents = 'auto';
+        if (confirmBtnText) confirmBtnText.textContent = 'İptal Et';
+        if (confirmBtnSpinner) confirmBtnSpinner.style.display = 'none';
+      }
+      
       document.getElementById('cancelItemModal').style.display = 'flex';
     }
     
@@ -6735,10 +7022,26 @@ function generateMobileHTML(serverURL) {
         return;
       }
       
-      // Modal'ı hemen kapat
+      // İptal edilecek ürün bilgilerini sakla
       const itemIdToCancel = cancelItemId;
       const quantityToCancel = cancelQuantity;
+      
+      // Modal'ı hemen kapat
       hideCancelItemModal();
+      
+      // Mevcut siparişler listesindeki iptal butonunu bul ve loading durumuna geçir
+      const cancelBtn = document.getElementById('cancelBtn_' + itemIdToCancel);
+      const cancelBtnText = document.getElementById('cancelBtnText_' + itemIdToCancel);
+      const cancelBtnSpinner = document.getElementById('cancelBtnSpinner_' + itemIdToCancel);
+      
+      if (cancelBtn) {
+        cancelBtn.disabled = true;
+        cancelBtn.style.opacity = '0.7';
+        cancelBtn.style.cursor = 'not-allowed';
+        cancelBtn.style.pointerEvents = 'none';
+        if (cancelBtnText) cancelBtnText.textContent = 'İptal...';
+        if (cancelBtnSpinner) cancelBtnSpinner.style.display = 'block';
+      }
       
       // İptal işlemini arka planda gerçekleştir
       (async () => {
@@ -6764,10 +7067,28 @@ function generateMobileHTML(serverURL) {
             }
           } else {
             showToast('error', 'Hata', result.error || 'Ürün iptal edilemedi');
+            // Hata durumunda butonu tekrar aktif hale getir
+            if (cancelBtn) {
+              cancelBtn.disabled = false;
+              cancelBtn.style.opacity = '1';
+              cancelBtn.style.cursor = 'pointer';
+              cancelBtn.style.pointerEvents = 'auto';
+              if (cancelBtnText) cancelBtnText.textContent = 'İptal';
+              if (cancelBtnSpinner) cancelBtnSpinner.style.display = 'none';
+            }
           }
         } catch (error) {
           console.error('İptal hatası:', error);
           showToast('error', 'Hata', 'Ürün iptal edilirken bir hata oluştu');
+          // Hata durumunda butonu tekrar aktif hale getir
+          if (cancelBtn) {
+            cancelBtn.disabled = false;
+            cancelBtn.style.opacity = '1';
+            cancelBtn.style.cursor = 'pointer';
+            cancelBtn.style.pointerEvents = 'auto';
+            if (cancelBtnText) cancelBtnText.textContent = 'İptal';
+            if (cancelBtnSpinner) cancelBtnSpinner.style.display = 'none';
+          }
         }
       })();
     }
