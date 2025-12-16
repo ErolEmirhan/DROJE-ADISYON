@@ -85,8 +85,16 @@ export async function getCachedImage(imageUrl) {
 // Resmi yükle ve cache'le
 async function loadAndCacheImage(imageUrl) {
   try {
+    // Firebase Storage URL'si ise proxy üzerinden yükle (CORS sorununu çözmek için)
+    let fetchUrl = imageUrl;
+    if (imageUrl && imageUrl.includes('firebasestorage.googleapis.com')) {
+      // Proxy endpoint'i kullan
+      const proxyUrl = `http://localhost:3000/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+      fetchUrl = proxyUrl;
+    }
+    
     // Resmi fetch et
-    const response = await fetch(imageUrl, { 
+    const response = await fetch(fetchUrl, { 
       mode: 'cors',
       cache: 'force-cache'
     });
@@ -98,7 +106,7 @@ async function loadAndCacheImage(imageUrl) {
     const blob = await response.blob();
     const blobUrl = URL.createObjectURL(blob);
     
-    // Memory cache'e ekle
+    // Memory cache'e ekle (orijinal URL ile)
     imageCache[imageUrl] = blobUrl;
     
     // IndexedDB'ye kaydet
