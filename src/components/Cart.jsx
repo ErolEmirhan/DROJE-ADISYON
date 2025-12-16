@@ -50,78 +50,104 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
             const displayTotal = isGift ? 0 : (item.price * item.quantity);
             
             return (
-            <div key={item.id} className={`cart-item animate-fade-in ${isGift ? 'opacity-75' : ''}`}>
-              <div className="flex-1">
-                <h4 className={`font-medium mb-1 ${isGift ? 'text-gray-500 line-through' : 'text-gray-800'}`}>
-                  {item.name}
-                </h4>
-                <div className="flex items-center space-x-2">
-                  <p className={`text-sm ${isGift ? 'text-gray-400 line-through' : 'text-purple-600'}`}>
-                    ₺{item.price.toFixed(2)}
-                  </p>
-                  {isGift && (
-                    <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded">
-                      İKRAM - ₺0.00
-                    </span>
-                  )}
-                </div>
-              </div>
-              
-              <div className="flex items-center space-x-2">
-                <div className="flex items-center space-x-2 bg-purple-50 rounded-lg p-1">
-                  <button
-                    onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
-                    className="w-7 h-7 bg-white hover:bg-purple-100 rounded flex items-center justify-center transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
-                    </svg>
-                  </button>
+            <div 
+              key={item.id} 
+              className={`bg-white rounded-lg border transition-all duration-200 animate-fade-in ${
+                isGift 
+                  ? 'border-green-200 bg-gradient-to-br from-green-50/40 to-white shadow-sm' 
+                  : 'border-gray-200/60 hover:border-gray-300/80 hover:shadow-md shadow-sm'
+              }`}
+              style={{ padding: '14px' }}
+            >
+              {/* Tek Satır - Ürün Adı, Miktar, Fiyat ve Butonlar */}
+              <div className="flex items-center justify-between gap-3">
+                {/* Sol - Ürün Adı ve İkram Badge */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-2">
+                    <h4 className={`font-semibold text-base leading-tight flex-1 truncate ${
+                      isGift ? 'text-gray-400 line-through' : 'text-gray-900'
+                    }`}>
+                      {item.name}
+                    </h4>
+                    {isGift && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-md text-xs font-bold whitespace-nowrap flex-shrink-0">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        İKRAM
+                      </span>
+                    )}
+                  </div>
                   
-                  <span className="w-8 text-center font-medium text-gray-800">{item.quantity}</span>
-                  
-                  <button
-                    onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
-                    className="w-7 h-7 bg-white hover:bg-purple-100 rounded flex items-center justify-center transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                    </svg>
-                  </button>
-                </div>
-
-                <button
-                  onClick={() => onToggleGift && onToggleGift(item.id)}
-                  className={`px-2 py-1 text-[10px] font-medium rounded-lg transition-all whitespace-nowrap ${
-                    isGift 
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-                      : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-                  }`}
-                  title={isGift ? 'İkramı İptal Et' : 'İkram Et'}
-                >
-                  {isGift ? '✓' : 'İkram'}
-                </button>
-
-                <button
-                  onClick={() => onRemoveItem(item.id)}
-                  className="w-7 h-7 bg-red-500/20 hover:bg-red-500/30 rounded flex items-center justify-center transition-colors"
-                >
-                  <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
-
-                <div className="text-right min-w-[80px]">
-                  {isGift ? (
-                    <div>
-                      <p className="text-xs text-gray-400 line-through">₺{(item.price * item.quantity).toFixed(2)}</p>
-                      <p className="font-bold text-lg text-green-600">₺0.00</p>
+                  {/* Alt Satır - Birim Fiyat ve Miktar */}
+                  <div className="flex items-center gap-4">
+                    <span className="text-xs text-gray-500">Birim: <span className={`font-medium ${isGift ? 'text-gray-400 line-through' : 'text-gray-700'}`}>₺{item.price.toFixed(2)}</span></span>
+                    
+                    {/* Miktar Kontrolü */}
+                    <div className="flex items-center gap-1 bg-gray-50 rounded-md p-0.5 border border-gray-200/60">
+                      <button
+                        onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
+                        className="w-7 h-7 bg-white hover:bg-gray-100 active:bg-gray-200 border border-gray-200 hover:border-gray-300 rounded flex items-center justify-center transition-all duration-150 active:scale-95"
+                        title="Azalt"
+                      >
+                        <svg className="w-3.5 h-3.5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M20 12H4" />
+                        </svg>
+                      </button>
+                      
+                      <div className="w-8 h-7 flex items-center justify-center">
+                        <span className="text-sm font-bold text-gray-900">
+                          {item.quantity}
+                        </span>
+                      </div>
+                      
+                      <button
+                        onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
+                        className="w-7 h-7 bg-white hover:bg-gray-100 active:bg-gray-200 border border-gray-200 hover:border-gray-300 rounded flex items-center justify-center transition-all duration-150 active:scale-95"
+                        title="Artır"
+                      >
+                        <svg className="w-3.5 h-3.5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                      </button>
                     </div>
-                  ) : (
-                    <p className="font-bold text-lg bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                      ₺{(item.price * item.quantity).toFixed(2)}
-                    </p>
-                  )}
+                  </div>
+                </div>
+
+                {/* Sağ - Butonlar */}
+                <div className="flex items-center gap-2.5">
+                  {/* İkram Butonu */}
+                  <button
+                    onClick={() => onToggleGift && onToggleGift(item.id)}
+                    className={`px-2.5 py-1.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap border flex items-center gap-1 ${
+                      isGift 
+                        ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100 hover:border-green-300' 
+                        : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 hover:border-amber-300'
+                    } shadow-sm active:scale-95`}
+                    title={isGift ? 'İkramı İptal Et' : 'İkram Et'}
+                  >
+                    {isGift ? (
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7" />
+                      </svg>
+                    )}
+                    <span className="hidden sm:inline">İkram</span>
+                  </button>
+
+                  {/* Sil Butonu */}
+                  <button
+                    onClick={() => onRemoveItem(item.id)}
+                    className="w-8 h-8 bg-red-50 hover:bg-red-100 active:bg-red-200 border border-red-200 hover:border-red-300 rounded-md flex items-center justify-center transition-all duration-150 active:scale-95 shadow-sm"
+                    title="Ürünü Kaldır"
+                  >
+                    <svg className="w-3.5 h-3.5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
                 </div>
               </div>
             </div>

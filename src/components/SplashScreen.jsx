@@ -4,64 +4,177 @@ import { createPortal } from 'react-dom';
 const SplashScreen = ({ onComplete }) => {
   const [visible, setVisible] = useState(true);
   const [fadeOut, setFadeOut] = useState(false);
-  const [showText, setShowText] = useState(false);
   
   const text = 'MAKARA';
+  const subtitle = 'Profesyonel Adisyon Sistemi';
 
   useEffect(() => {
-    // Kısa bir gecikme sonrası animasyonu başlat
-    const startTimeout = setTimeout(() => {
-      setShowText(true);
-    }, 200);
-
-    // Tüm animasyon tamamlandıktan sonra 2 saniye bekle ve kapat
-    const totalDuration = 200 + (text.length * 100) + 2000; // başlangıç + animasyon + bekleme
+    // 2.5 saniye sonra fade out başlat
     const endTimeout = setTimeout(() => {
       setFadeOut(true);
       setTimeout(() => {
         setVisible(false);
         onComplete();
-      }, 300);
-    }, totalDuration);
+      }, 500);
+    }, 2500);
 
     return () => {
-      clearTimeout(startTimeout);
       clearTimeout(endTimeout);
     };
-  }, [text, onComplete]);
+  }, [onComplete]);
 
   if (!visible) return null;
 
   return createPortal(
     <div 
-      className={`fixed inset-0 z-[9999] flex items-center justify-center bg-pink-500 transition-opacity duration-300 ${
-        fadeOut ? 'opacity-0' : 'opacity-100'
-      }`}
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: '#ffffff',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 99999,
+        opacity: fadeOut ? 0 : 1,
+        transition: 'opacity 0.5s ease',
+        overflow: 'hidden'
+      }}
     >
-      <div className="text-center">
+      <style>{`
+        @keyframes mainTextReveal {
+          0% {
+            opacity: 0;
+            transform: translateY(40px) scale(0.95);
+            letter-spacing: 0.3em;
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            letter-spacing: 0.15em;
+          }
+        }
+        @keyframes subtitleFadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        @keyframes lineExpand {
+          from {
+            width: 0%;
+            opacity: 0;
+          }
+          to {
+            width: 100%;
+            opacity: 1;
+          }
+        }
+        .splash-main-text {
+          animation: mainTextReveal 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          opacity: 1;
+        }
+        .splash-subtitle-text {
+          animation: subtitleFadeIn 0.8s ease-out forwards;
+          animation-delay: 0.3s;
+          opacity: 1;
+        }
+        .splash-decorative-line {
+          animation: lineExpand 1s ease-out forwards;
+          animation-delay: 0.5s;
+          opacity: 1;
+        }
+      `}</style>
+
+      {/* Minimal dekoratif arka plan elementleri */}
+      <div 
+        style={{
+          position: 'absolute',
+          top: '20%',
+          left: '10%',
+          width: '200px',
+          height: '200px',
+          background: 'radial-gradient(circle, rgba(236, 72, 153, 0.03) 0%, transparent 70%)',
+          borderRadius: '50%',
+          filter: 'blur(40px)',
+          pointerEvents: 'none'
+        }}
+      />
+      <div 
+        style={{
+          position: 'absolute',
+          bottom: '20%',
+          right: '10%',
+          width: '300px',
+          height: '300px',
+          background: 'radial-gradient(circle, rgba(236, 72, 153, 0.02) 0%, transparent 70%)',
+          borderRadius: '50%',
+          filter: 'blur(60px)',
+          pointerEvents: 'none'
+        }}
+      />
+
+      <div className="text-center" style={{ position: 'relative', zIndex: 1, width: '100%' }}>
+        {/* Ana Başlık - Çok Büyük ve Bold */}
         <h1 
-          className="text-white"
+          className="splash-main-text"
           style={{ 
-            fontFamily: '"Montserrat", sans-serif',
-            fontWeight: 900,
-            fontSize: '12rem',
-            lineHeight: '1',
-            letterSpacing: '0.1em',
-            textShadow: '0 4px 20px rgba(0,0,0,0.2)'
+            fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            fontWeight: 800,
+            fontSize: 'clamp(6rem, 15vw, 12rem)',
+            lineHeight: '0.9',
+            letterSpacing: '0.15em',
+            color: '#0a0a0a',
+            margin: 0,
+            padding: 0,
+            textAlign: 'center',
+            textTransform: 'uppercase',
+            position: 'relative',
+            display: 'block',
+            opacity: 1
           }}
         >
-          {text.split('').map((char, index) => (
-            <span
-              key={index}
-              className="text-reveal-char"
-              style={{
-                animationDelay: showText ? `${index * 0.1}s` : '0s'
-              }}
-            >
-              {char === ' ' ? '\u00A0' : char}
-            </span>
-          ))}
+          {text}
         </h1>
+
+        {/* Dekoratif İnce Çizgi */}
+        <div 
+          className="splash-decorative-line"
+          style={{
+            width: '0%',
+            height: '1px',
+            background: 'linear-gradient(90deg, transparent 0%, #d1d5db 50%, transparent 100%)',
+            margin: '32px auto 40px',
+            maxWidth: '400px',
+            opacity: 1
+          }}
+        />
+
+        {/* Alt Başlık - Profesyonel Adisyon Sistemi */}
+        <p 
+          className="splash-subtitle-text"
+          style={{
+            fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            fontSize: 'clamp(0.875rem, 1.5vw, 1.125rem)',
+            fontWeight: 400,
+            color: '#6b7280',
+            margin: 0,
+            padding: 0,
+            letterSpacing: '0.2em',
+            textTransform: 'uppercase',
+            textAlign: 'center',
+            opacity: 0.7,
+            display: 'block'
+          }}
+        >
+          {subtitle}
+        </p>
       </div>
     </div>,
     document.body

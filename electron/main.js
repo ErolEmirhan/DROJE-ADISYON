@@ -5120,54 +5120,78 @@ function generateMobileHTML(serverURL) {
       left: 0;
       right: 0;
       bottom: 0;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      background: linear-gradient(135deg, #ffffff 0%, #fef2f2 30%, #fce7f3 70%, #fdf2f8 100%);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 10000;
-      animation: splashFadeIn 0.5s ease-out;
+      animation: splashFadeIn 0.6s ease-out;
     }
     .splash-content {
       text-align: center;
-      color: white;
-      padding: 40px;
-      animation: splashSlideUp 0.6s ease-out;
+      padding: 60px 40px;
+      animation: splashSlideUp 0.7s ease-out;
+      max-width: 400px;
     }
     .splash-icon {
-      font-size: 80px;
-      margin-bottom: 30px;
-      animation: splashIconBounce 1s ease-in-out infinite;
+      width: 100px;
+      height: 100px;
+      margin: 0 auto 32px;
+      background: linear-gradient(135deg, #ec4899 0%, #f472b6 50%, #fbcfe8 100%);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 48px;
+      box-shadow: 0 8px 24px rgba(236, 72, 153, 0.25);
+      animation: splashIconScale 0.8s ease-out;
+      position: relative;
+    }
+    .splash-icon::before {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #ec4899, #f472b6);
+      opacity: 0.2;
+      filter: blur(12px);
+      z-index: -1;
     }
     .splash-title {
-      font-size: 32px;
-      font-weight: 700;
-      margin-bottom: 20px;
-      letter-spacing: -0.5px;
-      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-      animation: splashTextFadeIn 0.8s ease-out;
+      font-size: 28px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      letter-spacing: -0.3px;
+      color: #831843;
+      animation: splashTextFadeIn 0.9s ease-out;
+      line-height: 1.3;
     }
     .splash-name {
-      font-size: 24px;
-      font-weight: 600;
-      margin-bottom: 40px;
-      opacity: 0.95;
-      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-      animation: splashTextFadeIn 1s ease-out;
+      font-size: 20px;
+      font-weight: 500;
+      margin-bottom: 48px;
+      color: #9f1239;
+      opacity: 0.85;
+      animation: splashTextFadeIn 1.1s ease-out;
+      letter-spacing: 0.2px;
     }
     .splash-loader {
-      width: 200px;
-      height: 4px;
-      background: rgba(255, 255, 255, 0.3);
-      border-radius: 2px;
+      width: 240px;
+      height: 3px;
+      background: rgba(236, 72, 153, 0.15);
+      border-radius: 8px;
       margin: 0 auto;
       overflow: hidden;
+      position: relative;
     }
     .splash-loader-bar {
       height: 100%;
-      background: white;
-      border-radius: 2px;
+      background: linear-gradient(90deg, #ec4899 0%, #f472b6 50%, #ec4899 100%);
+      background-size: 200% 100%;
+      border-radius: 8px;
       width: 0%;
-      animation: splashLoaderProgress 2s ease-out forwards;
+      animation: splashLoaderProgress 2s ease-out forwards, splashLoaderShimmer 2s ease-in-out infinite;
+      box-shadow: 0 2px 8px rgba(236, 72, 153, 0.4);
     }
     @keyframes splashFadeIn {
       from {
@@ -5187,22 +5211,35 @@ function generateMobileHTML(serverURL) {
         opacity: 1;
       }
     }
-    @keyframes splashIconBounce {
-      0%, 100% {
-        transform: translateY(0) scale(1);
+    @keyframes splashIconScale {
+      0% {
+        transform: scale(0);
+        opacity: 0;
       }
       50% {
-        transform: translateY(-10px) scale(1.05);
+        transform: scale(1.1);
+      }
+      100% {
+        transform: scale(1);
+        opacity: 1;
       }
     }
     @keyframes splashTextFadeIn {
       from {
         opacity: 0;
-        transform: translateY(10px);
+        transform: translateY(12px);
       }
       to {
         opacity: 1;
         transform: translateY(0);
+      }
+    }
+    @keyframes splashLoaderShimmer {
+      0% {
+        background-position: -200% 0;
+      }
+      100% {
+        background-position: 200% 0;
       }
     }
     @keyframes splashLoaderProgress {
@@ -5382,7 +5419,11 @@ function generateMobileHTML(serverURL) {
     <!-- Splash Screen - Giriş Sonrası Hoş Geldiniz -->
     <div id="splashScreen" class="splash-screen" style="display: none;">
       <div class="splash-content">
-        <div class="splash-icon">✨</div>
+        <div class="splash-icon">
+          <svg width="48" height="48" fill="none" stroke="white" viewBox="0 0 24 24" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+        </div>
         <h1 class="splash-title">İyi Çalışmalar Dileriz</h1>
         <p class="splash-name" id="splashStaffName"></p>
         <div class="splash-loader">

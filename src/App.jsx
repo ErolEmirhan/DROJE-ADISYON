@@ -18,6 +18,7 @@ function App() {
   const [currentView, setCurrentView] = useState('pos'); // 'pos', 'sales', or 'tables'
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
+  const [allProducts, setAllProducts] = useState([]); // Tüm kategorilerden ürünler (arama için)
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [cart, setCart] = useState([]);
   const [orderNote, setOrderNote] = useState('');
@@ -38,7 +39,7 @@ function App() {
   const searchInputRef = useRef(null);
   const triggerRoleSplash = (role) => {
     setActiveRoleSplash(role);
-    setTimeout(() => setActiveRoleSplash(null), 1000);
+    setTimeout(() => setActiveRoleSplash(null), 1300);
   };
 
   useEffect(() => {
@@ -75,6 +76,9 @@ function App() {
   const loadCategories = async () => {
     const cats = await window.electronAPI.getCategories();
     setCategories(cats);
+    // Tüm ürünleri yükle (arama için)
+    const allProds = await window.electronAPI.getProducts(null);
+    setAllProducts(allProds);
     if (cats.length > 0) {
       setSelectedCategory(cats[0]);
     }
@@ -83,23 +87,32 @@ function App() {
   const loadProducts = async (categoryId) => {
     const prods = await window.electronAPI.getProducts(categoryId);
     setProducts(prods);
+    // Tüm ürünleri de güncelle (arama için)
+    const allProds = await window.electronAPI.getProducts(null);
+    setAllProducts(allProds);
   };
 
   // Arama sorgusuna göre ürünleri filtrele
   const filteredProducts = useMemo(() => {
     if (!searchQuery.trim()) {
+      // Arama yoksa sadece seçili kategorinin ürünlerini göster
       return products;
     }
+    // Arama varsa tüm kategorilerden ara
     const query = searchQuery.toLowerCase().trim();
-    return products.filter(product => 
+    return allProducts.filter(product => 
       product.name.toLowerCase().includes(query)
     );
-  }, [products, searchQuery]);
+  }, [products, allProducts, searchQuery]);
 
   const refreshProducts = async () => {
     // Kategorileri yenile
     const cats = await window.electronAPI.getCategories();
     setCategories(cats);
+    
+    // Tüm ürünleri güncelle (arama için)
+    const allProds = await window.electronAPI.getProducts(null);
+    setAllProducts(allProds);
     
     // Seçili kategoriyi koru veya ilk kategoriyi seç
     let categoryToLoad = selectedCategory;
@@ -118,7 +131,8 @@ function App() {
       
       // Seçili kategorinin ürünlerini yenile
       if (categoryToLoad) {
-        await loadProducts(categoryToLoad.id);
+        const prods = await window.electronAPI.getProducts(categoryToLoad.id);
+        setProducts(prods);
       }
     }
   };

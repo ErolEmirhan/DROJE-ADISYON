@@ -353,20 +353,23 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
                   {userType === 'Admin' ? '🔐 Tüm özelliklere erişim' : '📋 Satış işlemleri'}
                 </p>
               </div>
+
+              {/* Çıkış Butonu - Panelin En Altı */}
+              <div className="border-t border-gray-200 p-2">
+                <button
+                  onClick={() => setShowExitConfirm(true)}
+                  className="w-full flex items-center justify-center space-x-2 p-3 rounded-xl hover:bg-red-50 transition-all duration-300 text-red-600 hover:text-red-700"
+                  title="Çıkış Yap"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  <span className="font-semibold">Çıkış Yap</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
-
-        {/* Çıkış Butonu - Sağ Üst */}
-        <button
-          onClick={() => setShowExitConfirm(true)}
-          className="p-4 rounded-xl hover:bg-red-50 transition-all duration-300 hover:scale-110 active:scale-95 shadow-lg hover:shadow-xl"
-          title="Çıkış Yap"
-        >
-          <svg className="w-10 h-10 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-          </svg>
-        </button>
       </div>
 
       {/* Çıkış Onay Modal */}

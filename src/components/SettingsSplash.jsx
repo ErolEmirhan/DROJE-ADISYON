@@ -2,61 +2,61 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 const SettingsSplash = ({ onComplete }) => {
-  const [isVisible, setIsVisible] = useState(true);
+  const [visible, setVisible] = useState(true);
+  const [fadeOut, setFadeOut] = useState(false);
+  
+  const text = 'AYARLAR';
+  const subtitle = 'Sistem Yapılandırması';
 
   useEffect(() => {
-    // 2 saniye sonra kapat
-    const timer = setTimeout(() => {
-      setIsVisible(false);
+    // 2 saniye sonra fade out başlat
+    const endTimeout = setTimeout(() => {
+      setFadeOut(true);
       setTimeout(() => {
+        setVisible(false);
         onComplete?.();
-      }, 300); // Fade out animasyonu için
+      }, 300);
     }, 2000);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(endTimeout);
+    };
   }, [onComplete]);
 
-  if (!isVisible) return null;
+  if (!visible) return null;
 
   return createPortal(
-    <div className={`fixed inset-0 bg-white flex items-center justify-center z-[1999] transition-opacity duration-300 ${
-      isVisible ? 'opacity-100' : 'opacity-0'
-    }`}>
-      <div className="text-center overflow-visible">
-        {/* Aydınlanma animasyonu ile ikon */}
-        <div className="mb-8">
-          <div className="w-24 h-24 mx-auto rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center shadow-2xl icon-glow">
-            <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </div>
-        </div>
-        
-        {/* "Ayarlar" yazısı */}
-        <div className="pb-8 overflow-visible">
-          <h1 className="text-6xl md:text-7xl font-black tracking-[0.2em] bg-gradient-to-r from-purple-600 via-pink-600 to-purple-600 bg-clip-text text-transparent text-fade-in leading-[1.2] overflow-visible" style={{ paddingBottom: '1.5rem' }}>
-            Ayarlar
-          </h1>
-        </div>
-      </div>
-      
+    <div 
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'linear-gradient(135deg, #9333ea 0%, #ec4899 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 19999,
+        opacity: fadeOut ? 0 : 1,
+        transition: 'opacity 0.3s ease',
+        overflow: 'hidden'
+      }}
+    >
       <style>{`
-        .icon-glow {
-          animation: glow 2s ease-in-out infinite;
-        }
-        .text-fade-in {
-          animation: fadeInUp 0.8s ease-out;
-        }
-        @keyframes glow {
-          0%, 100% {
-            box-shadow: 0 0 20px rgba(147, 51, 234, 0.5), 0 0 40px rgba(147, 51, 234, 0.3);
+        @keyframes settingsTextReveal {
+          0% {
+            opacity: 0;
+            transform: translateY(40px) scale(0.95);
+            letter-spacing: 0.3em;
           }
-          50% {
-            box-shadow: 0 0 40px rgba(236, 72, 153, 0.7), 0 0 60px rgba(236, 72, 153, 0.5);
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            letter-spacing: 0.15em;
           }
         }
-        @keyframes fadeInUp {
+        @keyframes settingsSubtitleFadeIn {
           from {
             opacity: 0;
             transform: translateY(20px);
@@ -66,7 +66,116 @@ const SettingsSplash = ({ onComplete }) => {
             transform: translateY(0);
           }
         }
+        @keyframes settingsLineExpand {
+          from {
+            width: 0%;
+            opacity: 0;
+          }
+          to {
+            width: 100%;
+            opacity: 1;
+          }
+        }
+        .settings-main-text {
+          animation: settingsTextReveal 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          opacity: 1;
+        }
+        .settings-subtitle-text {
+          animation: settingsSubtitleFadeIn 0.8s ease-out forwards;
+          animation-delay: 0.3s;
+          opacity: 1;
+        }
+        .settings-decorative-line {
+          animation: settingsLineExpand 1s ease-out forwards;
+          animation-delay: 0.5s;
+          opacity: 1;
+        }
       `}</style>
+
+      {/* Minimal dekoratif arka plan elementleri */}
+      <div 
+        style={{
+          position: 'absolute',
+          top: '20%',
+          left: '10%',
+          width: '200px',
+          height: '200px',
+          background: 'radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, transparent 70%)',
+          borderRadius: '50%',
+          filter: 'blur(40px)',
+          pointerEvents: 'none'
+        }}
+      />
+      <div 
+        style={{
+          position: 'absolute',
+          bottom: '20%',
+          right: '10%',
+          width: '300px',
+          height: '300px',
+          background: 'radial-gradient(circle, rgba(255, 255, 255, 0.08) 0%, transparent 70%)',
+          borderRadius: '50%',
+          filter: 'blur(60px)',
+          pointerEvents: 'none'
+        }}
+      />
+
+      <div className="text-center" style={{ position: 'relative', zIndex: 1, width: '100%' }}>
+        {/* Ana Başlık - AYARLAR */}
+        <h1 
+          className="settings-main-text"
+          style={{ 
+            fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            fontWeight: 800,
+            fontSize: 'clamp(5rem, 12vw, 10rem)',
+            lineHeight: '0.9',
+            letterSpacing: '0.15em',
+            color: '#ffffff',
+            margin: 0,
+            padding: 0,
+            textAlign: 'center',
+            textTransform: 'uppercase',
+            position: 'relative',
+            display: 'block',
+            opacity: 1
+          }}
+        >
+          {text}
+        </h1>
+
+        {/* Dekoratif İnce Çizgi */}
+        <div 
+          className="settings-decorative-line"
+          style={{
+            width: '0%',
+            height: '1px',
+            background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.3) 50%, transparent 100%)',
+            margin: '32px auto 40px',
+            maxWidth: '400px',
+            opacity: 1
+          }}
+        />
+
+        {/* Alt Başlık */}
+        <p 
+          className="settings-subtitle-text"
+          style={{
+            fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            fontSize: 'clamp(0.875rem, 1.5vw, 1.125rem)',
+            fontWeight: 400,
+            color: '#ffffff',
+            margin: 0,
+            padding: 0,
+            letterSpacing: '0.2em',
+            textTransform: 'uppercase',
+            textAlign: 'center',
+            opacity: 0.85,
+            display: 'block'
+          }}
+        >
+          {subtitle}
+        </p>
+      </div>
     </div>,
     document.body
   );
