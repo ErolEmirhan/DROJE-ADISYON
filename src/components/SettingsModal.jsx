@@ -41,6 +41,8 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
   const [assigningCategory, setAssigningCategory] = useState(null);
   const [cashierPrinter, setCashierPrinter] = useState(null);
   const [selectedCategories, setSelectedCategories] = useState([]);
+  const [isOptimizingImages, setIsOptimizingImages] = useState(false);
+  const [lastOptimizeResult, setLastOptimizeResult] = useState(null);
   
 
   useEffect(() => {
@@ -91,6 +93,52 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
       }
     } catch (error) {
       console.error('Yazıcı yükleme hatası:', error);
+    }
+  };
+
+  const handleOptimizeAllImages = async () => {
+    if (!window.electronAPI || typeof window.electronAPI.optimizeAllProductImages !== 'function') {
+      alert('Görsel optimizasyon özelliği yüklenemedi. Lütfen uygulamayı yeniden başlatın.');
+      return;
+    }
+
+    if (
+      !window.confirm(
+        'Tüm ürün görselleri Firebase Storage üzerinde yeniden optimize edilecek.\n\n' +
+        '- Tümü WebP formatına dönüştürülecek\n' +
+        '- Maksimum genişlik 600px, kalite ~65\n' +
+        '- Amaç: 50–120 KB arası, 200 KB üstü reddedilir\n\n' +
+        'Bu işlem internet bağlantınıza ve görsel sayısına göre birkaç dakika sürebilir.\n\n' +
+        'Devam etmek istiyor musunuz?'
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setIsOptimizingImages(true);
+      setLastOptimizeResult(null);
+      const result = await window.electronAPI.optimizeAllProductImages();
+      setLastOptimizeResult(result);
+
+      if (result && result.success) {
+        alert(
+          `Görsel optimizasyon tamamlandı.\n\n` +
+          `İşlenen: ${result.processed}\n` +
+          `Atlanan: ${result.skipped}\n` +
+          `Hata: ${result.failed}`
+        );
+      } else {
+        alert(
+          'Görsel optimizasyon tamamlanamadı: ' +
+          (result?.error || 'Bilinmeyen hata')
+        );
+      }
+    } catch (error) {
+      console.error('Görsel optimizasyon hatası:', error);
+      alert('Görsel optimizasyon hatası: ' + error.message);
+    } finally {
+      setIsOptimizingImages(false);
     }
   };
 

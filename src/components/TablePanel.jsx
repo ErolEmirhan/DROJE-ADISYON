@@ -391,19 +391,23 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
               onClick={() => handleTableClick(table)}
               className={`table-btn group relative overflow-hidden rounded-md p-1 border transition-all duration-300 hover:shadow-sm hover:scale-105 active:scale-95 aspect-square ${
                 hasOrder
-                  ? 'bg-gradient-to-br from-emerald-600 to-emerald-800 border-emerald-700 hover:border-emerald-900'
+                  // Dolu masalar (iç/dış) – mobil ile aynı: kan kırmızısı tonlar
+                  ? 'bg-gradient-to-br from-red-700 to-red-900 border-red-800 hover:border-red-900'
                   : isOutside
+                  // Dışarı boş masalar – soft sarı
                   ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-300 hover:border-amber-400'
-                  : 'bg-gradient-to-br from-white to-purple-50 border-purple-200 hover:border-purple-400'
+                  // İçeri boş masalar – soft pembe (İçeri butonuyla uyumlu)
+                  : 'bg-gradient-to-br from-pink-50 to-pink-100 border-pink-200 hover:border-pink-300'
               }`}
             >
               <div className="flex flex-col items-center justify-center space-y-1 h-full">
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow ${
                   hasOrder
-                    ? 'bg-gradient-to-br from-emerald-700 to-emerald-900'
+                    // Dolu masalarda iç daire – yoğun kırmızı
+                    ? 'bg-gradient-to-br from-red-600 to-red-900'
                     : isOutside
                     ? 'bg-gradient-to-br from-amber-200 to-amber-300'
-                    : 'bg-gray-50'
+                    : 'bg-gradient-to-br from-pink-100 to-pink-200'
                 }`}>
                   {hasOrder ? (
                     <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -418,24 +422,24 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
                 </div>
                 <span className={`font-bold text-sm leading-tight ${
                   hasOrder
-                    ? 'text-emerald-50'
+                    ? 'text-red-50'
                     : isOutside
                     ? 'text-amber-900'
-                    : 'text-gray-800'
+                    : 'text-pink-900'
                 }`}>{table.name}</span>
                 <div
                   className={`text-[10px] font-semibold mt-1 px-2 py-0.5 rounded-md ${
                     hasOrder
-                      ? 'bg-emerald-900 text-emerald-100'
+                      ? 'bg-red-900 text-red-100'
                       : isOutside
                       ? 'bg-amber-100 text-amber-800'
-                      : 'bg-gray-100 text-gray-600'
+                      : 'bg-pink-100 text-pink-800'
                   }`}
                 >
                   {hasOrder ? 'Dolu' : 'Boş'}
                 </div>
                 {hasOrder && (
-                  <span className="absolute top-1 right-1 w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-red-400 rounded-full animate-pulse"></span>
                 )}
               </div>
             </button>
@@ -464,14 +468,15 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
                 onClick={() => handleTableClick(table)}
                 className={`table-btn group relative overflow-hidden rounded-lg p-2 border-2 transition-all duration-300 hover:shadow-lg hover:scale-105 active:scale-95 ${
                   hasOrder
-                    ? 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-400 hover:border-green-500'
+                    // Paket masalar dolu – kırmızı ton
+                    ? 'bg-gradient-to-br from-rose-100 to-red-200 border-red-500 hover:border-red-600'
                     : 'bg-gradient-to-br from-white to-orange-50 border-orange-300 hover:border-orange-400'
                 }`}
               >
                 <div className="flex flex-col items-center justify-center space-y-1.5 h-full">
                   <div className={`w-12 h-12 rounded-full flex items-center justify-center shadow-md group-hover:shadow-lg transition-shadow ${
                     hasOrder
-                      ? 'bg-gradient-to-br from-emerald-700 to-emerald-900'
+                      ? 'bg-gradient-to-br from-red-600 to-red-900'
                       : 'bg-gradient-to-br from-orange-400 to-yellow-400'
                   }`}>
                     {hasOrder ? (
@@ -489,14 +494,14 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
                   <div
                     className={`text-[10px] font-semibold mt-1 px-2 py-0.5 rounded-md ${
                       hasOrder
-                        ? 'bg-emerald-900 text-emerald-100'
+                        ? 'bg-red-900 text-red-100'
                         : 'bg-orange-100 text-orange-700'
                     }`}
                   >
                     {hasOrder ? 'Dolu' : 'Boş'}
                   </div>
                   {hasOrder && (
-                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse"></span>
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-400 rounded-full animate-pulse"></span>
                   )}
                 </div>
               </button>

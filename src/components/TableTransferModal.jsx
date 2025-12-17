@@ -168,16 +168,16 @@ const TableTransferModal = ({
                       onClick={() => handleSourceTableSelect(table)}
                       className={`rounded-md p-2 border-2 transition-all ${
                         isSelected
-                          ? 'bg-gradient-to-br from-emerald-600 to-emerald-800 border-emerald-700 scale-105 text-emerald-50'
-                          : 'bg-gradient-to-br from-emerald-500 to-emerald-700 border-emerald-600 hover:border-emerald-700 hover:scale-105 text-emerald-50'
+                          ? 'bg-gradient-to-br from-red-600 to-red-900 border-red-800 scale-105 text-red-50'
+                          : 'bg-gradient-to-br from-red-500 to-red-800 border-red-700 hover:border-red-800 hover:scale-105 text-red-50'
                       }`}
                     >
                       <div className="flex flex-col items-center justify-center">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-700 to-emerald-900 flex items-center justify-center shadow-md">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-red-500 to-red-900 flex items-center justify-center shadow-md">
                           <span className="text-white text-xs font-bold">{table.number}</span>
                         </div>
-                        <span className="text-xs mt-1 font-semibold text-emerald-50">{table.name}</span>
-                        <span className="text-[10px] text-emerald-200 mt-0.5">Dolu</span>
+                        <span className="text-xs mt-1 font-semibold text-red-50">{table.name}</span>
+                        <span className="text-[10px] text-red-200 mt-0.5">Dolu</span>
                       </div>
                     </button>
                   );
@@ -223,10 +223,10 @@ const TableTransferModal = ({
                         isSelected
                           ? isOutside
                             ? 'bg-amber-100 border-amber-400 scale-105'
-                            : 'bg-purple-50 border-purple-400 scale-105'
+                            : 'bg-pink-100 border-pink-400 scale-105'
                           : isOutside
                             ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-300 hover:border-amber-400 hover:scale-105'
-                            : 'bg-gradient-to-br from-white to-purple-50 border-purple-200 hover:border-purple-400 hover:scale-105'
+                            : 'bg-gradient-to-br from-pink-50 to-pink-100 border-pink-200 hover:border-pink-300 hover:scale-105'
                       }`}
                     >
                       <div className="flex flex-col items-center justify-center">
@@ -234,21 +234,21 @@ const TableTransferModal = ({
                           className={`w-8 h-8 rounded-full flex items-center justify-center ${
                             isOutside
                               ? 'bg-gradient-to-br from-amber-200 to-amber-300 text-amber-900'
-                              : 'bg-gray-50 text-gray-600'
+                              : 'bg-gradient-to-br from-pink-100 to-pink-200 text-pink-900'
                           }`}
                         >
                           <span className="text-xs font-bold">{table.number}</span>
                         </div>
                         <span
                           className={`text-xs mt-1 font-semibold ${
-                            isOutside ? 'text-amber-900' : 'text-gray-800'
+                            isOutside ? 'text-amber-900' : 'text-pink-900'
                           }`}
                         >
                           {table.name}
                         </span>
                         <span
                           className={`text-[10px] mt-0.5 ${
-                            isOutside ? 'text-amber-800' : 'text-gray-600'
+                            isOutside ? 'text-amber-800' : 'text-pink-700'
                           }`}
                         >
                           Boş

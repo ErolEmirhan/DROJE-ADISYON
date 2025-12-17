@@ -9,6 +9,13 @@ const http = require('http');
 const { Server } = require('socket.io');
 const QRCode = require('qrcode');
 const os = require('os');
+// Görsel işleme için sharp (WebP + resize + kalite ayarı)
+let sharp = null;
+try {
+  sharp = require('sharp');
+} catch (e) {
+  console.error('⚠️ sharp modülü yüklenemedi, görsel optimizasyon devre dışı:', e.message);
+}
 
 // Firebase entegrasyonu
 let firebaseApp = null;
@@ -1918,7 +1925,77 @@ ipcMain.handle('delete-product', async (event, productId) => {
   return { success: true };
 });
 
-// Firebase Storage'a görsel yükleme fonksiyonu
+// Tek bir görsel buffer'ını WebP formatına çevirip optimize eden yardımcı fonksiyon
+// Kurallar:
+// - Max width: 600px (daha büyükse küçült, küçükse büyütme)
+// - Başlangıç kalite: 65, gerektiğinde kaliteyi düşürerek 120 KB altına inmeye çalış
+// - Sert limit: 200 KB üstü ise RED (hata fırlat)
+async function optimizeImageBufferToWebP(inputBuffer) {
+  if (!sharp) {
+    const err = new Error('Görsel optimizasyon modülü (sharp) yüklenemedi');
+    err.code = 'SHARP_NOT_AVAILABLE';
+    throw err;
+  }
+
+  const MAX_WIDTH = 600;
+  const INITIAL_QUALITY = 65;
+  const MIN_QUALITY = 40;
+  const QUALITY_STEP = 5;
+  const TARGET_MAX_KB = 120;
+  const HARD_LIMIT_KB = 200;
+
+  let quality = INITIAL_QUALITY;
+
+  const encodeWithQuality = async (q) => {
+    return sharp(inputBuffer, { failOnError: false })
+      .resize({
+        width: MAX_WIDTH,
+        withoutEnlargement: true
+      })
+      .webp({
+        quality: q,
+        effort: 4
+      })
+      .toBuffer();
+  };
+
+  // İlk deneme
+  let optimizedBuffer = await encodeWithQuality(quality);
+  let sizeKB = optimizedBuffer.length / 1024;
+
+  // 120 KB'nin üzerindeyse, kaliteyi kademeli düşür
+  while (sizeKB > TARGET_MAX_KB && quality > MIN_QUALITY) {
+    quality -= QUALITY_STEP;
+    optimizedBuffer = await encodeWithQuality(quality);
+    sizeKB = optimizedBuffer.length / 1024;
+  }
+
+  // Sert limit kontrolü
+  if (sizeKB > HARD_LIMIT_KB) {
+    const err = new Error(
+      `Optimize edilmiş görsel hala çok büyük (${sizeKB.toFixed(
+        1
+      )} KB). Lütfen daha küçük/basitleştirilmiş bir görsel kullanın.`
+    );
+    err.code = 'OPTIMIZED_IMAGE_TOO_LARGE';
+    err.sizeKB = sizeKB;
+    throw err;
+  }
+
+  console.log(
+    `🖼️ Görsel optimize edildi -> WebP, kalite=${quality}, boyut=${sizeKB.toFixed(
+      1
+    )} KB`
+  );
+
+  return {
+    buffer: optimizedBuffer,
+    sizeKB,
+    quality
+  };
+}
+
+// Firebase Storage'a görsel yükleme fonksiyonu (ZORUNLU OPTİMİZASYONLU)
 async function uploadImageToFirebaseStorage(filePath, productId = null) {
   if (!storage || !storageRef || !storageUploadBytes || !storageGetDownloadURL) {
     throw new Error('Firebase Storage başlatılamadı');
@@ -1926,30 +2003,43 @@ async function uploadImageToFirebaseStorage(filePath, productId = null) {
 
   try {
     // Dosyayı oku
-    const fileBuffer = fs.readFileSync(filePath);
-    const fileName = path.basename(filePath);
-    const fileExt = path.extname(fileName);
-    
-    // Benzersiz dosya adı oluştur (ürün ID + timestamp)
+    const originalBuffer = fs.readFileSync(filePath);
+
+    // Zorunlu optimizasyon: her görsel WebP + resize + kalite ile sıkıştırılır
+    const { buffer: optimizedBuffer, sizeKB } = await optimizeImageBufferToWebP(
+      originalBuffer
+    );
+
+    // Benzersiz dosya adı oluştur (ürün ID + timestamp) - her zaman .webp
     const timestamp = Date.now();
-    const uniqueFileName = productId 
-      ? `products/${productId}_${timestamp}${fileExt}`
-      : `products/temp_${timestamp}${fileExt}`;
-    
+    const uniqueFileName = productId
+      ? `products/${productId}_${timestamp}.webp`
+      : `products/temp_${timestamp}.webp`;
+
     // Storage referansı oluştur
     const imageRef = storageRef(storage, uniqueFileName);
-    
-    // Dosyayı yükle
-    await storageUploadBytes(imageRef, fileBuffer);
-    console.log(`✅ Görsel Firebase Storage'a yüklendi: ${uniqueFileName}`);
-    
+
+    // Metadata: sadece optimize edilmiş WebP saklanır
+    const metadata = {
+      contentType: 'image/webp',
+      cacheControl: 'public, max-age=31536000, immutable'
+    };
+
+    // Optimize edilmiş görseli yükle
+    await storageUploadBytes(imageRef, optimizedBuffer, metadata);
+    console.log(
+      `✅ Optimize görsel Firebase Storage'a yüklendi: ${uniqueFileName} (${sizeKB.toFixed(
+        1
+      )} KB)`
+    );
+
     // Download URL'yi al
     const downloadURL = await storageGetDownloadURL(imageRef);
     console.log(`✅ Görsel URL alındı: ${downloadURL}`);
-    
+
     return downloadURL;
   } catch (error) {
-    console.error('❌ Firebase Storage yükleme hatası:', error);
+    console.error('❌ Firebase Storage yükleme/optimizasyon hatası:', error);
     throw error;
   }
 }
@@ -2013,13 +2103,26 @@ ipcMain.handle('select-image-file', async (event, productId = null) => {
       return { success: false, error: 'Dosya bulunamadı' };
     }
 
-    // Firebase Storage'a yükle
+    // Firebase Storage'a OPTİMİZE edilmiş görseli yükle
     try {
       const downloadURL = await uploadImageToFirebaseStorage(filePath, productId);
       return { success: true, path: downloadURL, isFirebaseURL: true };
     } catch (storageError) {
-      console.error('Firebase Storage yükleme hatası:', storageError);
-      // Firebase Storage başarısız olursa, eski yöntemle devam et (geriye dönük uyumluluk)
+      console.error('Firebase Storage yükleme/optimizasyon hatası:', storageError);
+
+      // Boyut/optimizasyon kaynaklı hatalarda fallback kullanma, direkt hata döndür
+      if (
+        storageError &&
+        (storageError.code === 'OPTIMIZED_IMAGE_TOO_LARGE' ||
+          storageError.code === 'SHARP_NOT_AVAILABLE')
+      ) {
+        return {
+          success: false,
+          error: storageError.message || 'Görsel optimize edilemedi'
+        };
+      }
+
+      // Diğer hatalarda eski yönteme (public klasörüne kopyalama) geriye dönük uyumluluk için izin ver
       const publicDir = path.join(__dirname, '../public');
       if (!fs.existsSync(publicDir)) {
         fs.mkdirSync(publicDir, { recursive: true });
@@ -2044,6 +2147,113 @@ ipcMain.handle('select-image-file', async (event, productId = null) => {
     }
   } catch (error) {
     console.error('Dosya seçme hatası:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Mevcut Firebase Storage ürün görsellerini yeniden optimize edip overwrite eden batch job
+async function optimizeAllProductImages() {
+  if (!sharp) {
+    throw new Error('Görsel optimizasyon modülü (sharp) yüklenemedi');
+  }
+  if (!storage || !storageRef || !storageUploadBytes) {
+    throw new Error('Firebase Storage başlatılamadı');
+  }
+
+  // db.products içindeki tüm ürünleri dolaş
+  const products = db.products || [];
+  let processed = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  const https = require('https');
+
+  const downloadToBuffer = (url) => {
+    return new Promise((resolve, reject) => {
+      https
+        .get(url, (response) => {
+          if (response.statusCode !== 200) {
+            reject(new Error(`HTTP ${response.statusCode}`));
+            return;
+          }
+          const chunks = [];
+          response.on('data', (chunk) => chunks.push(chunk));
+          response.on('end', () => resolve(Buffer.concat(chunks)));
+        })
+        .on('error', (err) => reject(err));
+    });
+  };
+
+  for (const product of products) {
+    const imageUrl = product.image;
+
+    // Görsel yoksa ya da Firebase Storage URL değilse atla
+    if (
+      !imageUrl ||
+      typeof imageUrl !== 'string' ||
+      !imageUrl.includes('firebasestorage.googleapis.com')
+    ) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      console.log(`🔄 Ürün görseli optimize ediliyor: ${product.name} (${imageUrl})`);
+
+      // URL'den storage path çıkar
+      const urlMatch = imageUrl.match(/\/o\/([^?]+)/);
+      if (!urlMatch || !urlMatch[1]) {
+        console.warn('⚠️ Geçersiz Storage URL formatı, atlanıyor:', imageUrl);
+        skipped++;
+        continue;
+      }
+      const filePathInStorage = decodeURIComponent(urlMatch[1]);
+      const imageRef = storageRef(storage, filePathInStorage);
+
+      // Remote görseli indir
+      const originalBuffer = await downloadToBuffer(imageUrl);
+
+      // Optimize et
+      const { buffer: optimizedBuffer, sizeKB } =
+        await optimizeImageBufferToWebP(originalBuffer);
+
+      // Aynı path'e overwrite et (sadece optimize sürüm kalır)
+      const metadata = {
+        contentType: 'image/webp',
+        cacheControl: 'public, max-age=31536000, immutable'
+      };
+      await storageUploadBytes(imageRef, optimizedBuffer, metadata);
+
+      console.log(
+        `✅ Ürün görseli yeniden optimize edildi: ${product.name} -> ${sizeKB.toFixed(
+          1
+        )} KB`
+      );
+      processed++;
+    } catch (err) {
+      console.error(
+        `❌ Ürün görseli optimize edilemedi (${product.name || product.id}):`,
+        err
+      );
+      failed++;
+      // Devam et
+    }
+  }
+
+  console.log(
+    `📊 Görsel optimize özeti -> işlendi: ${processed}, atlandı: ${skipped}, hata: ${failed}`
+  );
+
+  return { success: true, processed, skipped, failed };
+}
+
+// Batch job'ı UI'dan tetiklemek için IPC
+ipcMain.handle('optimize-all-product-images', async () => {
+  try {
+    const result = await optimizeAllProductImages();
+    return result;
+  } catch (error) {
+    console.error('❌ Toplu görsel optimizasyon hatası:', error);
     return { success: false, error: error.message };
   }
 });
@@ -4616,6 +4826,17 @@ function generateMobileHTML(serverURL) {
       flex-direction: column;
       padding: 5px;
     }
+    /* İçerideki boş masalar - İçeri butonuyla aynı soft pembe ton */
+    .table-btn.inside-empty {
+      background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
+      border-color: #fbcfe8;
+      color: #9d174d;
+    }
+    .table-btn.inside-empty .table-number,
+    .table-btn.inside-empty .table-label {
+      color: #9d174d;
+    }
+    /* Dışarıdaki boş masalar - mevcut soft sarı ton */
     .table-btn.outside-empty {
       background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
       border-color: #facc15;
@@ -4646,16 +4867,17 @@ function generateMobileHTML(serverURL) {
       color: white;
       box-shadow: 0 4px 12px rgba(168, 85, 247, 0.4);
     }
+    /* Dolu masalar - içeride/dışarıda tümü için kan kırmızısı ton */
     .table-btn.has-order {
-      border-color: #047857;
-      background: linear-gradient(135deg, #065f46 0%, #022c22 100%);
-      color: #ecfdf5;
+      border-color: #7f1d1d;
+      background: linear-gradient(135deg, #b91c1c 0%, #7f1d1d 100%);
+      color: #fee2e2;
     }
     .table-btn.has-order.selected {
-      border-color: #22c55e;
-      background: linear-gradient(135deg, #047857 0%, #022c22 100%);
-      color: #ecfdf5;
-      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.5);
+      border-color: #b91c1c;
+      background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%);
+      color: #fee2e2;
+      box-shadow: 0 4px 14px rgba(220, 38, 38, 0.6);
     }
     .table-btn.has-order::before {
       content: '●';
@@ -4681,29 +4903,65 @@ function generateMobileHTML(serverURL) {
     .table-btn.outside-empty .table-label {
       color: #92400e;
     }
+    /* Kategori sekmeleri - 2 satırlı, yatay (sağa-sola) kaydırmalı grid yapı */
     .category-tabs {
-      display: flex;
-      gap: 10px;
-      overflow-x: auto;
-      padding-bottom: 8px;
+      display: grid;
+      grid-auto-flow: column;                /* Sütunları yatayda akıt */
+      grid-auto-columns: minmax(100px, 1fr); /* Her kategori için sabit genişlik */
+      grid-template-rows: repeat(2, auto);   /* Aynı anda 2 satır göster */
+      column-gap: 8px;
+      row-gap: 6px;
+      overflow-x: auto;                      /* Sağa-sola kaydırma */
+      overflow-y: hidden;
+      padding-bottom: 4px;
       -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
+      scrollbar-width: thin;
     }
     .category-tabs::-webkit-scrollbar {
-      display: none;
+      height: 4px;
+    }
+    .category-tabs::-webkit-scrollbar-thumb {
+      background: #d4b5ff;
+      border-radius: 999px;
     }
     .category-tab {
-      padding: 12px 20px;
+      padding: 8px 6px;
       border: 2px solid #e5e7eb;
       border-radius: 12px;
       background: white;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 600;
-      white-space: nowrap;
+      white-space: normal;
+      text-align: center;
       cursor: pointer;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       color: #6b7280;
       box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    /* Kategori butonları için yumuşak pastel arkaplanlar (aktif olmayanlar) */
+    .category-tab:nth-child(6n+1):not(.active) {
+      background: #fdf2f8;           /* çok açık pembe */
+      border-color: #fbcfe8;
+    }
+    .category-tab:nth-child(6n+2):not(.active) {
+      background: #f5f3ff;           /* çok açık mor/lila */
+      border-color: #ddd6fe;
+    }
+    .category-tab:nth-child(6n+3):not(.active) {
+      background: #eff6ff;           /* çok açık mavi */
+      border-color: #bfdbfe;
+    }
+    .category-tab:nth-child(6n+4):not(.active) {
+      background: #ecfdf3;           /* çok açık yeşil */
+      border-color: #bbf7d0;
+    }
+    .category-tab:nth-child(6n+5):not(.active) {
+      background: #fffbeb;           /* çok açık sarı */
+      border-color: #fef3c7;
+    }
+    .category-tab:nth-child(6n+6):not(.active) {
+      background: #fef2f2;           /* çok açık kırmızı/rose */
+      border-color: #fecaca;
     }
     .category-tab:active {
       transform: scale(0.96);
@@ -5577,15 +5835,33 @@ function generateMobileHTML(serverURL) {
       font-size: 16px;
       font-weight: 700;
       color: #1f2937;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
       padding: 0 5px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+      background: #f9fafb;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
+      padding: 10px 12px;
+    }
+    .existing-orders-title-left {
       display: flex;
       align-items: center;
       gap: 8px;
     }
-    .existing-orders-title::before {
+    .existing-orders-title-left::before {
       content: '📋';
       font-size: 18px;
+    }
+    .existing-orders-toggle-icon {
+      font-size: 14px;
+      color: #6b7280;
+    }
+    .existing-orders-content {
+      margin-top: 4px;
     }
     .order-card {
       background: white;
@@ -5707,11 +5983,6 @@ function generateMobileHTML(serverURL) {
 </head>
 <body>
   <div class="container">
-    <div class="header">
-      <h1>📱 MAKARA Mobil Sipariş</h1>
-      <p>Hızlı ve Kolay Sipariş Alma</p>
-    </div>
-    
     <!-- PIN Giriş Ekranı - Kurumsal ve Profesyonel -->
     <div id="pinSection" class="pin-section">
       <img src="${serverURL}/assets/login.png" alt="Login" class="login-image" onerror="this.style.display='none';">
@@ -5741,7 +6012,7 @@ function generateMobileHTML(serverURL) {
     </div>
     
     <!-- Ana Sipariş Ekranı -->
-    <div id="mainSection" style="display: none; padding-top: 60px;">
+    <div id="mainSection" style="display: none; padding-top: 16px;">
       <!-- Çıkış Yap Butonu - Sol Üst (masalar ekranında görünecek) -->
       <button class="logout-btn" id="mainLogoutBtn" onclick="showLogoutModal()" title="Çıkış Yap" style="display: none;">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
@@ -5750,9 +6021,7 @@ function generateMobileHTML(serverURL) {
         <span>Çıkış Yap</span>
       </button>
       
-      <div class="staff-info" id="staffInfo" style="display: none;">
-        <p>Garson: <span id="staffName"></span></p>
-      </div>
+      <!-- Garson bilgisi gösterilmesin (taslaktan kaldırıldı) -->
       
       <!-- Masa Tipi Seçim Ekranı -->
       <div id="tableTypeSelection" style="display: block; position: fixed; inset: 0; background: white; z-index: 1000; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px;">
@@ -5846,10 +6115,17 @@ function generateMobileHTML(serverURL) {
           <span style="font-size: 13px; font-weight: 600; color: #6b7280;" id="selectedTableInfo"></span>
         </div>
         
-        <!-- Mevcut Siparişler -->
+        <!-- Mevcut Siparişler (açılır/kapanır) -->
         <div class="existing-orders" id="existingOrders" style="display: none;">
-          <div class="existing-orders-title">Mevcut Siparişler</div>
-          <div id="existingOrdersList"></div>
+          <button type="button" class="existing-orders-title" onclick="toggleExistingOrders()">
+            <div class="existing-orders-title-left">
+              <span>Mevcut Siparişler</span>
+            </div>
+            <span class="existing-orders-toggle-icon" id="existingOrdersToggleIcon">▼</span>
+          </button>
+          <div class="existing-orders-content" id="existingOrdersContent" style="display: none;">
+            <div id="existingOrdersList"></div>
+          </div>
         </div>
         
         <!-- Ürünler -->
@@ -6031,6 +6307,7 @@ function generateMobileHTML(serverURL) {
     let tables = [];
     let currentTableType = 'inside';
     let orderNote = '';
+    let existingOrdersExpanded = false;
     
     // PIN oturum yönetimi (1 saat)
     const SESSION_DURATION = 60 * 60 * 1000;
@@ -6074,9 +6351,15 @@ function generateMobileHTML(serverURL) {
         currentStaff = savedStaff;
         document.getElementById('pinSection').style.display = 'none';
         document.getElementById('mainSection').style.display = 'block';
-        document.getElementById('staffName').textContent = currentStaff.name + ' ' + currentStaff.surname;
-        // İlk girişte staff-info'yu gizle, sadece çıkış yap butonu görünsün
-        document.getElementById('staffInfo').style.display = 'none';
+        // Garson adı gösterilecek bir alan artık olmadığı için DOM güncellemesi opsiyonel
+        const staffNameEl = document.getElementById('staffName');
+        if (staffNameEl) {
+          staffNameEl.textContent = currentStaff.name + ' ' + currentStaff.surname;
+        }
+        const staffInfoEl = document.getElementById('staffInfo');
+        if (staffInfoEl) {
+          staffInfoEl.style.display = 'none';
+        }
         document.getElementById('tableTypeSelection').style.display = 'flex';
         // Sipariş gönder modalını gizle
         document.getElementById('cart').style.display = 'none';
@@ -6120,14 +6403,20 @@ function generateMobileHTML(serverURL) {
           setTimeout(() => {
             document.getElementById('splashScreen').style.display = 'none';
             document.getElementById('mainSection').style.display = 'block';
-            document.getElementById('staffName').textContent = currentStaff.name + ' ' + currentStaff.surname;
-        // İlk girişte staff-info'yu gizle, sadece çıkış yap butonu görünsün
-        document.getElementById('staffInfo').style.display = 'none';
-        document.getElementById('tableTypeSelection').style.display = 'flex';
-        // Sipariş gönder modalını gizle
-        document.getElementById('cart').style.display = 'none';
-        loadData();
-        initWebSocket();
+            const staffNameEl = document.getElementById('staffName');
+            if (staffNameEl) {
+              staffNameEl.textContent = currentStaff.name + ' ' + currentStaff.surname;
+            }
+            // Garson infosu artık gösterilmiyor
+            const staffInfoEl = document.getElementById('staffInfo');
+            if (staffInfoEl) {
+              staffInfoEl.style.display = 'none';
+            }
+            document.getElementById('tableTypeSelection').style.display = 'flex';
+            // Sipariş gönder modalını gizle
+            document.getElementById('cart').style.display = 'none';
+            loadData();
+            initWebSocket();
           }, 2000);
         } else {
           errorDiv.textContent = result.error || 'Şifre hatalı';
@@ -6219,8 +6508,11 @@ function generateMobileHTML(serverURL) {
       currentTableType = type;
       document.getElementById('tableTypeSelection').style.display = 'none';
       document.getElementById('tableSelection').style.display = 'block';
-      document.getElementById('staffInfo').style.display = 'block';
-      document.getElementById('mainLogoutBtn').style.display = 'flex';
+      // Garson bilgisi ve ana logout butonu gösterilmesin
+      const staffInfoEl = document.getElementById('staffInfo');
+      if (staffInfoEl) staffInfoEl.style.display = 'none';
+      const logoutBtnEl = document.getElementById('mainLogoutBtn');
+      if (logoutBtnEl) logoutBtnEl.style.display = 'none';
       // Sipariş gönder modalını göster
       document.getElementById('cart').style.display = 'block';
       renderTables();
@@ -6230,8 +6522,10 @@ function generateMobileHTML(serverURL) {
     function goBackToTypeSelection() {
       document.getElementById('tableSelection').style.display = 'none';
       document.getElementById('tableTypeSelection').style.display = 'flex';
-      document.getElementById('staffInfo').style.display = 'none';
-      document.getElementById('mainLogoutBtn').style.display = 'none';
+      const staffInfoEl = document.getElementById('staffInfo');
+      if (staffInfoEl) staffInfoEl.style.display = 'none';
+      const logoutBtnEl = document.getElementById('mainLogoutBtn');
+      if (logoutBtnEl) logoutBtnEl.style.display = 'none';
       // Sipariş gönder modalını gizle
       document.getElementById('cart').style.display = 'none';
       selectedTable = null;
@@ -6288,6 +6582,7 @@ function generateMobileHTML(serverURL) {
           const hasOrderClass = table.hasOrder ? ' has-order' : '';
           const selectedClass = selectedTable && selectedTable.id === table.id ? ' selected' : '';
           const outsideEmptyClass = (table.type === 'outside' && !table.hasOrder) ? ' outside-empty' : '';
+          const insideEmptyClass = (table.type === 'inside' && !table.hasOrder) ? ' inside-empty' : '';
           
           // Masa numaralandırması: İç Masa 1, Dış Masa 1 gibi
           const tableTypeLabel = table.type === 'inside' ? 'İç Masa' : 'Dış Masa';
@@ -6295,10 +6590,10 @@ function generateMobileHTML(serverURL) {
           
           // Durum etiketi: Dolu veya Boş
           const statusLabel = table.hasOrder ? 'Dolu' : 'Boş';
-          // Dolu masalar için daha koyu yeşil ton
-          const statusColor = table.hasOrder ? '#166534' : '#6b7280';
+          // Dolu masalar için kan kırmızısı ton
+          const statusColor = table.hasOrder ? '#b91c1c' : '#6b7280';
           
-          return '<button class="table-btn' + hasOrderClass + selectedClass + outsideEmptyClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')">' +
+          return '<button class="table-btn' + hasOrderClass + selectedClass + outsideEmptyClass + insideEmptyClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')">' +
             '<div class="table-number">' + table.number + '</div>' +
             '<div class="table-label">' + tableDisplayName + '</div>' +
             '<div style="font-size: 10px; font-weight: 600; color: ' + statusColor + '; margin-top: 4px; padding: 2px 6px; background: ' + (table.hasOrder ? 'rgba(22, 101, 52, 0.15)' : 'rgba(107, 114, 128, 0.1)') + '; border-radius: 6px;">' + statusLabel + '</div>' +
@@ -6306,7 +6601,7 @@ function generateMobileHTML(serverURL) {
         }).join('');
       }
       
-      // PAKET Başlığı - Premium ve Modern
+        // PAKET Başlığı - Premium ve Modern
       if (packageTables.length > 0) {
         html += '<div style="grid-column: 1 / -1; margin-top: 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center;">';
         html += '<div style="display: flex; align-items: center; gap: 8px; padding: 10px 20px; background: linear-gradient(135deg, #f97316 0%, #fb923c 30%, #fbbf24 70%, #fcd34d 100%); border-radius: 16px; box-shadow: 0 4px 16px rgba(249, 115, 22, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.2) inset; position: relative; overflow: hidden;">';
@@ -6324,25 +6619,25 @@ function generateMobileHTML(serverURL) {
           const hasOrderClass = table.hasOrder ? ' has-order' : '';
           const selectedClass = selectedTable && selectedTable.id === table.id ? ' selected' : '';
           
-          // Dolu için yeşil, boş için turuncu premium renkler
+          // Boş için turuncu, dolu için kan kırmızısı premium renkler
           const bgGradient = table.hasOrder 
-            ? 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 50%, #6ee7b7 100%)' 
+            ? 'linear-gradient(135deg, #fecaca 0%, #fca5a5 50%, #ef4444 100%)' 
             : 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 50%, #fed7aa 100%)';
-          const borderColor = table.hasOrder ? '#10b981' : '#f97316';
+          const borderColor = table.hasOrder ? '#b91c1c' : '#f97316';
           const numberBg = table.hasOrder 
-            ? 'linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%)' 
+            ? 'linear-gradient(135deg, #dc2626 0%, #b91c1c 50%, #7f1d1d 100%)' 
             : 'linear-gradient(135deg, #f97316 0%, #fb923c 50%, #fd7e14 100%)';
-          const iconColor = table.hasOrder ? '#10b981' : '#f97316';
+          const iconColor = table.hasOrder ? '#b91c1c' : '#f97316';
           
           return '<button class="table-btn package-table-btn' + hasOrderClass + selectedClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')" style="background: ' + bgGradient + '; border: 3px solid ' + borderColor + '; box-shadow: 0 4px 16px ' + (table.hasOrder ? 'rgba(16, 185, 129, 0.35)' : 'rgba(249, 115, 22, 0.35)') + ', 0 0 0 1px rgba(255, 255, 255, 0.4) inset; position: relative; overflow: hidden; transform: scale(1); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);">' +
             '<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: ' + (table.hasOrder ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, transparent 100%)' : 'linear-gradient(135deg, rgba(249, 115, 22, 0.15) 0%, transparent 100%)') + '; pointer-events: none; opacity: 0.8;"></div>' +
             '<div style="position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%); pointer-events: none; transform: rotate(45deg);"></div>' +
             '<div class="table-number" style="background: ' + numberBg + '; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 900; color: white; box-shadow: 0 4px 16px ' + (table.hasOrder ? 'rgba(16, 185, 129, 0.5)' : 'rgba(249, 115, 22, 0.5)') + ', 0 0 0 3px rgba(255, 255, 255, 0.4) inset; margin-bottom: 8px; position: relative; z-index: 2; transition: all 0.3s;">' + table.number + '</div>' +
             '<div style="position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 5px;">' +
-            '<div class="table-label" style="font-size: 12px; font-weight: 900; color: ' + (table.hasOrder ? '#047857' : '#9a3412') + '; letter-spacing: 0.8px; text-shadow: 0 1px 2px rgba(255, 255, 255, 0.5);">' + table.name + '</div>' +
-            (table.hasOrder ? '<div style="width: 8px; height: 8px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; box-shadow: 0 0 12px rgba(16, 185, 129, 0.8), 0 0 6px rgba(16, 185, 129, 0.6); animation: pulse 2s infinite;"></div>' : '<div style="width: 6px; height: 6px; background: linear-gradient(135deg, #f97316 0%, #fb923c 100%); border-radius: 50%; opacity: 0.6;"></div>') +
+            '<div class="table-label" style="font-size: 12px; font-weight: 900; color: ' + (table.hasOrder ? '#7f1d1d' : '#9a3412') + '; letter-spacing: 0.8px; text-shadow: 0 1px 2px rgba(255, 255, 255, 0.5);">' + table.name + '</div>' +
+            (table.hasOrder ? '<div style="width: 8px; height: 8px; background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); border-radius: 50%; box-shadow: 0 0 12px rgba(248, 113, 113, 0.9), 0 0 6px rgba(248, 113, 113, 0.7); animation: pulse 2s infinite;"></div>' : '<div style="width: 6px; height: 6px; background: linear-gradient(135deg, #f97316 0%, #fb923c 100%); border-radius: 50%; opacity: 0.6;"></div>') +
             '</div>' +
-            (table.hasOrder ? '<div style="position: absolute; top: 6px; right: 6px; width: 12px; height: 12px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; box-shadow: 0 0 12px rgba(16, 185, 129, 0.9), 0 0 6px rgba(16, 185, 129, 0.7); animation: pulse 2s infinite; z-index: 3;"></div>' : '') +
+            (table.hasOrder ? '<div style="position: absolute; top: 6px; right: 6px; width: 12px; height: 12px; background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%); border-radius: 50%; box-shadow: 0 0 12px rgba(248, 113, 113, 0.9), 0 0 6px rgba(248, 113, 113, 0.7); animation: pulse 2s infinite; z-index: 3;"></div>' : '') +
           '</button>';
         }).join('');
       }
@@ -6387,13 +6682,32 @@ function generateMobileHTML(serverURL) {
     function renderExistingOrders(orders) {
       const ordersContainer = document.getElementById('existingOrders');
       const ordersList = document.getElementById('existingOrdersList');
+      const contentEl = document.getElementById('existingOrdersContent');
+      const toggleIconEl = document.getElementById('existingOrdersToggleIcon');
       
       if (!orders || orders.length === 0) {
-        ordersContainer.style.display = 'none';
+        if (ordersContainer) {
+          ordersContainer.style.display = 'none';
+        }
+        existingOrdersExpanded = false;
+        if (contentEl) {
+          contentEl.style.display = 'none';
+        }
+        if (toggleIconEl) {
+          toggleIconEl.textContent = '▼';
+        }
         return;
       }
       
-      ordersContainer.style.display = 'block';
+      if (ordersContainer) {
+        ordersContainer.style.display = 'block';
+      }
+      if (contentEl) {
+        contentEl.style.display = existingOrdersExpanded ? 'block' : 'none';
+      }
+      if (toggleIconEl) {
+        toggleIconEl.textContent = existingOrdersExpanded ? '▲' : '▼';
+      }
       
       ordersList.innerHTML = orders.map(order => {
         const orderDate = order.order_date || '';
@@ -6448,8 +6762,26 @@ function generateMobileHTML(serverURL) {
         cartEl.style.display = 'none';
         cartEl.classList.remove('open');
       }
-      document.getElementById('searchInput').value = '';
+      const searchInputEl = document.getElementById('searchInput');
+      if (searchInputEl) {
+        searchInputEl.value = '';
+      }
+      // Mevcut siparişler panelini kapalı hale getir
+      existingOrdersExpanded = false;
+      const contentEl = document.getElementById('existingOrdersContent');
+      const toggleIconEl = document.getElementById('existingOrdersToggleIcon');
+      if (contentEl) contentEl.style.display = 'none';
+      if (toggleIconEl) toggleIconEl.textContent = '▼';
       renderTables();
+    }
+
+    function toggleExistingOrders() {
+      const contentEl = document.getElementById('existingOrdersContent');
+      const toggleIconEl = document.getElementById('existingOrdersToggleIcon');
+      if (!contentEl || !toggleIconEl) return;
+      existingOrdersExpanded = !existingOrdersExpanded;
+      contentEl.style.display = existingOrdersExpanded ? 'block' : 'none';
+      toggleIconEl.textContent = existingOrdersExpanded ? '▲' : '▼';
     }
     
     // Masa Aktar Modal İşlemleri
@@ -6497,10 +6829,11 @@ function generateMobileHTML(serverURL) {
             '</div>';
           }
           
-          return '<button onclick="selectSourceTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + (isSelected ? '#059669' : '#065f46') + '; border-radius: 12px; background: ' + (isSelected ? 'linear-gradient(135deg, #065f46 0%, #022c22 100%)' : 'linear-gradient(135deg, #047857 0%, #065f46 100%)') + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(5, 150, 105, 0.45)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
-            '<div style="width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #047857 0%, #022c22 100%); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: white; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(5, 150, 105, 0.6);">' + table.number + '</div>' +
-            '<span style="font-size: 11px; color: #ecfdf5; font-weight: 700;">' + table.name + '</span>' +
-            '<span style="font-size: 9px; color: #bbf7d0; margin-top: 4px; font-weight: 600;">Dolu</span>' +
+          // Dolu masalar için mobil masa renkleriyle uyumlu kan kırmızısı tonlar
+          return '<button onclick="selectSourceTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + (isSelected ? '#b91c1c' : '#7f1d1d') + '; border-radius: 12px; background: ' + (isSelected ? 'linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%)' : 'linear-gradient(135deg, #b91c1c 0%, #7f1d1d 100%)') + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(220, 38, 38, 0.5)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
+            '<div style="width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: white; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(248, 113, 113, 0.7);">' + table.number + '</div>' +
+            '<span style="font-size: 11px; color: #fee2e2; font-weight: 700;">' + table.name + '</span>' +
+            '<span style="font-size: 9px; color: #fecaca; margin-top: 4px; font-weight: 600;">Dolu</span>' +
           '</button>';
         }).join('');
         
@@ -6529,20 +6862,21 @@ function generateMobileHTML(serverURL) {
             '</div>';
           }
           
+          // Boş masalar için mobil masa renkleriyle uyumlu backgroundlar
           const bgColor = isOutside
-            ? (isSelected ? '#fef3c7' : '#fffbeb')
-            : (isSelected ? '#ede9fe' : '#faf5ff');
+            ? (isSelected ? '#fef3c7' : '#fffbeb')  // dışarı: soft sarı
+            : (isSelected ? '#fce7f3' : '#fdf2f8'); // içeri: soft pembe
           const borderColor = isOutside
             ? (isSelected ? '#fbbf24' : '#facc15')
-            : (isSelected ? '#a855f7' : '#c4b5fd');
+            : (isSelected ? '#f472b6' : '#fbcfe8');
           const circleBg = isOutside
             ? 'linear-gradient(135deg, #facc15 0%, #eab308 100%)'
-            : '#f3f4f6';
-          const nameColor = isOutside ? '#92400e' : '#111827';
-          const statusColor = isOutside ? '#b45309' : '#4b5563';
+            : 'linear-gradient(135deg, #f9a8d4 0%, #f472b6 100%)';
+          const nameColor = isOutside ? '#92400e' : '#9d174d';
+          const statusColor = isOutside ? '#b45309' : '#be185d';
           
           return '<button onclick="selectTargetTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + borderColor + '; border-radius: 12px; background: ' + bgColor + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(148, 163, 184, 0.3)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
-            '<div style="width: 40px; height: 40px; border-radius: 50%; background: ' + circleBg + '; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: ' + (isOutside ? '#78350f' : '#4b5563') + '; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(148, 163, 184, 0.3);">' + table.number + '</div>' +
+            '<div style="width: 40px; height: 40px; border-radius: 50%; background: ' + circleBg + '; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: ' + (isOutside ? '#78350f' : '#831843') + '; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(248, 113, 113, 0.25);">' + table.number + '</div>' +
             '<span style="font-size: 11px; color: ' + nameColor + '; font-weight: 700;">' + table.name + '</span>' +
             '<span style="font-size: 9px; color: ' + statusColor + '; margin-top: 4px; font-weight: 600;">Boş</span>' +
           '</button>';

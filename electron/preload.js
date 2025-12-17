@@ -60,6 +60,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteStaff: (staffId) => ipcRenderer.invoke('delete-staff', staffId),
   getStaff: () => ipcRenderer.invoke('get-staff'),
   verifyStaffPin: (password) => ipcRenderer.invoke('verify-staff-pin', password),
+  // Image optimization API
+  optimizeAllProductImages: () => ipcRenderer.invoke('optimize-all-product-images'),
   // Real-time updates
   onNewOrderCreated: (callback) => {
     ipcRenderer.on('new-order-created', (event, data) => callback(data));

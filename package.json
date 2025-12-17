@@ -1,6 +1,6 @@
 {
   "name": "makara-pos",
-  "version": "2.2.5",
+  "version": "2.2.6",
   "description": "MAKARA - Modern POS Uygulaması",
   "main": "electron/main.js",
   "scripts": {
@@ -28,6 +28,7 @@
     "qrcode": "^1.5.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "sharp": "^0.33.5",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {
