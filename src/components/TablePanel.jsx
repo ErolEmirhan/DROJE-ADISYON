@@ -12,6 +12,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
   const [showPartialPaymentModal, setShowPartialPaymentModal] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [isSyncingTables, setIsSyncingTables] = useState(false);
 
   const insideTables = Array.from({ length: 20 }, (_, i) => ({
     id: `inside-${i + 1}`,
@@ -35,9 +36,25 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
     name: `Paket ${i + 1}`
   }));
 
-  // Masa siparişlerini yükle
+  // Masa siparişlerini yükle ve senkronizasyon durumunu kontrol et
   useEffect(() => {
     loadTableOrders();
+    
+    // Kaydedilmiş senkronizasyon durumunu yükle
+    const loadSyncStatus = async () => {
+      if (window.electronAPI && window.electronAPI.getTableSyncStatus) {
+        try {
+          const status = await window.electronAPI.getTableSyncStatus();
+          if (status && status.success) {
+            setIsSyncingTables(status.isActive || status.isEnabled);
+          }
+        } catch (error) {
+          console.error('Senkronizasyon durumu yüklenemedi:', error);
+        }
+      }
+    };
+    
+    loadSyncStatus();
     
     // Yeni sipariş geldiğinde dinle (mobil cihazdan veya Electron'dan gelen siparişler için)
     if (window.electronAPI && window.electronAPI.onNewOrderCreated) {
@@ -330,19 +347,77 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
     }
   };
 
+  // Veri gönderme butonuna tıklandığında
+  const handleToggleTableSync = async () => {
+    if (!window.electronAPI) {
+      alert('API mevcut değil');
+      return;
+    }
+
+    try {
+      if (isSyncingTables) {
+        // Durdur
+        const result = await window.electronAPI.stopTableSync();
+        if (result && result.success) {
+          setIsSyncingTables(false);
+        } else {
+          alert('Veri gönderimi durdurulamadı: ' + (result?.error || 'Bilinmeyen hata'));
+        }
+      } else {
+        // Başlat
+        const result = await window.electronAPI.startTableSync();
+        if (result && result.success) {
+          setIsSyncingTables(true);
+        } else {
+          alert('Veri gönderimi başlatılamadı: ' + (result?.error || 'Bilinmeyen hata'));
+        }
+      }
+    } catch (error) {
+      console.error('Veri gönderimi hatası:', error);
+      alert('Veri gönderimi hatası: ' + error.message);
+    }
+  };
+
   return (
     <div className="mb-4">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold gradient-text">Masalar</h2>
-        <button
-          onClick={() => setShowTransferModal(true)}
-          className="px-6 py-3 bg-gradient-to-r from-indigo-500 to-blue-500 hover:from-indigo-600 hover:to-blue-600 text-white font-bold rounded-xl transition-all duration-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center gap-2"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-          </svg>
-          <span>Masa Aktar</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleToggleTableSync}
+            className={`px-6 py-3 font-bold rounded-xl transition-all duration-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center gap-2 ${
+              isSyncingTables
+                ? 'bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white'
+                : 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white'
+            }`}
+          >
+            {isSyncingTables ? (
+              <>
+                <svg className="w-5 h-5 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                </svg>
+                <span>Gönderimi Durdur</span>
+              </>
+            ) : (
+              <>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <span>Veri Gönder</span>
+              </>
+            )}
+          </button>
+          <button
+            onClick={() => setShowTransferModal(true)}
+            className="px-6 py-3 bg-gradient-to-r from-indigo-500 to-blue-500 hover:from-indigo-600 hover:to-blue-600 text-white font-bold rounded-xl transition-all duration-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+            </svg>
+            <span>Masa Aktar</span>
+          </button>
+        </div>
       </div>
       
       {/* Masa Tipi Seçimi - Büyük ve Ortalanmış */}

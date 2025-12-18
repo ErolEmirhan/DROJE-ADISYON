@@ -70,6 +70,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => {
       ipcRenderer.removeAllListeners('new-order-created');
     };
-  }
+  },
+  // Table Sync API
+  startTableSync: () => ipcRenderer.invoke('start-table-sync'),
+  stopTableSync: () => ipcRenderer.invoke('stop-table-sync'),
+  getTableSyncStatus: () => ipcRenderer.invoke('get-table-sync-status')
 });
 

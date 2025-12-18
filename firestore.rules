@@ -6,6 +6,11 @@ service cloud.firestore {
       allow read: if true; // PIN kontrolü frontend'de yapılacak
       allow write: if false; // Sadece Electron uygulaması yazabilir (Firebase Admin SDK ile)
     }
+    // Tables koleksiyonu - sadece okuma (admin dashboard için)
+    match /tables/{tableId} {
+      allow read: if true; // PIN kontrolü frontend'de yapılacak
+      allow write: if false; // Sadece Electron uygulaması yazabilir (Firebase Admin SDK ile)
+    }
   }
 }
 
