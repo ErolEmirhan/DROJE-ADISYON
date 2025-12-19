@@ -50,6 +50,7 @@ const r2Client = new S3Client({
   },
 });
 
+// Ana Firebase (satışlar, ürünler, kategoriler için)
 try {
   // Firebase modüllerini dinamik olarak yükle
   const firebaseAppModule = require('firebase/app');
@@ -81,10 +82,42 @@ try {
   storageUploadBytes = firebaseStorageModule.uploadBytes;
   storageGetDownloadURL = firebaseStorageModule.getDownloadURL;
   storageDeleteObject = firebaseStorageModule.deleteObject;
-  console.log('Firebase başarıyla başlatıldı (Firestore + Storage)');
+  console.log('✅ Ana Firebase başarıyla başlatıldı (Firestore + Storage)');
 } catch (error) {
-  console.error('Firebase başlatılamadı:', error);
+  console.error('❌ Ana Firebase başlatılamadı:', error);
   console.log('Firebase olmadan devam ediliyor...');
+}
+
+// Masalar için ayrı Firebase (makaramasalar)
+let tablesFirebaseApp = null;
+let tablesFirestore = null;
+let tablesFirebaseCollection = null;
+let tablesFirebaseDoc = null;
+let tablesFirebaseSetDoc = null;
+
+try {
+  const firebaseAppModule = require('firebase/app');
+  const firebaseFirestoreModule = require('firebase/firestore');
+  
+  const tablesFirebaseConfig = {
+    apiKey: "AIzaSyDu_NUrgas4wZ_wdfAYE-DgxqTpb7vKxyo",
+    authDomain: "makaramasalar.firebaseapp.com",
+    projectId: "makaramasalar",
+    storageBucket: "makaramasalar.firebasestorage.app",
+    messagingSenderId: "840151572206",
+    appId: "1:840151572206:web:0afaf93deea636309e5dff",
+    measurementId: "G-2S0J3566ZY"
+  };
+
+  tablesFirebaseApp = firebaseAppModule.initializeApp(tablesFirebaseConfig, 'tables');
+  tablesFirestore = firebaseFirestoreModule.getFirestore(tablesFirebaseApp);
+  tablesFirebaseCollection = firebaseFirestoreModule.collection;
+  tablesFirebaseDoc = firebaseFirestoreModule.doc;
+  tablesFirebaseSetDoc = firebaseFirestoreModule.setDoc;
+  console.log('✅ Masalar Firebase başarıyla başlatıldı (makaramasalar)');
+} catch (error) {
+  console.error('❌ Masalar Firebase başlatılamadı:', error);
+  console.log('Masalar Firebase olmadan devam ediliyor...');
 }
 
 let mainWindow;
@@ -1164,6 +1197,11 @@ ipcMain.handle('create-table-order', (event, orderData) => {
 
   saveDatabase();
   
+  // Yeni Firebase'e sadece bu masayı kaydet (makaramasalar)
+  syncSingleTableToFirebase(tableId).catch(err => {
+    console.error('Masa Firebase kaydetme hatası:', err);
+  });
+  
   // Electron renderer process'e güncelleme gönder
   if (mainWindow && mainWindow.webContents) {
     mainWindow.webContents.send('new-order-created', { 
@@ -1367,6 +1405,11 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity, 
     });
   }
 
+  // Yeni Firebase'e sadece bu masayı kaydet (makaramasalar)
+  syncSingleTableToFirebase(order.table_id).catch(err => {
+    console.error('Masa Firebase kaydetme hatası:', err);
+  });
+
   return { success: true, remainingAmount: order.total_amount };
 });
 
@@ -1450,6 +1493,14 @@ ipcMain.handle('transfer-table-order', async (event, sourceTableId, targetTableI
       hasOrder: true
     });
   }
+
+  // Yeni Firebase'e hem kaynak hem hedef masayı kaydet (makaramasalar)
+  syncSingleTableToFirebase(sourceTableId).catch(err => {
+    console.error('Kaynak masa Firebase kaydetme hatası:', err);
+  });
+  syncSingleTableToFirebase(targetTableId).catch(err => {
+    console.error('Hedef masa Firebase kaydetme hatası:', err);
+  });
 
   return { 
     success: true, 
@@ -1581,6 +1632,11 @@ ipcMain.handle('complete-table-order', async (event, orderId, paymentMethod = 'N
     }
   }
 
+  // Yeni Firebase'e masayı boş olarak kaydet (makaramasalar)
+  syncSingleTableToFirebase(order.table_id).catch(err => {
+    console.error('Masa Firebase kaydetme hatası:', err);
+  });
+
   return { success: true, saleId };
 });
 
@@ -1601,6 +1657,15 @@ ipcMain.handle('update-table-order-amount', async (event, orderId, paidAmount) =
   // Eğer tutar 0 veya negatifse siparişi tamamlandı olarak işaretle
   if (order.total_amount <= 0.01) {
     order.status = 'completed';
+    // Yeni Firebase'e masayı boş olarak kaydet (makaramasalar)
+    syncSingleTableToFirebase(order.table_id).catch(err => {
+      console.error('Masa Firebase kaydetme hatası:', err);
+    });
+  } else {
+    // Yeni Firebase'e masayı güncelle (makaramasalar)
+    syncSingleTableToFirebase(order.table_id).catch(err => {
+      console.error('Masa Firebase kaydetme hatası:', err);
+    });
   }
 
   saveDatabase();
@@ -1875,6 +1940,11 @@ ipcMain.handle('pay-table-order-item', async (event, itemId, paymentMethod, paid
       hasOrder: order.total_amount > 0
     });
   }
+
+  // Yeni Firebase'e sadece bu masayı kaydet (makaramasalar)
+  syncSingleTableToFirebase(order.table_id).catch(err => {
+    console.error('Masa Firebase kaydetme hatası:', err);
+  });
 
   return { success: true, remainingAmount: order.total_amount, saleId };
 });
@@ -7940,8 +8010,8 @@ function startAPIServer() {
 
   // Backend resim cache (memory cache - Firebase Storage kullanımını azaltmak için)
   const imageCache = new Map();
-  const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 saat
-  const CACHE_MAX_SIZE = 100; // Maksimum 100 resim cache'de tut
+  const CACHE_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 gün (önceden 24 saat)
+  const CACHE_MAX_SIZE = 1000; // Maksimum 1000 resim cache'de tut (önceden 100)
   
   // Resim proxy endpoint - CORS sorununu çözmek için + Backend cache
   // Image proxy endpoint - Firebase Storage ve R2 görselleri için CORS sorununu çözer
@@ -8710,6 +8780,12 @@ function startAPIServer() {
       saveDatabase();
       const finalTotalAmount = (db.tableOrders || []).find(o => o.id === orderId)?.total_amount || totalAmount;
       
+      // Yeni Firebase'e sadece bu masayı kaydet (makaramasalar) - Mobil personel siparişleri için
+      // Masaüstü uygulamasıyla aynı şekilde direkt çağır (setTimeout gerekmez çünkü saveDatabase senkron)
+      syncSingleTableToFirebase(tableId).catch(err => {
+        console.error('❌ Mobil sipariş Firebase kaydetme hatası:', err);
+      });
+      
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send('new-order-created', { 
           orderId, 
@@ -9067,14 +9143,10 @@ ipcMain.handle('send-broadcast-message', async (event, message) => {
   return { success: true, message: 'Mesaj başarıyla gönderildi' };
 });
 
-// Table Sync IPC Handlers
-let tableSyncInterval = null;
-let isTableSyncActive = false;
-
-// Masaları Firebase'e senkronize et
-async function syncTablesToFirebase() {
-  if (!firestore || !firebaseCollection || !firebaseDoc || !firebaseSetDoc) {
-    console.warn('⚠️ Firebase başlatılamadı, masalar senkronize edilemedi');
+// Tek bir masayı yeni Firebase'e kaydet (makaramasalar) - sadece sipariş değişikliklerinde çağrılır
+async function syncSingleTableToFirebase(tableId) {
+  if (!tablesFirestore || !tablesFirebaseCollection || !tablesFirebaseDoc || !tablesFirebaseSetDoc) {
+    console.warn('⚠️ Masalar Firebase başlatılamadı, masa kaydedilemedi');
     return;
   }
 
@@ -9082,111 +9154,101 @@ async function syncTablesToFirebase() {
     const tableOrders = db.tableOrders || [];
     const tableOrderItems = db.tableOrderItems || [];
 
-    // Her masa için Firebase'de bir doküman oluştur/güncelle
-    const tablesMap = new Map();
+    console.log(`🔍 Masa Firebase'e kaydediliyor: ${tableId}`);
+    console.log(`📊 Toplam sipariş sayısı: ${tableOrders.length}`);
+    console.log(`📦 Toplam item sayısı: ${tableOrderItems.length}`);
 
-    // Tüm siparişleri masalara göre grupla
-    tableOrders.forEach(order => {
-      if (!tablesMap.has(order.table_id)) {
-        tablesMap.set(order.table_id, {
-          table_id: order.table_id,
-          table_name: order.table_name,
-          table_type: order.table_type,
-          table_number: parseInt(order.table_id.replace(/[^0-9]/g, '')) || 0,
-          is_occupied: order.status === 'pending',
-          total_amount: order.total_amount || 0,
-          items: [],
-          status: order.status || 'empty'
-        });
-      }
-
-      const table = tablesMap.get(order.table_id);
-      if (order.status === 'pending') {
-        table.is_occupied = true;
-        table.total_amount = order.total_amount || 0;
-      }
-    });
-
-    // Sipariş item'larını masalara ekle
-    tableOrderItems.forEach(item => {
-      const order = tableOrders.find(o => o.id === item.order_id);
-      if (order && order.status === 'pending') {
-        const table = tablesMap.get(order.table_id);
-        if (table) {
-          table.items.push({
-            product_id: item.product_id,
-            product_name: item.product_name,
-            quantity: item.quantity,
-            price: item.price,
-            isGift: item.isGift || false
-          });
-        }
-      }
-    });
-
-    // Firebase'e kaydet
-    for (const [tableId, tableData] of tablesMap) {
-      try {
-        const tableRef = firebaseDoc(firestore, 'tables', tableId);
-        await firebaseSetDoc(tableRef, tableData, { merge: true });
-      } catch (error) {
-        console.error(`❌ Masa Firebase'e kaydedilemedi (${tableId}):`, error);
-      }
+    // Masa bilgilerini bul
+    const order = tableOrders.find(o => o.table_id === tableId && o.status === 'pending');
+    
+    if (!order) {
+      console.log(`⚠️ Masa için aktif sipariş bulunamadı: ${tableId} - Boş masa olarak kaydedilecek`);
+    } else {
+      console.log(`✅ Aktif sipariş bulundu: Order ID: ${order.id}, Tutar: ${order.total_amount}`);
+    }
+    
+    // Masa numarasını çıkar
+    let tableNumber = 0;
+    let tableName = '';
+    let tableType = 'inside';
+    
+    if (tableId.startsWith('inside-')) {
+      tableNumber = parseInt(tableId.replace('inside-', '')) || 0;
+      tableName = `İçeri ${tableNumber}`;
+      tableType = 'inside';
+    } else if (tableId.startsWith('outside-')) {
+      tableNumber = parseInt(tableId.replace('outside-', '')) || 0;
+      tableName = `Dışarı ${tableNumber}`;
+      tableType = 'outside';
+    } else if (tableId.startsWith('package-inside-')) {
+      tableNumber = parseInt(tableId.replace('package-inside-', '')) || 0;
+      tableName = `Paket ${tableNumber}`;
+      tableType = 'inside';
+    } else if (tableId.startsWith('package-outside-')) {
+      tableNumber = parseInt(tableId.replace('package-outside-', '')) || 0;
+      tableName = `Paket ${tableNumber}`;
+      tableType = 'outside';
     }
 
-    console.log(`✅ ${tablesMap.size} masa Firebase'e senkronize edildi`);
+    const isOccupied = !!order;
+    let totalAmount = 0;
+    let items = [];
+    let orderId = null;
+    let orderDate = null;
+    let orderTime = null;
+    let orderNote = null;
+
+    if (order) {
+      orderId = order.id;
+      totalAmount = parseFloat(order.total_amount) || 0;
+      orderDate = order.order_date || null;
+      orderTime = order.order_time || null;
+      orderNote = order.order_note || null;
+      tableName = order.table_name || tableName;
+      tableType = order.table_type || tableType;
+
+      // Sipariş itemlarını al
+      const orderItems = tableOrderItems.filter(oi => oi.order_id === order.id);
+      items = orderItems.map(item => ({
+        id: item.id,
+        product_id: item.product_id,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        price: parseFloat(item.price) || 0,
+        isGift: item.isGift || false,
+        is_paid: item.is_paid || false,
+        paid_quantity: item.paid_quantity || 0,
+        staff_name: item.staff_name || null,
+        added_date: item.added_date || null,
+        added_time: item.added_time || null
+      }));
+    }
+
+    const tableData = {
+      table_id: tableId,
+      table_number: tableNumber,
+      table_name: tableName,
+      table_type: tableType,
+      is_occupied: isOccupied,
+      total_amount: totalAmount,
+      order_id: orderId,
+      order_date: orderDate,
+      order_time: orderTime,
+      order_note: orderNote,
+      items: items,
+      last_updated: new Date().toISOString()
+    };
+
+    // Yeni Firebase'e kaydet (makaramasalar)
+    const tableRef = tablesFirebaseDoc(tablesFirestore, 'tables', tableId);
+    await tablesFirebaseSetDoc(tableRef, tableData, { merge: true });
+    
+    console.log(`✅ Masa yeni Firebase'e kaydedildi: ${tableName} (${tableId})`);
+    console.log(`📋 Kaydedilen veri: Dolu: ${isOccupied}, Tutar: ${totalAmount}, Item sayısı: ${items.length}`);
   } catch (error) {
-    console.error('❌ Masalar senkronize edilirken hata oluştu:', error);
+    console.error(`❌ Masa yeni Firebase'e kaydedilemedi (${tableId}):`, error);
+    console.error(`❌ Hata detayı:`, error.message);
+    console.error(`❌ Stack trace:`, error.stack);
   }
 }
-
-ipcMain.handle('start-table-sync', async (event) => {
-  if (isTableSyncActive) {
-    return { success: true, message: 'Senkronizasyon zaten aktif' };
-  }
-
-  try {
-    // İlk senkronizasyonu hemen yap
-    await syncTablesToFirebase();
-    
-    // Her 5 saniyede bir senkronize et
-    tableSyncInterval = setInterval(async () => {
-      await syncTablesToFirebase();
-    }, 5000);
-
-    isTableSyncActive = true;
-    console.log('✅ Masa senkronizasyonu başlatıldı');
-    return { success: true, message: 'Masa senkronizasyonu başlatıldı' };
-  } catch (error) {
-    console.error('❌ Masa senkronizasyonu başlatılamadı:', error);
-    return { success: false, error: error.message || 'Senkronizasyon başlatılamadı' };
-  }
-});
-
-ipcMain.handle('stop-table-sync', async (event) => {
-  if (!isTableSyncActive) {
-    return { success: true, message: 'Senkronizasyon zaten durdurulmuş' };
-  }
-
-  try {
-    if (tableSyncInterval) {
-      clearInterval(tableSyncInterval);
-      tableSyncInterval = null;
-    }
-    isTableSyncActive = false;
-    console.log('⏹️ Masa senkronizasyonu durduruldu');
-    return { success: true, message: 'Masa senkronizasyonu durduruldu' };
-  } catch (error) {
-    console.error('❌ Masa senkronizasyonu durdurulamadı:', error);
-    return { success: false, error: error.message || 'Senkronizasyon durdurulamadı' };
-  }
-});
-
-ipcMain.handle('get-table-sync-status', (event) => {
-  return { 
-    success: true, 
-    isActive: isTableSyncActive,
-    isEnabled: isTableSyncActive
-  };
-});
 

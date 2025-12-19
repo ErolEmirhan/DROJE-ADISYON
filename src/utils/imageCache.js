@@ -1,32 +1,41 @@
 // IndexedDB ile görsel cache yönetimi
 let imageCache = {};
 let dbInstance = null;
+const CACHE_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 gün
+const CACHE_MAX_SIZE = 2000; // Maksimum 2000 resim
 
 // IndexedDB başlatma
 export async function initImageCache() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('makaraDesktopImageCache', 1);
+    const request = indexedDB.open('makaraDesktopImageCache', 2); // Version 2'ye yükselt
     
     request.onerror = () => reject(request.error);
     
     request.onsuccess = () => {
       dbInstance = request.result;
-      // Tüm cache'lenmiş resimleri yükle
-      const transaction = dbInstance.transaction(['images'], 'readonly');
-      const store = transaction.objectStore('images');
-      const getAllRequest = store.getAll();
       
-      getAllRequest.onsuccess = async () => {
-        for (const item of getAllRequest.result) {
-          if (item.blob) {
-            const blobUrl = URL.createObjectURL(item.blob);
-            imageCache[item.url] = blobUrl;
+      // Eski cache'leri temizle (30 günden eski olanları sil)
+      cleanOldCache().then(() => {
+        // Tüm cache'lenmiş resimleri yükle
+        const transaction = dbInstance.transaction(['images'], 'readonly');
+        const store = transaction.objectStore('images');
+        const getAllRequest = store.getAll();
+        
+        getAllRequest.onsuccess = async () => {
+          let loadedCount = 0;
+          for (const item of getAllRequest.result) {
+            if (item.blob) {
+              const blobUrl = URL.createObjectURL(item.blob);
+              imageCache[item.url] = blobUrl;
+              loadedCount++;
+            }
           }
-        }
-        resolve();
-      };
-      
-      getAllRequest.onerror = () => reject(getAllRequest.error);
+          console.log(`✅ ${loadedCount} görsel cache'den yüklendi`);
+          resolve();
+        };
+        
+        getAllRequest.onerror = () => reject(getAllRequest.error);
+      });
     };
     
     request.onupgradeneeded = (event) => {
@@ -37,6 +46,56 @@ export async function initImageCache() {
       }
     };
   });
+}
+
+// Eski cache'leri temizle
+async function cleanOldCache() {
+  if (!dbInstance) return;
+  
+  try {
+    const transaction = dbInstance.transaction(['images'], 'readwrite');
+    const store = transaction.objectStore('images');
+    const index = store.index('timestamp');
+    const getAllRequest = index.getAll();
+    
+    return new Promise((resolve) => {
+      getAllRequest.onsuccess = () => {
+        const now = Date.now();
+        let deletedCount = 0;
+        let totalCount = getAllRequest.result.length;
+        
+        // 30 günden eski olanları sil
+        for (const item of getAllRequest.result) {
+          if (item.timestamp && (now - item.timestamp) > CACHE_MAX_AGE) {
+            store.delete(item.url);
+            deletedCount++;
+          }
+        }
+        
+        // Eğer cache çok büyükse, en eski olanları sil
+        if (totalCount - deletedCount > CACHE_MAX_SIZE) {
+          const sorted = getAllRequest.result
+            .filter(item => !item.timestamp || (now - item.timestamp) <= CACHE_MAX_AGE)
+            .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+          
+          const toDelete = sorted.slice(0, totalCount - deletedCount - CACHE_MAX_SIZE);
+          for (const item of toDelete) {
+            store.delete(item.url);
+            deletedCount++;
+          }
+        }
+        
+        if (deletedCount > 0) {
+          console.log(`🧹 ${deletedCount} eski görsel cache'den temizlendi`);
+        }
+        resolve();
+      };
+      
+      getAllRequest.onerror = () => resolve(); // Hata olsa bile devam et
+    });
+  } catch (error) {
+    console.error('Cache temizleme hatası:', error);
+  }
 }
 
 // Resmi cache'le ve blob URL oluştur
@@ -85,25 +144,62 @@ export async function getCachedImage(imageUrl) {
 // Resmi yükle ve cache'le
 async function loadAndCacheImage(imageUrl) {
   try {
-    // Firebase Storage veya R2 URL'si ise proxy üzerinden yükle (CORS sorununu çözmek için)
-    let fetchUrl = imageUrl;
     const isFirebaseStorage = imageUrl && imageUrl.includes('firebasestorage.googleapis.com');
     const isR2 = imageUrl && (imageUrl.includes('r2.dev') || imageUrl.includes('r2.cloudflarestorage.com'));
     
-    // Firebase Storage ve R2 için her zaman proxy kullan (CORS ve SSL sorunlarını çözmek için)
-    if (isFirebaseStorage || isR2) {
-      const proxyUrl = `http://localhost:3000/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
-      fetchUrl = proxyUrl;
-    }
+    let response;
+    let fetchUrl = imageUrl;
     
-    // Resmi fetch et
-    const response = await fetch(fetchUrl, { 
-      mode: 'cors',
-      cache: 'force-cache'
-    });
-    
-    if (!response.ok) {
-      throw new Error('Resim yüklenemedi');
+    // R2 URL'leri için önce direkt fetch dene (CORS sorunu olmazsa proxy'ye gerek yok)
+    if (isR2) {
+      try {
+        // Önce direkt R2'den dene
+        response = await fetch(imageUrl, { 
+          mode: 'cors',
+          cache: 'force-cache',
+          credentials: 'omit'
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        // Başarılı oldu, direkt R2'den kullan
+        console.log(`✅ R2 görsel direkt yüklendi: ${imageUrl.substring(0, 50)}...`);
+      } catch (directError) {
+        // CORS veya başka bir hata varsa proxy'ye yönlendir
+        console.warn(`⚠️ R2 direkt yükleme hatası, proxy kullanılıyor:`, directError.message);
+        fetchUrl = `http://localhost:3000/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+        response = await fetch(fetchUrl, { 
+          mode: 'cors',
+          cache: 'force-cache'
+        });
+        
+        if (!response.ok) {
+          throw new Error('Resim proxy üzerinden yüklenemedi');
+        }
+      }
+    } else if (isFirebaseStorage) {
+      // Firebase Storage için proxy kullan (CORS sorunları olabilir)
+      fetchUrl = `http://localhost:3000/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+      response = await fetch(fetchUrl, { 
+        mode: 'cors',
+        cache: 'force-cache'
+      });
+      
+      if (!response.ok) {
+        throw new Error('Resim yüklenemedi');
+      }
+    } else {
+      // Normal URL'ler için direkt fetch
+      response = await fetch(imageUrl, { 
+        mode: 'cors',
+        cache: 'force-cache'
+      });
+      
+      if (!response.ok) {
+        throw new Error('Resim yüklenemedi');
+      }
     }
     
     const blob = await response.blob();
@@ -112,19 +208,48 @@ async function loadAndCacheImage(imageUrl) {
     // Memory cache'e ekle (orijinal URL ile)
     imageCache[imageUrl] = blobUrl;
     
-    // IndexedDB'ye kaydet
+    // IndexedDB'ye kaydet (local'e indir)
     if (dbInstance) {
       try {
         const transaction = dbInstance.transaction(['images'], 'readwrite');
         const store = transaction.objectStore('images');
-        await new Promise((resolve, reject) => {
-          const request = store.put({ 
-            url: imageUrl, 
-            blob: blob, 
-            timestamp: Date.now() 
-          });
-          request.onsuccess = () => resolve();
-          request.onerror = () => reject(request.error);
+        
+        // Önce cache boyutunu kontrol et
+        const countRequest = store.count();
+        await new Promise((resolve) => {
+          countRequest.onsuccess = async () => {
+            const count = countRequest.result;
+            
+            // Eğer cache çok büyükse, en eski olanları temizle
+            if (count >= CACHE_MAX_SIZE) {
+              try {
+                const index = store.index('timestamp');
+                const getAllRequest = index.getAll();
+                getAllRequest.onsuccess = () => {
+                  const sorted = getAllRequest.result.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+                  const toDelete = sorted.slice(0, count - CACHE_MAX_SIZE + 1);
+                  for (const item of toDelete) {
+                    store.delete(item.url);
+                  }
+                };
+              } catch (error) {
+                console.warn('Cache temizleme hatası:', error);
+              }
+            }
+            
+            // Yeni görseli kaydet
+            const putRequest = store.put({ 
+              url: imageUrl, 
+              blob: blob, 
+              timestamp: Date.now() 
+            });
+            putRequest.onsuccess = () => {
+              console.log(`💾 Görsel local'e kaydedildi: ${imageUrl.substring(0, 50)}...`);
+              resolve();
+            };
+            putRequest.onerror = () => resolve(); // Hata olsa bile devam et
+          };
+          countRequest.onerror = () => resolve();
         });
       } catch (error) {
         console.error('Cache kaydetme hatası:', error);
