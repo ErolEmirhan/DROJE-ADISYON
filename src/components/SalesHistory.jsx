@@ -280,10 +280,10 @@ const SalesHistory = () => {
   }
 
   const renderReports = () => {
-    // Filtrelenmiş satışları kullan
-    const reportSales = selectedDate 
+    // Filtrelenmiş satışları kullan - masrafları hariç tut
+    const reportSales = (selectedDate 
       ? sales.filter(sale => sale.sale_date === selectedDate)
-      : sales;
+      : sales).filter(sale => !sale.isExpense && sale.payment_method !== 'Masraf');
 
     if (reportSales.length === 0) {
       return (
@@ -315,12 +315,15 @@ const SalesHistory = () => {
     
     // Her satış için gerçek item detaylarını kullan
     reportSales.forEach(sale => {
+      // Masraf ise atla
+      if (sale.isExpense || sale.payment_method === 'Masraf') return;
+      
       // items_array varsa gerçek verileri kullan, yoksa items string'ini parse et
       let itemsArray = [];
       
       if (sale.items_array && Array.isArray(sale.items_array)) {
-        // Gerçek Firebase verileri
-        itemsArray = sale.items_array;
+        // Gerçek Firebase verileri - masraf itemlarını filtrele
+        itemsArray = sale.items_array.filter(item => !item.isExpense);
       } else if (sale.items) {
         // Eski format - string'den parse et
         const items = sale.items.split(', ');
@@ -342,7 +345,7 @@ const SalesHistory = () => {
       
       // Her item için istatistikleri hesapla
       itemsArray.forEach(item => {
-        if (!item || !item.product_name) return;
+        if (!item || !item.product_name || item.isExpense) return;
         
         const productName = item.product_name;
         const quantity = item.quantity || 1;
@@ -404,9 +407,12 @@ const SalesHistory = () => {
       .sort(([, a], [, b]) => a.revenue - b.revenue)
       .slice(0, 5);
 
-    // Ödeme yöntemi dağılımı
+    // Ödeme yöntemi dağılımı - masrafları hariç tut
     const paymentMethods = {};
     reportSales.forEach(sale => {
+      // Masraf ise atla
+      if (sale.isExpense || sale.payment_method === 'Masraf') return;
+      
       if (!paymentMethods[sale.payment_method]) {
         paymentMethods[sale.payment_method] = { count: 0, total: 0 };
       }
@@ -414,7 +420,10 @@ const SalesHistory = () => {
       paymentMethods[sale.payment_method].total += parseFloat(sale.total_amount);
     });
 
-    const totalRevenue = reportSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
+    // Toplam ciro - masrafları hariç tut
+    const totalRevenue = reportSales
+      .filter(sale => !sale.isExpense && sale.payment_method !== 'Masraf')
+      .reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
 
     return (
       <div className="space-y-6">

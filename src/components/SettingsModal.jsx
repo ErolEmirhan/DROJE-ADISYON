@@ -454,7 +454,16 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
     if (!deleteConfirmModal) return;
 
     try {
-      await window.electronAPI.deleteProduct(deleteConfirmModal.productId);
+      const result = await window.electronAPI.deleteProduct(deleteConfirmModal.productId);
+      
+      // Response kontrolü
+      if (!result || !result.success) {
+        alert(result?.error || 'Ürün silinemedi');
+        setDeleteConfirmModal(null);
+        return;
+      }
+      
+      // Başarılı silme
       loadAllProducts();
       
       // Ana uygulamayı yenile
@@ -464,7 +473,8 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
       
       setDeleteConfirmModal(null);
     } catch (error) {
-      alert('Ürün silinemedi: ' + error.message);
+      console.error('Ürün silme hatası:', error);
+      alert('Ürün silinemedi: ' + (error.message || 'Bilinmeyen hata'));
       setDeleteConfirmModal(null);
     }
   };

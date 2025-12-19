@@ -187,7 +187,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
         </div>
         <div>
           <h1 className="text-lg font-bold text-pink-500">Makara Satış Sistemi</h1>
-          <p className="text-xs text-gray-500 font-medium">v2.3.0</p>
+          <p className="text-xs text-gray-500 font-medium">v2.3.1</p>
         </div>
         <div className="ml-4 pl-4 border-l border-gray-300">
           <DateTimeDisplay />
@@ -489,7 +489,14 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
                     {staffList.map((staff) => (
                       <div key={staff.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div>
-                          <p className="font-medium text-gray-800">{staff.name} {staff.surname}</p>
+                          <p className="font-medium text-gray-800">
+                            {staff.name} {staff.surname}
+                            {staff.is_manager && (
+                              <span className="ml-2 px-2 py-0.5 bg-gradient-to-r from-yellow-400 to-orange-500 text-white text-xs font-bold rounded-full">
+                                MÜDÜR
+                              </span>
+                            )}
+                          </p>
                           <p className="text-xs text-gray-500">ID: {staff.id}</p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -501,6 +508,29 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
                             className="px-3 py-1 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600 transition-all"
                           >
                             Şifre Değiştir
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const result = await window.electronAPI.setStaffManager(staff.id, !staff.is_manager);
+                                if (result.success) {
+                                  await loadStaff();
+                                  alert(staff.is_manager ? 'Müdürlük kaldırıldı' : 'Müdür olarak atandı');
+                                } else {
+                                  alert('Hata: ' + (result.error || 'Bilinmeyen hata'));
+                                }
+                              } catch (error) {
+                                console.error('Müdür atama hatası:', error);
+                                alert('Müdür atanamadı: ' + error.message);
+                              }
+                            }}
+                            className={`px-3 py-1 rounded-lg text-sm transition-all ${
+                              staff.is_manager
+                                ? 'bg-red-500 text-white hover:bg-red-600'
+                                : 'bg-gradient-to-r from-yellow-400 to-orange-500 text-white hover:from-yellow-500 hover:to-orange-600'
+                            }`}
+                          >
+                            {staff.is_manager ? 'Müdürlüğü Kaldır' : 'MÜDÜR SEÇ'}
                           </button>
                           <button
                             onClick={() => setDeleteConfirm(staff.id)}

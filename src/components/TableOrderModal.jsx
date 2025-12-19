@@ -8,6 +8,10 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
   const [cancelQuantity, setCancelQuantity] = useState(1);
   const [showCancelReceiptPreview, setShowCancelReceiptPreview] = useState(false);
   const [cancelReceiptHTML, setCancelReceiptHTML] = useState(null);
+  const [showCancelReasonModal, setShowCancelReasonModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [pendingCancelItemId, setPendingCancelItemId] = useState(null);
+  const [pendingCancelQuantity, setPendingCancelQuantity] = useState(null);
 
   if (!order) return null;
 
@@ -102,24 +106,52 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
       return;
     }
 
-    setCancellingItemId(cancelConfirmItem.id);
+    // İlk istek: Açıklama boş, sadece açıklama modal'ını aç (fiş yazdırma)
+    setPendingCancelItemId(cancelConfirmItem.id);
+    setPendingCancelQuantity(cancelQuantity);
+    setCancelConfirmItem(null);
+    setShowCancelReceiptPreview(false);
+    setCancelReceiptHTML(null);
+    setShowCancelReasonModal(true);
+    setCancelReason('');
+    setCancellingItemId(null);
+  };
+
+  // İptal açıklaması gönder
+  const submitCancelReason = async () => {
+    if (!cancelReason.trim()) {
+      alert('Lütfen iptal açıklaması yazın');
+      return;
+    }
+
+    if (!pendingCancelItemId || !pendingCancelQuantity) {
+      alert('İptal işlemi bulunamadı');
+      setShowCancelReasonModal(false);
+      return;
+    }
+
+    setCancellingItemId(pendingCancelItemId);
     try {
-      const result = await window.electronAPI.cancelTableOrderItem(cancelConfirmItem.id, cancelQuantity);
+      // Kısa bir delay ekleyerek UI donmasını önle
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      const result = await window.electronAPI.cancelTableOrderItem(pendingCancelItemId, pendingCancelQuantity, cancelReason.trim());
+      
       if (result.success) {
-        // Başarılı - parent component'e bildir
-        setCancelConfirmItem(null);
-        setCancelQuantity(1);
-        setShowCancelReceiptPreview(false);
-        setCancelReceiptHTML(null);
+        // Başarılı
+        setShowCancelReasonModal(false);
+        setCancelReason('');
+        setPendingCancelItemId(null);
+        setPendingCancelQuantity(null);
         if (onItemCancelled) {
           onItemCancelled();
         }
       } else {
-        alert(result.error || 'Ürün iptal edilemedi');
+        alert(result.error || 'İptal açıklaması kaydedilemedi');
       }
     } catch (error) {
-      console.error('Ürün iptal hatası:', error);
-      alert('Ürün iptal edilirken bir hata oluştu');
+      console.error('İptal açıklaması kaydetme hatası:', error);
+      alert('İptal açıklaması kaydedilirken bir hata oluştu');
     } finally {
       setCancellingItemId(null);
     }
@@ -664,6 +696,71 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                   <p className="text-lg font-semibold text-gray-600">Kasa / Sistem</p>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* İptal Açıklaması Modal (Fiş yazdırıldıktan sonra) */}
+      {showCancelReasonModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[80] animate-fade-in">
+          <div className="bg-white backdrop-blur-xl border border-amber-200 rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl">
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 mx-auto mb-4 bg-gradient-to-br from-amber-100 to-orange-100 rounded-full flex items-center justify-center">
+                <svg className="w-10 h-10 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">İptal Açıklaması</h3>
+              <p className="text-gray-600 text-sm">İptal fişi yazdırıldı. Lütfen iptal nedenini açıklayın:</p>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                İptal Açıklaması <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Örn: Müşteri istemedi, Yanlış sipariş, Ürün bozuk..."
+                className="w-full min-h-[120px] px-4 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 resize-y"
+                autoFocus
+              />
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+              <div className="flex items-start space-x-3">
+                <svg className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <p className="text-xs text-amber-800 font-medium">
+                  İptal açıklaması zorunludur. Açıklama yazmadan işlem tamamlanamaz.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-center">
+              <button
+                onClick={submitCancelReason}
+                disabled={!cancelReason.trim() || cancellingItemId !== null}
+                className="px-8 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+              >
+                {cancellingItemId ? (
+                  <>
+                    <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span>Kaydediliyor...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>Tamamla</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

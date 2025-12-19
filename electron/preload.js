@@ -15,9 +15,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createTableOrder: (orderData) => ipcRenderer.invoke('create-table-order', orderData),
   getTableOrders: (tableId) => ipcRenderer.invoke('get-table-orders', tableId),
   getTableOrderItems: (orderId) => ipcRenderer.invoke('get-table-order-items', orderId),
-  cancelTableOrderItem: (itemId, cancelQuantity) => ipcRenderer.invoke('cancel-table-order-item', itemId, cancelQuantity),
+  cancelTableOrderItem: (itemId, cancelQuantity, cancelReason) => ipcRenderer.invoke('cancel-table-order-item', itemId, cancelQuantity, cancelReason),
   previewCancelReceipt: (itemId, cancelQuantity) => ipcRenderer.invoke('preview-cancel-receipt', itemId, cancelQuantity),
-  completeTableOrder: (orderId) => ipcRenderer.invoke('complete-table-order', orderId),
+  completeTableOrder: (orderId, paymentMethod) => ipcRenderer.invoke('complete-table-order', orderId, paymentMethod),
   transferTableOrder: (sourceTableId, targetTableId) => ipcRenderer.invoke('transfer-table-order', sourceTableId, targetTableId),
   // Settings API
   changePassword: (currentPin, newPin) => ipcRenderer.invoke('change-password', currentPin, newPin),
@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteStaff: (staffId) => ipcRenderer.invoke('delete-staff', staffId),
   getStaff: () => ipcRenderer.invoke('get-staff'),
   verifyStaffPin: (password) => ipcRenderer.invoke('verify-staff-pin', password),
+  setStaffManager: (staffId, isManager) => ipcRenderer.invoke('set-staff-manager', staffId, isManager),
   // Image optimization API
   optimizeAllProductImages: () => ipcRenderer.invoke('optimize-all-product-images'),
   // Real-time updates
@@ -74,6 +75,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Table Sync API
   startTableSync: () => ipcRenderer.invoke('start-table-sync'),
   stopTableSync: () => ipcRenderer.invoke('stop-table-sync'),
-  getTableSyncStatus: () => ipcRenderer.invoke('get-table-sync-status')
+  getTableSyncStatus: () => ipcRenderer.invoke('get-table-sync-status'),
+  // Broadcast Message API
+  sendBroadcastMessage: (message) => ipcRenderer.invoke('send-broadcast-message', message),
+  onBroadcastMessage: (callback) => {
+    ipcRenderer.on('broadcast-message', (event, data) => callback(data));
+    return () => {
+      ipcRenderer.removeAllListeners('broadcast-message');
+    };
+  }
 });
 

@@ -212,8 +212,63 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
       return;
     }
 
+    // Önce ödeme yöntemi seçimi modal'ı göster
+    const paymentMethod = await new Promise((resolve) => {
+      const modal = document.createElement('div');
+      modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+      modal.innerHTML = `
+        <div class="bg-white rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl">
+          <h3 class="text-xl font-bold text-gray-800 mb-2">Ödeme Yöntemi Seçin</h3>
+          <p class="text-sm text-gray-600 mb-6">Masa: ${selectedOrder.table_name}</p>
+          <p class="text-lg font-semibold text-gray-800 mb-6">Toplam: ₺${selectedOrder.total_amount.toFixed(2)}</p>
+          <div class="grid grid-cols-2 gap-3 mb-4">
+            <button id="cashBtn" class="p-4 rounded-xl font-semibold bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg hover:shadow-xl transition-all transform hover:scale-105">
+              <div class="flex flex-col items-center space-y-2">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                <span>Nakit</span>
+              </div>
+            </button>
+            <button id="cardBtn" class="p-4 rounded-xl font-semibold bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-lg hover:shadow-xl transition-all transform hover:scale-105">
+              <div class="flex flex-col items-center space-y-2">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                </svg>
+                <span>Kredi Kartı</span>
+              </div>
+            </button>
+          </div>
+          <button id="cancelBtn" class="w-full py-3 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-700 font-semibold transition-all">
+            İptal
+          </button>
+        </div>
+      `;
+      
+      document.body.appendChild(modal);
+      
+      modal.querySelector('#cashBtn').onclick = () => {
+        document.body.removeChild(modal);
+        resolve('Nakit');
+      };
+      
+      modal.querySelector('#cardBtn').onclick = () => {
+        document.body.removeChild(modal);
+        resolve('Kredi Kartı');
+      };
+      
+      modal.querySelector('#cancelBtn').onclick = () => {
+        document.body.removeChild(modal);
+        resolve(null);
+      };
+    });
+
+    if (!paymentMethod) {
+      return; // Kullanıcı iptal etti
+    }
+
     try {
-      const result = await window.electronAPI.completeTableOrder(selectedOrder.id);
+      const result = await window.electronAPI.completeTableOrder(selectedOrder.id, paymentMethod);
       
       if (result.success) {
         // Modal'ı kapat ve siparişleri yenile

@@ -9,13 +9,6 @@ const http = require('http');
 const { Server } = require('socket.io');
 const QRCode = require('qrcode');
 const os = require('os');
-// Görsel işleme için sharp (WebP + resize + kalite ayarı)
-let sharp = null;
-try {
-  sharp = require('sharp');
-} catch (e) {
-  console.error('⚠️ sharp modülü yüklenemedi, görsel optimizasyon devre dışı:', e.message);
-}
 
 // Firebase entegrasyonu
 let firebaseApp = null;
@@ -94,8 +87,7 @@ let db = {
   tableOrderItems: [],
   settings: {
     adminPin: '1234',
-    cashierPrinter: null, // { printerName, printerType } - Kasa yazıcısı ayarı
-    tableSyncEnabled: false // Masa verileri Firebase'e gönderimi aktif mi?
+    cashierPrinter: null // { printerName, printerType } - Kasa yazıcısı ayarı
   },
   printerAssignments: [] // { printerName, printerType, category_id }
 };
@@ -111,17 +103,12 @@ function initDatabase() {
       
       // Eğer settings objesi yoksa ekle
       if (!db.settings) {
-        db.settings = { adminPin: '1234', cashierPrinter: null, tableSyncEnabled: false };
+        db.settings = { adminPin: '1234', cashierPrinter: null };
         saveDatabase();
       }
       // cashierPrinter yoksa ekle
       if (db.settings && db.settings.cashierPrinter === undefined) {
         db.settings.cashierPrinter = null;
-        saveDatabase();
-      }
-      // tableSyncEnabled yoksa ekle
-      if (db.settings && db.settings.tableSyncEnabled === undefined) {
-        db.settings.tableSyncEnabled = false;
         saveDatabase();
       }
       
@@ -1047,71 +1034,6 @@ ipcMain.handle('delete-all-sales', async (event) => {
   }
 });
 
-// Kategorileri yeniden sıralama (order_index güncelleme)
-ipcMain.handle('reorder-categories', async (event, orderedCategoryIds) => {
-  try {
-    if (!Array.isArray(orderedCategoryIds) || orderedCategoryIds.length === 0) {
-      return { success: false, error: 'Geçersiz kategori sırası' };
-    }
-
-    // ID'leri number'a çevir
-    const normalizedIds = orderedCategoryIds.map(id =>
-      typeof id === 'string' ? parseInt(id) : id
-    );
-
-    // Tüm kategorilerin mevcut olduğunu doğrula
-    const allExist = normalizedIds.every(id =>
-      db.categories.some(c => c.id === id)
-    );
-    if (!allExist) {
-      return { success: false, error: 'Mevcut olmayan kategori ID\'si gönderildi' };
-    }
-
-    // Yeni order_index değerlerini ata
-    normalizedIds.forEach((id, index) => {
-      const cat = db.categories.find(c => c.id === id);
-      if (cat) {
-        cat.order_index = index;
-      }
-    });
-
-    // Güvenlik için diğer kategorileri de sona ekle (eğer varsa)
-    const remaining = db.categories
-      .filter(c => !normalizedIds.includes(c.id))
-      .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
-    remaining.forEach((cat, offset) => {
-      cat.order_index = normalizedIds.length + offset;
-    });
-
-    // Veritabanını kaydet
-    saveDatabase();
-
-    // Firebase'e güncel sırayı yansıt
-    try {
-      for (const category of db.categories) {
-        await saveCategoryToFirebase(category);
-      }
-    } catch (err) {
-      console.error('Firebase kategori sıralama güncelleme hatası:', err);
-      // Firebase hatası olsa bile local sıralama kaydedildi, uyarı ver
-      return {
-        success: false,
-        error:
-          'Sıralama localde kaydedildi ancak Firebase güncellenemedi. İnternet bağlantınızı kontrol edin.'
-      };
-    }
-
-    const sorted = [...db.categories].sort(
-      (a, b) => a.order_index - b.order_index
-    );
-
-    return { success: true, categories: sorted };
-  } catch (error) {
-    console.error('Kategori sıralama hatası:', error);
-    return { success: false, error: error.message };
-  }
-});
-
 // Table Order IPC Handlers
 ipcMain.handle('create-table-order', (event, orderData) => {
   const { items, totalAmount, tableId, tableName, tableType, orderNote } = orderData;
@@ -1246,7 +1168,7 @@ ipcMain.handle('get-table-order-items', (event, orderId) => {
 });
 
 // Masa siparişinden ürün iptal etme
-ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity) => {
+ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity, cancelReason = null, staffId = null) => {
   const item = db.tableOrderItems.find(oi => oi.id === itemId);
   if (!item) {
     return { success: false, error: 'Ürün bulunamadı' };
@@ -1259,6 +1181,18 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity) 
 
   if (order.status !== 'pending') {
     return { success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' };
+  }
+
+  // Müdür kontrolü (sadece mobil personel arayüzünden gelen istekler için)
+  // Desktop uygulamasından gelen istekler için kontrol yapılmaz (admin yetkisi var)
+  if (staffId) {
+    const staff = (db.staff || []).find(s => s.id === staffId);
+    if (!staff || !staff.is_manager) {
+      return { 
+        success: false, 
+        error: 'İptal yetkisi yok. İptal ettirmek için lütfen müdürle görüşünüz.' 
+      };
+    }
   }
 
   // İptal edilecek miktarı belirle
@@ -1287,28 +1221,36 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity) 
     return { success: false, error: 'Bu ürünün kategorisine yazıcı atanmamış' };
   }
 
-  // İptal fişi yazdır
-  try {
-    const now = new Date();
-    const cancelDate = now.toLocaleDateString('tr-TR');
-    const cancelTime = getFormattedTime(now);
+      // İptal açıklaması kontrolü - açıklama yoksa fiş yazdırma, sadece açıklama iste
+      if (!cancelReason || cancelReason.trim() === '') {
+        return { success: false, requiresReason: true, error: 'İptal açıklaması zorunludur' };
+      }
 
-    const cancelReceiptData = {
-      tableName: order.table_name,
-      tableType: order.table_type,
-      productName: item.product_name,
-      quantity: quantityToCancel,
-      price: item.price,
-      cancelDate: cancelDate,
-      cancelTime: cancelTime,
-      categoryName: categoryName
-    };
+      // Açıklama var, işleme devam et - fiş yazdır
+      cancelReason = cancelReason.trim();
+      
+      // İptal fişi yazdır (sadece açıklama varsa)
+      try {
+        const now = new Date();
+        const cancelDate = now.toLocaleDateString('tr-TR');
+        const cancelTime = getFormattedTime(now);
 
-    await printCancelReceipt(assignment.printerName, assignment.printerType, cancelReceiptData);
-  } catch (error) {
-    console.error('İptal fişi yazdırma hatası:', error);
-    // Yazdırma hatası olsa bile iptal işlemini devam ettir
-  }
+        const cancelReceiptData = {
+          tableName: order.table_name,
+          tableType: order.table_type,
+          productName: item.product_name,
+          quantity: quantityToCancel,
+          price: item.price,
+          cancelDate: cancelDate,
+          cancelTime: cancelTime,
+          categoryName: categoryName
+        };
+
+        await printCancelReceipt(assignment.printerName, assignment.printerType, cancelReceiptData);
+      } catch (error) {
+        console.error('İptal fişi yazdırma hatası:', error);
+        // Yazdırma hatası olsa bile iptal işlemini devam ettir
+      }
 
   // İptal edilecek tutarı hesapla (ikram değilse)
   const cancelAmount = item.isGift ? 0 : (item.price * quantityToCancel);
@@ -1316,18 +1258,65 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity) 
   // Masa siparişinin toplam tutarını güncelle
   order.total_amount = Math.max(0, order.total_amount - cancelAmount);
 
-  // Eğer tüm ürün iptal ediliyorsa, item'ı sil
+  // İptal açıklamasını kaydet
   if (quantityToCancel >= item.quantity) {
+    // Tüm ürün iptal ediliyorsa, item'ı silmeden önce açıklamayı kaydet
+    item.cancel_reason = cancelReason.trim();
+    item.cancel_date = new Date().toISOString();
     const itemIndex = db.tableOrderItems.findIndex(oi => oi.id === itemId);
     if (itemIndex !== -1) {
       db.tableOrderItems.splice(itemIndex, 1);
     }
   } else {
-    // Sadece bir kısmı iptal ediliyorsa, quantity'yi azalt
+    // Sadece bir kısmı iptal ediliyorsa, quantity'yi azalt ve açıklamayı kaydet
     item.quantity -= quantityToCancel;
+    item.cancel_reason = cancelReason.trim();
+    item.cancel_date = new Date().toISOString();
   }
 
   saveDatabase();
+
+  // Firebase'e iptal kaydı ekle
+  if (firestore && firebaseCollection && firebaseAddDoc && firebaseServerTimestamp) {
+    try {
+      const now = new Date();
+      const cancelDate = now.toLocaleDateString('tr-TR');
+      const cancelTime = getFormattedTime(now);
+      
+      // Siparişi oluşturan garson bilgisini bul
+      const orderStaffName = order.staff_name || item.staff_name || null;
+      
+      // İptal eden personel bilgisi
+      const cancelStaff = staffId ? (db.staff || []).find(s => s.id === staffId) : null;
+      const cancelStaffName = cancelStaff ? `${cancelStaff.name} ${cancelStaff.surname}` : null;
+      const cancelStaffIsManager = cancelStaff ? (cancelStaff.is_manager || false) : false;
+      
+      const cancelRef = firebaseCollection(firestore, 'cancels');
+      await firebaseAddDoc(cancelRef, {
+        item_id: itemId,
+        order_id: order.id,
+        table_id: order.table_id,
+        table_name: order.table_name,
+        table_type: order.table_type,
+        product_id: item.product_id,
+        product_name: item.product_name,
+        quantity: quantityToCancel,
+        price: item.price,
+        cancel_reason: cancelReason,
+        cancel_date: cancelDate,
+        cancel_time: cancelTime,
+        staff_id: staffId || null,
+        staff_name: cancelStaffName,
+        staff_is_manager: cancelStaffIsManager,
+        order_staff_name: orderStaffName, // Siparişi oluşturan garson
+        source: 'desktop', // 'desktop' veya 'mobile'
+        created_at: firebaseServerTimestamp()
+      });
+      console.log('✅ İptal kaydı Firebase\'e başarıyla kaydedildi');
+    } catch (error) {
+      console.error('❌ Firebase\'e iptal kaydı kaydedilemedi:', error);
+    }
+  }
 
   // Electron renderer process'e güncelleme gönder
   if (mainWindow && mainWindow.webContents) {
@@ -1437,7 +1426,7 @@ ipcMain.handle('transfer-table-order', async (event, sourceTableId, targetTableI
   };
 });
 
-ipcMain.handle('complete-table-order', async (event, orderId) => {
+ipcMain.handle('complete-table-order', async (event, orderId, paymentMethod = 'Nakit') => {
   const order = db.tableOrders.find(o => o.id === orderId);
   if (!order) {
     return { success: false, error: 'Sipariş bulunamadı' };
@@ -1447,10 +1436,15 @@ ipcMain.handle('complete-table-order', async (event, orderId) => {
     return { success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' };
   }
 
+  // Ödeme yöntemi kontrolü
+  if (!paymentMethod || (paymentMethod !== 'Nakit' && paymentMethod !== 'Kredi Kartı')) {
+    return { success: false, error: 'Geçerli bir ödeme yöntemi seçilmedi' };
+  }
+
   // Sipariş durumunu tamamlandı olarak işaretle
   order.status = 'completed';
 
-  // Satış geçmişine ekle (nakit olarak)
+  // Satış geçmişine ekle (seçilen ödeme yöntemi ile)
   const now = new Date();
   const saleDate = now.toLocaleDateString('tr-TR');
   const saleTime = getFormattedTime(now);
@@ -1479,11 +1473,11 @@ ipcMain.handle('complete-table-order', async (event, orderId) => {
     ? Object.keys(staffCounts).reduce((a, b) => staffCounts[a] > staffCounts[b] ? a : b)
     : null;
 
-  // Satış ekle
+  // Satış ekle (seçilen ödeme yöntemi ile)
   db.sales.push({
     id: saleId,
     total_amount: order.total_amount,
-    payment_method: 'Nakit',
+    payment_method: paymentMethod,
     sale_date: saleDate,
     sale_time: saleTime,
     table_name: order.table_name,
@@ -1530,7 +1524,7 @@ ipcMain.handle('complete-table-order', async (event, orderId) => {
       await firebaseAddDoc(salesRef, {
         sale_id: saleId,
         total_amount: order.total_amount,
-        payment_method: 'Nakit',
+        payment_method: paymentMethod,
         sale_date: saleDate,
         sale_time: saleTime,
         table_name: order.table_name,
@@ -1852,205 +1846,6 @@ ipcMain.handle('pay-table-order-item', async (event, itemId, paymentMethod, paid
   return { success: true, remainingAmount: order.total_amount, saleId };
 });
 
-// Masa verilerini Firebase'e gönderme
-let tableSyncInterval = null;
-let isTableSyncActive = false;
-
-// Tüm masa verilerini topla ve Firebase'e gönder
-async function syncTablesToFirebase() {
-  if (!firestore || !firebaseCollection || !firebaseDoc || !firebaseSetDoc) {
-    console.warn('⚠️ Firebase başlatılamadı, masa verileri gönderilemedi');
-    return;
-  }
-
-  try {
-    // Tüm masaları oluştur (içeri, dışarı, paket)
-    const allTables = [];
-    
-    // İçeri masalar
-    for (let i = 1; i <= 20; i++) {
-      allTables.push({
-        id: `inside-${i}`,
-        number: i,
-        type: 'inside',
-        name: `İçeri ${i}`
-      });
-    }
-    
-    // Dışarı masalar
-    for (let i = 1; i <= 20; i++) {
-      allTables.push({
-        id: `outside-${i}`,
-        number: i,
-        type: 'outside',
-        name: `Dışarı ${i}`
-      });
-    }
-    
-    // Paket masaları (içeri)
-    for (let i = 1; i <= 5; i++) {
-      allTables.push({
-        id: `package-inside-${i}`,
-        number: i,
-        type: 'inside',
-        name: `Paket ${i}`
-      });
-    }
-    
-    // Paket masaları (dışarı)
-    for (let i = 1; i <= 5; i++) {
-      allTables.push({
-        id: `package-outside-${i}`,
-        number: i,
-        type: 'outside',
-        name: `Paket ${i}`
-      });
-    }
-
-    // Her masa için verileri topla
-    const tablesData = allTables.map(table => {
-      // Bu masa için pending sipariş var mı?
-      const order = (db.tableOrders || []).find(
-        o => o.table_id === table.id && o.status === 'pending'
-      );
-      
-      const hasOrder = !!order;
-      let totalAmount = 0;
-      let items = [];
-      let orderId = null;
-      let orderDate = null;
-      let orderTime = null;
-      let orderNote = null;
-      
-      if (order) {
-        orderId = order.id;
-        totalAmount = parseFloat(order.total_amount) || 0;
-        orderDate = order.order_date || null;
-        orderTime = order.order_time || null;
-        orderNote = order.order_note || null;
-        
-        // Sipariş itemlarını al
-        const orderItems = (db.tableOrderItems || []).filter(
-          oi => oi.order_id === order.id
-        );
-        
-        items = orderItems.map(item => ({
-          id: item.id,
-          product_id: item.product_id,
-          product_name: item.product_name,
-          quantity: item.quantity,
-          price: parseFloat(item.price) || 0,
-          isGift: item.isGift || false,
-          is_paid: item.is_paid || false,
-          paid_quantity: item.paid_quantity || 0,
-          staff_name: item.staff_name || null,
-          added_date: item.added_date || null,
-          added_time: item.added_time || null
-        }));
-      }
-      
-      return {
-        table_id: table.id,
-        table_number: table.number,
-        table_name: table.name,
-        table_type: table.type,
-        is_occupied: hasOrder,
-        total_amount: totalAmount,
-        order_id: orderId,
-        order_date: orderDate,
-        order_time: orderTime,
-        order_note: orderNote,
-        items: items,
-        last_updated: new Date().toISOString()
-      };
-    });
-
-    // Firebase'e gönder - her masayı ayrı doküman olarak kaydet
-    const tablesRef = firebaseCollection(firestore, 'tables');
-    
-    for (const tableData of tablesData) {
-      const tableDocRef = firebaseDoc(tablesRef, tableData.table_id);
-      await firebaseSetDoc(tableDocRef, tableData, { merge: true });
-    }
-    
-    console.log(`✅ ${tablesData.length} masa verisi Firebase'e gönderildi`);
-  } catch (error) {
-    console.error('❌ Masa verileri Firebase\'e gönderilirken hata:', error);
-  }
-}
-
-// Masa senkronizasyonunu başlat
-ipcMain.handle('start-table-sync', async (event) => {
-  if (isTableSyncActive) {
-    return { success: false, error: 'Senkronizasyon zaten aktif' };
-  }
-
-  try {
-    // İlk gönderimi hemen yap
-    await syncTablesToFirebase();
-    
-    // Her 2 saniyede bir güncelle
-    tableSyncInterval = setInterval(async () => {
-      await syncTablesToFirebase();
-    }, 2000);
-    
-    isTableSyncActive = true;
-    
-    // Settings'e kaydet
-    if (!db.settings) {
-      db.settings = { adminPin: '1234', cashierPrinter: null, tableSyncEnabled: true };
-    } else {
-      db.settings.tableSyncEnabled = true;
-    }
-    saveDatabase();
-    
-    console.log('✅ Masa verileri senkronizasyonu başlatıldı ve kaydedildi');
-    return { success: true };
-  } catch (error) {
-    console.error('❌ Masa senkronizasyonu başlatılamadı:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-// Masa senkronizasyonunu durdur
-ipcMain.handle('stop-table-sync', async (event) => {
-  if (!isTableSyncActive) {
-    return { success: false, error: 'Senkronizasyon zaten durdurulmuş' };
-  }
-
-  try {
-    if (tableSyncInterval) {
-      clearInterval(tableSyncInterval);
-      tableSyncInterval = null;
-    }
-    
-    isTableSyncActive = false;
-    
-    // Settings'e kaydet
-    if (!db.settings) {
-      db.settings = { adminPin: '1234', cashierPrinter: null, tableSyncEnabled: false };
-    } else {
-      db.settings.tableSyncEnabled = false;
-    }
-    saveDatabase();
-    
-    console.log('⏹️ Masa verileri senkronizasyonu durduruldu ve kaydedildi');
-    return { success: true };
-  } catch (error) {
-    console.error('❌ Masa senkronizasyonu durdurulamadı:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-// Masa senkronizasyon durumunu al
-ipcMain.handle('get-table-sync-status', (event) => {
-  return { 
-    success: true, 
-    isActive: isTableSyncActive,
-    isEnabled: db.settings?.tableSyncEnabled || false
-  };
-});
-
 // Settings IPC Handlers
 ipcMain.handle('change-password', (event, currentPin, newPin) => {
   try {
@@ -2156,116 +1951,72 @@ ipcMain.handle('update-product', async (event, productData) => {
 });
 
 ipcMain.handle('delete-product', async (event, productId) => {
-  const productIndex = db.products.findIndex(p => p.id === productId);
+  // productId'yi number'a çevir (tip uyumluluğu için)
+  const productIdNum = typeof productId === 'string' ? parseInt(productId) : productId;
+  
+  const productIndex = db.products.findIndex(p => p.id === productIdNum);
   if (productIndex === -1) {
+    console.error(`❌ Ürün bulunamadı: ID=${productIdNum} (tip: ${typeof productIdNum})`);
+    console.error('Mevcut ürün ID\'leri:', db.products.map(p => ({ id: p.id, name: p.name })));
     return { success: false, error: 'Ürün bulunamadı' };
   }
   
   const product = db.products[productIndex];
-  
-  // Check if product is used in any sale
-  const isUsedInSale = db.saleItems.some(si => si.product_id === productId);
-  if (isUsedInSale) {
-    return { success: false, error: 'Bu ürün satış geçmişinde kullanıldığı için silinemez' };
-  }
+  console.log(`🗑️ Ürün siliniyor: ${product.name} (ID: ${productIdNum})`);
   
   // Eğer ürünün Firebase Storage'da görseli varsa, onu da sil
   if (product.image && product.image.includes('firebasestorage.googleapis.com')) {
-    await deleteImageFromFirebaseStorage(product.image);
+    try {
+      await deleteImageFromFirebaseStorage(product.image);
+      console.log(`✅ Ürün görseli Firebase Storage'dan silindi`);
+    } catch (error) {
+      console.error('⚠️ Görsel silme hatası (devam ediliyor):', error.message);
+    }
   }
   
+  // Local database'den sil
   db.products.splice(productIndex, 1);
   saveDatabase();
+  console.log(`✅ Ürün local database'den silindi: ${product.name}`);
   
   // Firebase'den ürünü sil
   if (firestore && firebaseDoc && firebaseDeleteDoc) {
     try {
-      const productRef = firebaseDoc(firestore, 'products', productId.toString());
-      await firebaseDeleteDoc(productRef);
-      console.log(`✅ Ürün Firebase'den silindi: ${product.name} (ID: ${productId})`);
+      // Hem string hem number ID'yi dene
+      let productRef = firebaseDoc(firestore, 'products', productIdNum.toString());
+      try {
+        await firebaseDeleteDoc(productRef);
+        console.log(`✅ Ürün Firebase'den silindi: ${product.name} (ID: ${productIdNum})`);
+      } catch (error) {
+        // Eğer string ID ile bulunamazsa, number ID ile dene
+        if (error.code === 'not-found' || error.message?.includes('not found')) {
+          console.warn(`⚠️ String ID ile bulunamadı, number ID deneniyor...`);
+          productRef = firebaseDoc(firestore, 'products', productIdNum.toString());
+          await firebaseDeleteDoc(productRef);
+          console.log(`✅ Ürün Firebase'den silindi (number ID ile): ${product.name}`);
+        } else {
+          throw error;
+        }
+      }
     } catch (error) {
       console.error('❌ Firebase\'den ürün silme hatası:', error);
       console.error('Hata detayları:', error.message, error.code);
       // Hata olsa bile local'den silindi, devam et
+      // Ama kullanıcıya bilgi ver
+      return { 
+        success: true, 
+        warning: 'Ürün local database\'den silindi ancak Firebase\'den silinirken bir hata oluştu. Lütfen Firebase\'i kontrol edin.' 
+      };
     }
   } else {
     console.warn('⚠️ Firebase başlatılamadı, ürün sadece local database\'den silindi');
   }
   
+  console.log(`✅ Ürün başarıyla silindi: ${product.name}`);
   return { success: true };
 });
 
-// Tek bir görsel buffer'ını WebP formatına çevirip optimize eden yardımcı fonksiyon
-// Kurallar:
-// - Max width: 600px (daha büyükse küçült, küçükse büyütme)
-// - Başlangıç kalite: 65, gerektiğinde kaliteyi düşürerek 120 KB altına inmeye çalış
-// - Sert limit: 200 KB üstü ise RED (hata fırlat)
-async function optimizeImageBufferToWebP(inputBuffer) {
-  if (!sharp) {
-    const err = new Error('Görsel optimizasyon modülü (sharp) yüklenemedi');
-    err.code = 'SHARP_NOT_AVAILABLE';
-    throw err;
-  }
-
-  const MAX_WIDTH = 600;
-  const INITIAL_QUALITY = 65;
-  const MIN_QUALITY = 40;
-  const QUALITY_STEP = 5;
-  const TARGET_MAX_KB = 120;
-  const HARD_LIMIT_KB = 200;
-
-  let quality = INITIAL_QUALITY;
-
-  const encodeWithQuality = async (q) => {
-    return sharp(inputBuffer, { failOnError: false })
-      .resize({
-        width: MAX_WIDTH,
-        withoutEnlargement: true
-      })
-      .webp({
-        quality: q,
-        effort: 4
-      })
-      .toBuffer();
-  };
-
-  // İlk deneme
-  let optimizedBuffer = await encodeWithQuality(quality);
-  let sizeKB = optimizedBuffer.length / 1024;
-
-  // 120 KB'nin üzerindeyse, kaliteyi kademeli düşür
-  while (sizeKB > TARGET_MAX_KB && quality > MIN_QUALITY) {
-    quality -= QUALITY_STEP;
-    optimizedBuffer = await encodeWithQuality(quality);
-    sizeKB = optimizedBuffer.length / 1024;
-  }
-
-  // Sert limit kontrolü
-  if (sizeKB > HARD_LIMIT_KB) {
-    const err = new Error(
-      `Optimize edilmiş görsel hala çok büyük (${sizeKB.toFixed(
-        1
-      )} KB). Lütfen daha küçük/basitleştirilmiş bir görsel kullanın.`
-    );
-    err.code = 'OPTIMIZED_IMAGE_TOO_LARGE';
-    err.sizeKB = sizeKB;
-    throw err;
-  }
-
-  console.log(
-    `🖼️ Görsel optimize edildi -> WebP, kalite=${quality}, boyut=${sizeKB.toFixed(
-      1
-    )} KB`
-  );
-
-  return {
-    buffer: optimizedBuffer,
-    sizeKB,
-    quality
-  };
-}
-
-// Firebase Storage'a görsel yükleme fonksiyonu (ZORUNLU OPTİMİZASYONLU)
+// Firebase Storage'a görsel yükleme fonksiyonu
 async function uploadImageToFirebaseStorage(filePath, productId = null) {
   if (!storage || !storageRef || !storageUploadBytes || !storageGetDownloadURL) {
     throw new Error('Firebase Storage başlatılamadı');
@@ -2273,43 +2024,30 @@ async function uploadImageToFirebaseStorage(filePath, productId = null) {
 
   try {
     // Dosyayı oku
-    const originalBuffer = fs.readFileSync(filePath);
-
-    // Zorunlu optimizasyon: her görsel WebP + resize + kalite ile sıkıştırılır
-    const { buffer: optimizedBuffer, sizeKB } = await optimizeImageBufferToWebP(
-      originalBuffer
-    );
-
-    // Benzersiz dosya adı oluştur (ürün ID + timestamp) - her zaman .webp
+    const fileBuffer = fs.readFileSync(filePath);
+    const fileName = path.basename(filePath);
+    const fileExt = path.extname(fileName);
+    
+    // Benzersiz dosya adı oluştur (ürün ID + timestamp)
     const timestamp = Date.now();
-    const uniqueFileName = productId
-      ? `products/${productId}_${timestamp}.webp`
-      : `products/temp_${timestamp}.webp`;
-
+    const uniqueFileName = productId 
+      ? `products/${productId}_${timestamp}${fileExt}`
+      : `products/temp_${timestamp}${fileExt}`;
+    
     // Storage referansı oluştur
     const imageRef = storageRef(storage, uniqueFileName);
-
-    // Metadata: sadece optimize edilmiş WebP saklanır
-    const metadata = {
-      contentType: 'image/webp',
-      cacheControl: 'public, max-age=31536000, immutable'
-    };
-
-    // Optimize edilmiş görseli yükle
-    await storageUploadBytes(imageRef, optimizedBuffer, metadata);
-    console.log(
-      `✅ Optimize görsel Firebase Storage'a yüklendi: ${uniqueFileName} (${sizeKB.toFixed(
-        1
-      )} KB)`
-    );
-
+    
+    // Dosyayı yükle
+    await storageUploadBytes(imageRef, fileBuffer);
+    console.log(`✅ Görsel Firebase Storage'a yüklendi: ${uniqueFileName}`);
+    
     // Download URL'yi al
     const downloadURL = await storageGetDownloadURL(imageRef);
     console.log(`✅ Görsel URL alındı: ${downloadURL}`);
-
+    
     return downloadURL;
   } catch (error) {
-    console.error('❌ Firebase Storage yükleme/optimizasyon hatası:', error);
+    console.error('❌ Firebase Storage yükleme hatası:', error);
     throw error;
   }
 }
@@ -2373,26 +2111,13 @@ ipcMain.handle('select-image-file', async (event, productId = null) => {
       return { success: false, error: 'Dosya bulunamadı' };
     }
 
-    // Firebase Storage'a OPTİMİZE edilmiş görseli yükle
+    // Firebase Storage'a yükle
     try {
       const downloadURL = await uploadImageToFirebaseStorage(filePath, productId);
       return { success: true, path: downloadURL, isFirebaseURL: true };
     } catch (storageError) {
-      console.error('Firebase Storage yükleme/optimizasyon hatası:', storageError);
-
-      // Boyut/optimizasyon kaynaklı hatalarda fallback kullanma, direkt hata döndür
-      if (
-        storageError &&
-        (storageError.code === 'OPTIMIZED_IMAGE_TOO_LARGE' ||
-          storageError.code === 'SHARP_NOT_AVAILABLE')
-      ) {
-        return {
-          success: false,
-          error: storageError.message || 'Görsel optimize edilemedi'
-        };
-      }
-
-      // Diğer hatalarda eski yönteme (public klasörüne kopyalama) geriye dönük uyumluluk için izin ver
+      console.error('Firebase Storage yükleme hatası:', storageError);
+      // Firebase Storage başarısız olursa, eski yöntemle devam et (geriye dönük uyumluluk)
       const publicDir = path.join(__dirname, '../public');
       if (!fs.existsSync(publicDir)) {
         fs.mkdirSync(publicDir, { recursive: true });
@@ -2417,113 +2142,6 @@ ipcMain.handle('select-image-file', async (event, productId = null) => {
     }
   } catch (error) {
     console.error('Dosya seçme hatası:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-// Mevcut Firebase Storage ürün görsellerini yeniden optimize edip overwrite eden batch job
-async function optimizeAllProductImages() {
-  if (!sharp) {
-    throw new Error('Görsel optimizasyon modülü (sharp) yüklenemedi');
-  }
-  if (!storage || !storageRef || !storageUploadBytes) {
-    throw new Error('Firebase Storage başlatılamadı');
-  }
-
-  // db.products içindeki tüm ürünleri dolaş
-  const products = db.products || [];
-  let processed = 0;
-  let skipped = 0;
-  let failed = 0;
-
-  const https = require('https');
-
-  const downloadToBuffer = (url) => {
-    return new Promise((resolve, reject) => {
-      https
-        .get(url, (response) => {
-          if (response.statusCode !== 200) {
-            reject(new Error(`HTTP ${response.statusCode}`));
-            return;
-          }
-          const chunks = [];
-          response.on('data', (chunk) => chunks.push(chunk));
-          response.on('end', () => resolve(Buffer.concat(chunks)));
-        })
-        .on('error', (err) => reject(err));
-    });
-  };
-
-  for (const product of products) {
-    const imageUrl = product.image;
-
-    // Görsel yoksa ya da Firebase Storage URL değilse atla
-    if (
-      !imageUrl ||
-      typeof imageUrl !== 'string' ||
-      !imageUrl.includes('firebasestorage.googleapis.com')
-    ) {
-      skipped++;
-      continue;
-    }
-
-    try {
-      console.log(`🔄 Ürün görseli optimize ediliyor: ${product.name} (${imageUrl})`);
-
-      // URL'den storage path çıkar
-      const urlMatch = imageUrl.match(/\/o\/([^?]+)/);
-      if (!urlMatch || !urlMatch[1]) {
-        console.warn('⚠️ Geçersiz Storage URL formatı, atlanıyor:', imageUrl);
-        skipped++;
-        continue;
-      }
-      const filePathInStorage = decodeURIComponent(urlMatch[1]);
-      const imageRef = storageRef(storage, filePathInStorage);
-
-      // Remote görseli indir
-      const originalBuffer = await downloadToBuffer(imageUrl);
-
-      // Optimize et
-      const { buffer: optimizedBuffer, sizeKB } =
-        await optimizeImageBufferToWebP(originalBuffer);
-
-      // Aynı path'e overwrite et (sadece optimize sürüm kalır)
-      const metadata = {
-        contentType: 'image/webp',
-        cacheControl: 'public, max-age=31536000, immutable'
-      };
-      await storageUploadBytes(imageRef, optimizedBuffer, metadata);
-
-      console.log(
-        `✅ Ürün görseli yeniden optimize edildi: ${product.name} -> ${sizeKB.toFixed(
-          1
-        )} KB`
-      );
-      processed++;
-    } catch (err) {
-      console.error(
-        `❌ Ürün görseli optimize edilemedi (${product.name || product.id}):`,
-        err
-      );
-      failed++;
-      // Devam et
-    }
-  }
-
-  console.log(
-    `📊 Görsel optimize özeti -> işlendi: ${processed}, atlandı: ${skipped}, hata: ${failed}`
-  );
-
-  return { success: true, processed, skipped, failed };
-}
-
-// Batch job'ı UI'dan tetiklemek için IPC
-ipcMain.handle('optimize-all-product-images', async () => {
-  try {
-    const result = await optimizeAllProductImages();
-    return result;
-  } catch (error) {
-    console.error('❌ Toplu görsel optimizasyon hatası:', error);
     return { success: false, error: error.message };
   }
 });
@@ -3630,23 +3248,6 @@ app.whenReady().then(() => {
   initDatabase();
   createWindow();
   startAPIServer();
-
-  // Eğer masa senkronizasyonu kaydedilmişse otomatik başlat
-  setTimeout(async () => {
-    if (db.settings && db.settings.tableSyncEnabled && !isTableSyncActive) {
-      console.log('🔄 Kaydedilmiş masa senkronizasyonu otomatik başlatılıyor...');
-      try {
-        await syncTablesToFirebase();
-        tableSyncInterval = setInterval(async () => {
-          await syncTablesToFirebase();
-        }, 2000);
-        isTableSyncActive = true;
-        console.log('✅ Masa verileri senkronizasyonu otomatik başlatıldı');
-      } catch (error) {
-        console.error('❌ Otomatik masa senkronizasyonu başlatılamadı:', error);
-      }
-    }
-  }, 2000); // 2 saniye bekle (Firebase başlatılsın)
 
   // Firebase senkronizasyonu: Önce Firebase'den çek, sonra local'den Firebase'e gönder
   setTimeout(async () => {
@@ -5113,17 +4714,6 @@ function generateMobileHTML(serverURL) {
       flex-direction: column;
       padding: 5px;
     }
-    /* İçerideki boş masalar - İçeri butonuyla aynı soft pembe ton */
-    .table-btn.inside-empty {
-      background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
-      border-color: #fbcfe8;
-      color: #9d174d;
-    }
-    .table-btn.inside-empty .table-number,
-    .table-btn.inside-empty .table-label {
-      color: #9d174d;
-    }
-    /* Dışarıdaki boş masalar - mevcut soft sarı ton */
     .table-btn.outside-empty {
       background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
       border-color: #facc15;
@@ -5154,17 +4744,16 @@ function generateMobileHTML(serverURL) {
       color: white;
       box-shadow: 0 4px 12px rgba(168, 85, 247, 0.4);
     }
-    /* Dolu masalar - içeride/dışarıda tümü için kan kırmızısı ton */
     .table-btn.has-order {
-      border-color: #7f1d1d;
-      background: linear-gradient(135deg, #b91c1c 0%, #7f1d1d 100%);
-      color: #fee2e2;
+      border-color: #047857;
+      background: linear-gradient(135deg, #065f46 0%, #022c22 100%);
+      color: #ecfdf5;
     }
     .table-btn.has-order.selected {
-      border-color: #b91c1c;
-      background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%);
-      color: #fee2e2;
-      box-shadow: 0 4px 14px rgba(220, 38, 38, 0.6);
+      border-color: #22c55e;
+      background: linear-gradient(135deg, #047857 0%, #022c22 100%);
+      color: #ecfdf5;
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.5);
     }
     .table-btn.has-order::before {
       content: '●';
@@ -5190,65 +4779,29 @@ function generateMobileHTML(serverURL) {
     .table-btn.outside-empty .table-label {
       color: #92400e;
     }
-    /* Kategori sekmeleri - 2 satırlı, yatay (sağa-sola) kaydırmalı grid yapı */
     .category-tabs {
-      display: grid;
-      grid-auto-flow: column;                /* Sütunları yatayda akıt */
-      grid-auto-columns: minmax(100px, 1fr); /* Her kategori için sabit genişlik */
-      grid-template-rows: repeat(2, auto);   /* Aynı anda 2 satır göster */
-      column-gap: 8px;
-      row-gap: 6px;
-      overflow-x: auto;                      /* Sağa-sola kaydırma */
-      overflow-y: hidden;
-      padding-bottom: 4px;
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      padding-bottom: 8px;
       -webkit-overflow-scrolling: touch;
-      scrollbar-width: thin;
+      scrollbar-width: none;
     }
     .category-tabs::-webkit-scrollbar {
-      height: 4px;
-    }
-    .category-tabs::-webkit-scrollbar-thumb {
-      background: #d4b5ff;
-      border-radius: 999px;
+      display: none;
     }
     .category-tab {
-      padding: 8px 6px;
+      padding: 12px 20px;
       border: 2px solid #e5e7eb;
       border-radius: 12px;
       background: white;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 600;
-      white-space: normal;
-      text-align: center;
+      white-space: nowrap;
       cursor: pointer;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       color: #6b7280;
       box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    /* Kategori butonları için yumuşak pastel arkaplanlar (aktif olmayanlar) */
-    .category-tab:nth-child(6n+1):not(.active) {
-      background: #fdf2f8;           /* çok açık pembe */
-      border-color: #fbcfe8;
-    }
-    .category-tab:nth-child(6n+2):not(.active) {
-      background: #f5f3ff;           /* çok açık mor/lila */
-      border-color: #ddd6fe;
-    }
-    .category-tab:nth-child(6n+3):not(.active) {
-      background: #eff6ff;           /* çok açık mavi */
-      border-color: #bfdbfe;
-    }
-    .category-tab:nth-child(6n+4):not(.active) {
-      background: #ecfdf3;           /* çok açık yeşil */
-      border-color: #bbf7d0;
-    }
-    .category-tab:nth-child(6n+5):not(.active) {
-      background: #fffbeb;           /* çok açık sarı */
-      border-color: #fef3c7;
-    }
-    .category-tab:nth-child(6n+6):not(.active) {
-      background: #fef2f2;           /* çok açık kırmızı/rose */
-      border-color: #fecaca;
     }
     .category-tab:active {
       transform: scale(0.96);
@@ -5288,7 +4841,7 @@ function generateMobileHTML(serverURL) {
     }
     .product-card {
       padding: 16px;
-      border: 2px solid rgba(189, 68, 128, 0.99); /* pembe stroke çerçeve */
+      border: 2px solid rgba(255, 255, 255, 0.2);
       border-radius: 14px;
       background: #1f2937;
       background-size: cover;
@@ -5311,8 +4864,7 @@ function generateMobileHTML(serverURL) {
       left: 0;
       right: 0;
       bottom: 0;
-      /* Düz, sade pembe overlay (gradyansız), %50 opaklık */
-      background: rgba(220, 67, 144, 0.8);
+      background: rgba(0, 0, 0, 0.8);
       z-index: 1;
     }
     .product-card:hover {
@@ -6111,7 +5663,7 @@ function generateMobileHTML(serverURL) {
       }
       50% {
         opacity: 0.7;
-        transform: scale(1.08);
+        transform: scale(1.1);
       }
     }
     /* Mevcut Siparişler Bölümü */
@@ -6120,86 +5672,18 @@ function generateMobileHTML(serverURL) {
       padding: 0 0 15px 0;
     }
     .existing-orders-title {
-      font-size: 15px;
-      font-weight: 800;
-      color: #7f1d1d;
-      margin-bottom: 8px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #1f2937;
+      margin-bottom: 12px;
       padding: 0 5px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: 8px;
-      cursor: pointer;
-      background: linear-gradient(135deg, #fee2e2 0%, #fecaca 45%, #fee2e2 100%);
-      border-radius: 999px;
-      border: 1px solid #fecaca;
-      padding: 10px 14px;
-      box-shadow: 0 4px 12px rgba(248, 113, 113, 0.45);
     }
-    .existing-orders-title-left {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .existing-orders-title-left::before {
-      content: '';
-      width: 10px;
-      height: 10px;
-      border-radius: 999px;
-      background: radial-gradient(circle at 30% 30%, #fee2e2 0%, #ef4444 45%, #7f1d1d 100%);
-      box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.45);
-      animation: pulse 1.6s infinite;
-    }
-    .existing-orders-toggle-icon {
-      font-size: 16px;
-      color: #b91c1c;
-      font-weight: 800;
-    }
-    .existing-orders-content {
-      margin-top: 6px;
-    }
-    .existing-orders-actions {
-      display: flex;
-      justify-content: flex-end;
-      padding: 4px 5px 10px 5px;
-    }
-    .existing-orders-actions .adisyon-btn {
-      padding: 10px 18px;
-      border-radius: 999px;
-      border: none;
-      font-size: 13px;
-      font-weight: 800;
-      color: #78350f;
-      background: linear-gradient(135deg, #fef9c3 0%, #fde68a 45%, #fbbf24 100%);
-      box-shadow: 0 4px 12px rgba(250, 204, 21, 0.5);
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-      letter-spacing: 0.02em;
-      transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
-    }
-    .existing-orders-actions .adisyon-btn:hover {
-      transform: translateY(-1px) scale(1.02);
-      box-shadow: 0 6px 16px rgba(250, 204, 21, 0.65);
-      filter: brightness(1.02);
-    }
-    .existing-orders-actions .adisyon-btn:active {
-      transform: translateY(0) scale(0.97);
-      box-shadow: 0 2px 8px rgba(250, 204, 21, 0.4);
-      filter: brightness(0.99);
-    }
-    .adisyon-btn-icon {
-      width: 20px;
-      height: 20px;
-      border-radius: 999px;
-      background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.45);
-      color: #fff;
-      font-size: 13px;
+    .existing-orders-title::before {
+      content: '📋';
+      font-size: 18px;
     }
     .order-card {
       background: white;
@@ -6321,6 +5805,11 @@ function generateMobileHTML(serverURL) {
 </head>
 <body>
   <div class="container">
+    <div class="header">
+      <h1>📱 MAKARA Mobil Sipariş</h1>
+      <p>Hızlı ve Kolay Sipariş Alma</p>
+    </div>
+    
     <!-- PIN Giriş Ekranı - Kurumsal ve Profesyonel -->
     <div id="pinSection" class="pin-section">
       <img src="${serverURL}/assets/login.png" alt="Login" class="login-image" onerror="this.style.display='none';">
@@ -6350,7 +5839,7 @@ function generateMobileHTML(serverURL) {
     </div>
     
     <!-- Ana Sipariş Ekranı -->
-    <div id="mainSection" style="display: none; padding-top: 16px;">
+    <div id="mainSection" style="display: none; padding-top: 60px;">
       <!-- Çıkış Yap Butonu - Sol Üst (masalar ekranında görünecek) -->
       <button class="logout-btn" id="mainLogoutBtn" onclick="showLogoutModal()" title="Çıkış Yap" style="display: none;">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
@@ -6359,7 +5848,9 @@ function generateMobileHTML(serverURL) {
         <span>Çıkış Yap</span>
       </button>
       
-      <!-- Garson bilgisi gösterilmesin (taslaktan kaldırıldı) -->
+      <div class="staff-info" id="staffInfo" style="display: none;">
+        <p>Garson: <span id="staffName"></span></p>
+      </div>
       
       <!-- Masa Tipi Seçim Ekranı -->
       <div id="tableTypeSelection" style="display: block; position: fixed; inset: 0; background: white; z-index: 1000; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px;">
@@ -6453,30 +5944,10 @@ function generateMobileHTML(serverURL) {
           <span style="font-size: 13px; font-weight: 600; color: #6b7280;" id="selectedTableInfo"></span>
         </div>
         
-        <!-- Mevcut Siparişler (açılır/kapanır) -->
+        <!-- Mevcut Siparişler -->
         <div class="existing-orders" id="existingOrders" style="display: none;">
-          <button type="button" class="existing-orders-title" onclick="toggleExistingOrders()">
-            <div class="existing-orders-title-left">
-              <span>Mevcut Siparişler</span>
-            </div>
-            <span class="existing-orders-toggle-icon" id="existingOrdersToggleIcon">▼</span>
-          </button>
-          <div class="existing-orders-content" id="existingOrdersContent" style="display: none;">
-            <div class="existing-orders-actions">
-              <button type="button" class="adisyon-btn" onclick="requestTableAdisyon()">
-                <span class="adisyon-btn-icon">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="4" y="3" width="16" height="18" rx="2" ry="2"></rect>
-                    <line x1="8" y1="7" x2="16" y2="7"></line>
-                    <line x1="8" y1="11" x2="16" y2="11"></line>
-                    <line x1="8" y1="15" x2="12" y2="15"></line>
-                  </svg>
-                </span>
-                <span>Adisyon İste</span>
-              </button>
-            </div>
-            <div id="existingOrdersList"></div>
-          </div>
+          <div class="existing-orders-title">Mevcut Siparişler</div>
+          <div id="existingOrdersList"></div>
         </div>
         
         <!-- Ürünler -->
@@ -6607,10 +6078,52 @@ function generateMobileHTML(serverURL) {
     </div>
   </div>
   
+  <!-- İptal Açıklaması Modal (Fiş yazdırıldıktan sonra) -->
+  <div id="cancelReasonModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 3000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px);" onclick="if(event.target === this) return;">
+    <div style="background: white; border-radius: 24px; width: 100%; max-width: 480px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 25px 70px rgba(0,0,0,0.4); animation: slideUp 0.3s ease;">
+      <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="margin: 0; font-size: 22px; font-weight: 900;">İptal Açıklaması</h2>
+          <div style="width: 36px; height: 36px;"></div>
+        </div>
+      </div>
+      <div style="padding: 24px;">
+        <div style="margin-bottom: 20px;">
+          <p style="margin: 0 0 12px 0; font-size: 15px; color: #6b7280; font-weight: 600;">İptal fişi yazdırıldı. Lütfen iptal nedenini açıklayın:</p>
+        </div>
+        <div style="margin-bottom: 24px;">
+          <label style="display: block; margin-bottom: 8px; font-size: 15px; color: #374151; font-weight: 700;">İptal Açıklaması <span style="color: #ef4444;">*</span>:</label>
+          <textarea id="cancelReasonInput" placeholder="Örn: Müşteri istemedi, Yanlış sipariş, Ürün bozuk..." style="width: 100%; min-height: 120px; padding: 14px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 15px; font-family: inherit; resize: vertical; outline: none;" onfocus="this.style.borderColor='#f59e0b';" onblur="this.style.borderColor='#e5e7eb';"></textarea>
+        </div>
+        <div style="background: #fef3c7; border: 2px solid #fde68a; border-radius: 12px; padding: 16px; margin-bottom: 24px;">
+          <p style="margin: 0; font-size: 13px; color: #92400e; font-weight: 600; line-height: 1.6;">
+            ⚠️ İptal açıklaması zorunludur. Açıklama yazmadan işlem tamamlanamaz.
+          </p>
+        </div>
+      </div>
+      <div style="border-top: 1px solid #e5e7eb; padding: 20px; display: flex; justify-content: flex-end; gap: 12px; background: #f9fafb;">
+        <button id="confirmCancelReasonBtn" onclick="submitCancelReason()" style="padding: 14px 28px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3); display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 140px;" onmouseover="if(!this.disabled) { this.style.transform='scale(1.02)'; this.style.boxShadow='0 6px 16px rgba(245, 158, 11, 0.4)'; }" onmouseout="if(!this.disabled) { this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(245, 158, 11, 0.3)'; }">
+          <span id="confirmCancelReasonBtnText">Tamamla</span>
+          <svg id="confirmCancelReasonBtnSpinner" style="display: none; width: 18px; height: 18px; animation: spin 1s linear infinite;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+  
   <style>
     @keyframes slideUp {
       from { transform: translateY(30px) scale(0.95); opacity: 0; }
       to { transform: translateY(0) scale(1); opacity: 1; }
+    }
+    @keyframes slideUpScale {
+      from { transform: translateY(40px) scale(0.9); opacity: 0; }
+      to { transform: translateY(0) scale(1); opacity: 1; }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
     }
     @keyframes spin {
       from { transform: rotate(0deg); }
@@ -6644,6 +6157,50 @@ function generateMobileHTML(serverURL) {
     </div>
   </div>
   
+  <!-- Yayın Mesajı Popup -->
+  <div id="broadcastMessageModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 20000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(8px); animation: fadeIn 0.3s ease;" onclick="if(event.target === this) return;">
+    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border-radius: 32px; width: 100%; max-width: 420px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.1) inset; animation: slideUpScale 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); position: relative;">
+      <!-- Dekoratif arka plan efekti -->
+      <div style="position: absolute; top: -50px; right: -50px; width: 200px; height: 200px; background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 70%); border-radius: 50%; pointer-events: none;"></div>
+      <div style="position: absolute; bottom: -30px; left: -30px; width: 150px; height: 150px; background: radial-gradient(circle, rgba(139, 92, 246, 0.1) 0%, transparent 70%); border-radius: 50%; pointer-events: none;"></div>
+      
+      <!-- Header -->
+      <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%); color: white; padding: 28px 24px; position: relative; overflow: hidden;">
+        <div style="position: absolute; top: -20px; right: -20px; width: 120px; height: 120px; background: rgba(255,255,255,0.1); border-radius: 50%; filter: blur(20px);"></div>
+        <div style="display: flex; align-items: center; gap: 16px; position: relative; z-index: 1;">
+          <div style="width: 56px; height: 56px; background: rgba(255,255,255,0.25); backdrop-filter: blur(10px); border-radius: 16px; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 16px rgba(0,0,0,0.15);">
+            <span style="font-size: 28px;">📢</span>
+          </div>
+          <div style="flex: 1;">
+            <h2 style="margin: 0; font-size: 24px; font-weight: 900; letter-spacing: -0.5px; text-shadow: 0 2px 8px rgba(0,0,0,0.2);">Yeni Mesaj</h2>
+            <p style="margin: 4px 0 0 0; font-size: 13px; opacity: 0.95; font-weight: 500;">Yönetimden bildirim</p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Content -->
+      <div style="padding: 28px 24px; position: relative; z-index: 1;">
+        <div style="margin-bottom: 20px;">
+          <p id="broadcastMessageText" style="margin: 0; font-size: 16px; font-weight: 500; color: #1f2937; line-height: 1.7; white-space: pre-wrap; letter-spacing: 0.2px;"></p>
+        </div>
+        <div style="background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%); border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px 16px; margin-bottom: 24px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="color: #64748b;">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <p id="broadcastMessageDate" style="margin: 0; font-size: 13px; color: #64748b; font-weight: 600; text-align: center;"></p>
+        </div>
+      </div>
+      
+      <!-- Footer -->
+      <div style="border-top: 1px solid #e2e8f0; padding: 20px 24px; display: flex; justify-content: center; background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); position: relative; z-index: 1;">
+        <button onclick="closeBroadcastMessage()" style="padding: 16px 48px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 16px; font-weight: 700; font-size: 16px; cursor: pointer; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4), 0 0 0 0 rgba(102, 126, 234, 0.5); letter-spacing: 0.3px; position: relative; overflow: hidden;" onmouseover="this.style.transform='translateY(-2px) scale(1.02)'; this.style.boxShadow='0 12px 28px rgba(102, 126, 234, 0.5), 0 0 0 4px rgba(102, 126, 234, 0.2)';" onmouseout="this.style.transform='translateY(0) scale(1)'; this.style.boxShadow='0 8px 20px rgba(102, 126, 234, 0.4), 0 0 0 0 rgba(102, 126, 234, 0.5)';">
+          <span style="position: relative; z-index: 1;">Anladım</span>
+          <div style="position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%); opacity: 0; transition: opacity 0.3s;" onmouseover="this.style.opacity='1';" onmouseout="this.style.opacity='0';"></div>
+        </button>
+      </div>
+    </div>
+  </div>
+  
   <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
   <script>
     const API_URL = '${serverURL}/api';
@@ -6658,8 +6215,6 @@ function generateMobileHTML(serverURL) {
     let tables = [];
     let currentTableType = 'inside';
     let orderNote = '';
-    let existingOrdersExpanded = false;
-    let isRequestingTableAdisyon = false;
     
     // PIN oturum yönetimi (1 saat)
     const SESSION_DURATION = 60 * 60 * 1000;
@@ -6703,15 +6258,9 @@ function generateMobileHTML(serverURL) {
         currentStaff = savedStaff;
         document.getElementById('pinSection').style.display = 'none';
         document.getElementById('mainSection').style.display = 'block';
-        // Garson adı gösterilecek bir alan artık olmadığı için DOM güncellemesi opsiyonel
-        const staffNameEl = document.getElementById('staffName');
-        if (staffNameEl) {
-          staffNameEl.textContent = currentStaff.name + ' ' + currentStaff.surname;
-        }
-        const staffInfoEl = document.getElementById('staffInfo');
-        if (staffInfoEl) {
-          staffInfoEl.style.display = 'none';
-        }
+        document.getElementById('staffName').textContent = currentStaff.name + ' ' + currentStaff.surname;
+        // İlk girişte staff-info'yu gizle, sadece çıkış yap butonu görünsün
+        document.getElementById('staffInfo').style.display = 'none';
         document.getElementById('tableTypeSelection').style.display = 'flex';
         // Sipariş gönder modalını gizle
         document.getElementById('cart').style.display = 'none';
@@ -6755,20 +6304,14 @@ function generateMobileHTML(serverURL) {
           setTimeout(() => {
             document.getElementById('splashScreen').style.display = 'none';
             document.getElementById('mainSection').style.display = 'block';
-            const staffNameEl = document.getElementById('staffName');
-            if (staffNameEl) {
-              staffNameEl.textContent = currentStaff.name + ' ' + currentStaff.surname;
-            }
-            // Garson infosu artık gösterilmiyor
-            const staffInfoEl = document.getElementById('staffInfo');
-            if (staffInfoEl) {
-              staffInfoEl.style.display = 'none';
-            }
-            document.getElementById('tableTypeSelection').style.display = 'flex';
-            // Sipariş gönder modalını gizle
-            document.getElementById('cart').style.display = 'none';
-            loadData();
-            initWebSocket();
+            document.getElementById('staffName').textContent = currentStaff.name + ' ' + currentStaff.surname;
+        // İlk girişte staff-info'yu gizle, sadece çıkış yap butonu görünsün
+        document.getElementById('staffInfo').style.display = 'none';
+        document.getElementById('tableTypeSelection').style.display = 'flex';
+        // Sipariş gönder modalını gizle
+        document.getElementById('cart').style.display = 'none';
+        loadData();
+        initWebSocket();
           }, 2000);
         } else {
           errorDiv.textContent = result.error || 'Şifre hatalı';
@@ -6849,6 +6392,10 @@ function generateMobileHTML(serverURL) {
           // Toast göster
           showToast('error', 'Hesap Silindi', data.message || 'Hesabınız silindi. Lütfen yönetici ile iletişime geçin.');
         });
+        socket.on('broadcast-message', (data) => {
+          console.log('📢 Yayın mesajı alındı:', data);
+          showBroadcastMessage(data.message, data.date, data.time);
+        });
         socket.on('disconnect', () => console.log('WebSocket bağlantısı kesildi'));
       } catch (error) {
         console.error('WebSocket bağlantı hatası:', error);
@@ -6860,11 +6407,8 @@ function generateMobileHTML(serverURL) {
       currentTableType = type;
       document.getElementById('tableTypeSelection').style.display = 'none';
       document.getElementById('tableSelection').style.display = 'block';
-      // Garson bilgisi ve ana logout butonu gösterilmesin
-      const staffInfoEl = document.getElementById('staffInfo');
-      if (staffInfoEl) staffInfoEl.style.display = 'none';
-      const logoutBtnEl = document.getElementById('mainLogoutBtn');
-      if (logoutBtnEl) logoutBtnEl.style.display = 'none';
+      document.getElementById('staffInfo').style.display = 'block';
+      document.getElementById('mainLogoutBtn').style.display = 'flex';
       // Sipariş gönder modalını göster
       document.getElementById('cart').style.display = 'block';
       renderTables();
@@ -6874,10 +6418,8 @@ function generateMobileHTML(serverURL) {
     function goBackToTypeSelection() {
       document.getElementById('tableSelection').style.display = 'none';
       document.getElementById('tableTypeSelection').style.display = 'flex';
-      const staffInfoEl = document.getElementById('staffInfo');
-      if (staffInfoEl) staffInfoEl.style.display = 'none';
-      const logoutBtnEl = document.getElementById('mainLogoutBtn');
-      if (logoutBtnEl) logoutBtnEl.style.display = 'none';
+      document.getElementById('staffInfo').style.display = 'none';
+      document.getElementById('mainLogoutBtn').style.display = 'none';
       // Sipariş gönder modalını gizle
       document.getElementById('cart').style.display = 'none';
       selectedTable = null;
@@ -6934,7 +6476,6 @@ function generateMobileHTML(serverURL) {
           const hasOrderClass = table.hasOrder ? ' has-order' : '';
           const selectedClass = selectedTable && selectedTable.id === table.id ? ' selected' : '';
           const outsideEmptyClass = (table.type === 'outside' && !table.hasOrder) ? ' outside-empty' : '';
-          const insideEmptyClass = (table.type === 'inside' && !table.hasOrder) ? ' inside-empty' : '';
           
           // Masa numaralandırması: İç Masa 1, Dış Masa 1 gibi
           const tableTypeLabel = table.type === 'inside' ? 'İç Masa' : 'Dış Masa';
@@ -6942,10 +6483,10 @@ function generateMobileHTML(serverURL) {
           
           // Durum etiketi: Dolu veya Boş
           const statusLabel = table.hasOrder ? 'Dolu' : 'Boş';
-          // Dolu masalar için kan kırmızısı ton
-          const statusColor = table.hasOrder ? '#b91c1c' : '#6b7280';
+          // Dolu masalar için daha koyu yeşil ton
+          const statusColor = table.hasOrder ? '#166534' : '#6b7280';
           
-          return '<button class="table-btn' + hasOrderClass + selectedClass + outsideEmptyClass + insideEmptyClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')">' +
+          return '<button class="table-btn' + hasOrderClass + selectedClass + outsideEmptyClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')">' +
             '<div class="table-number">' + table.number + '</div>' +
             '<div class="table-label">' + tableDisplayName + '</div>' +
             '<div style="font-size: 10px; font-weight: 600; color: ' + statusColor + '; margin-top: 4px; padding: 2px 6px; background: ' + (table.hasOrder ? 'rgba(22, 101, 52, 0.15)' : 'rgba(107, 114, 128, 0.1)') + '; border-radius: 6px;">' + statusLabel + '</div>' +
@@ -6953,7 +6494,7 @@ function generateMobileHTML(serverURL) {
         }).join('');
       }
       
-        // PAKET Başlığı - Premium ve Modern
+      // PAKET Başlığı - Premium ve Modern
       if (packageTables.length > 0) {
         html += '<div style="grid-column: 1 / -1; margin-top: 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center;">';
         html += '<div style="display: flex; align-items: center; gap: 8px; padding: 10px 20px; background: linear-gradient(135deg, #f97316 0%, #fb923c 30%, #fbbf24 70%, #fcd34d 100%); border-radius: 16px; box-shadow: 0 4px 16px rgba(249, 115, 22, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.2) inset; position: relative; overflow: hidden;">';
@@ -6971,25 +6512,25 @@ function generateMobileHTML(serverURL) {
           const hasOrderClass = table.hasOrder ? ' has-order' : '';
           const selectedClass = selectedTable && selectedTable.id === table.id ? ' selected' : '';
           
-          // Boş için turuncu, dolu için kan kırmızısı premium renkler
+          // Dolu için yeşil, boş için turuncu premium renkler
           const bgGradient = table.hasOrder 
-            ? 'linear-gradient(135deg, #fecaca 0%, #fca5a5 50%, #ef4444 100%)' 
+            ? 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 50%, #6ee7b7 100%)' 
             : 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 50%, #fed7aa 100%)';
-          const borderColor = table.hasOrder ? '#b91c1c' : '#f97316';
+          const borderColor = table.hasOrder ? '#10b981' : '#f97316';
           const numberBg = table.hasOrder 
-            ? 'linear-gradient(135deg, #dc2626 0%, #b91c1c 50%, #7f1d1d 100%)' 
+            ? 'linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%)' 
             : 'linear-gradient(135deg, #f97316 0%, #fb923c 50%, #fd7e14 100%)';
-          const iconColor = table.hasOrder ? '#b91c1c' : '#f97316';
+          const iconColor = table.hasOrder ? '#10b981' : '#f97316';
           
           return '<button class="table-btn package-table-btn' + hasOrderClass + selectedClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')" style="background: ' + bgGradient + '; border: 3px solid ' + borderColor + '; box-shadow: 0 4px 16px ' + (table.hasOrder ? 'rgba(16, 185, 129, 0.35)' : 'rgba(249, 115, 22, 0.35)') + ', 0 0 0 1px rgba(255, 255, 255, 0.4) inset; position: relative; overflow: hidden; transform: scale(1); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);">' +
             '<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: ' + (table.hasOrder ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, transparent 100%)' : 'linear-gradient(135deg, rgba(249, 115, 22, 0.15) 0%, transparent 100%)') + '; pointer-events: none; opacity: 0.8;"></div>' +
             '<div style="position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%); pointer-events: none; transform: rotate(45deg);"></div>' +
             '<div class="table-number" style="background: ' + numberBg + '; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 900; color: white; box-shadow: 0 4px 16px ' + (table.hasOrder ? 'rgba(16, 185, 129, 0.5)' : 'rgba(249, 115, 22, 0.5)') + ', 0 0 0 3px rgba(255, 255, 255, 0.4) inset; margin-bottom: 8px; position: relative; z-index: 2; transition: all 0.3s;">' + table.number + '</div>' +
             '<div style="position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 5px;">' +
-            '<div class="table-label" style="font-size: 12px; font-weight: 900; color: ' + (table.hasOrder ? '#7f1d1d' : '#9a3412') + '; letter-spacing: 0.8px; text-shadow: 0 1px 2px rgba(255, 255, 255, 0.5);">' + table.name + '</div>' +
-            (table.hasOrder ? '<div style="width: 8px; height: 8px; background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); border-radius: 50%; box-shadow: 0 0 12px rgba(248, 113, 113, 0.9), 0 0 6px rgba(248, 113, 113, 0.7); animation: pulse 2s infinite;"></div>' : '<div style="width: 6px; height: 6px; background: linear-gradient(135deg, #f97316 0%, #fb923c 100%); border-radius: 50%; opacity: 0.6;"></div>') +
+            '<div class="table-label" style="font-size: 12px; font-weight: 900; color: ' + (table.hasOrder ? '#047857' : '#9a3412') + '; letter-spacing: 0.8px; text-shadow: 0 1px 2px rgba(255, 255, 255, 0.5);">' + table.name + '</div>' +
+            (table.hasOrder ? '<div style="width: 8px; height: 8px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; box-shadow: 0 0 12px rgba(16, 185, 129, 0.8), 0 0 6px rgba(16, 185, 129, 0.6); animation: pulse 2s infinite;"></div>' : '<div style="width: 6px; height: 6px; background: linear-gradient(135deg, #f97316 0%, #fb923c 100%); border-radius: 50%; opacity: 0.6;"></div>') +
             '</div>' +
-            (table.hasOrder ? '<div style="position: absolute; top: 6px; right: 6px; width: 12px; height: 12px; background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%); border-radius: 50%; box-shadow: 0 0 12px rgba(248, 113, 113, 0.9), 0 0 6px rgba(248, 113, 113, 0.7); animation: pulse 2s infinite; z-index: 3;"></div>' : '') +
+            (table.hasOrder ? '<div style="position: absolute; top: 6px; right: 6px; width: 12px; height: 12px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; box-shadow: 0 0 12px rgba(16, 185, 129, 0.9), 0 0 6px rgba(16, 185, 129, 0.7); animation: pulse 2s infinite; z-index: 3;"></div>' : '') +
           '</button>';
         }).join('');
       }
@@ -7034,32 +6575,13 @@ function generateMobileHTML(serverURL) {
     function renderExistingOrders(orders) {
       const ordersContainer = document.getElementById('existingOrders');
       const ordersList = document.getElementById('existingOrdersList');
-      const contentEl = document.getElementById('existingOrdersContent');
-      const toggleIconEl = document.getElementById('existingOrdersToggleIcon');
       
       if (!orders || orders.length === 0) {
-        if (ordersContainer) {
-          ordersContainer.style.display = 'none';
-        }
-        existingOrdersExpanded = false;
-        if (contentEl) {
-          contentEl.style.display = 'none';
-        }
-        if (toggleIconEl) {
-          toggleIconEl.textContent = '▼';
-        }
+        ordersContainer.style.display = 'none';
         return;
       }
       
-      if (ordersContainer) {
-        ordersContainer.style.display = 'block';
-      }
-      if (contentEl) {
-        contentEl.style.display = existingOrdersExpanded ? 'block' : 'none';
-      }
-      if (toggleIconEl) {
-        toggleIconEl.textContent = existingOrdersExpanded ? '▲' : '▼';
-      }
+      ordersContainer.style.display = 'block';
       
       ordersList.innerHTML = orders.map(order => {
         const orderDate = order.order_date || '';
@@ -7078,7 +6600,9 @@ function generateMobileHTML(serverURL) {
                 '<span class="order-item-qty">×' + item.quantity + '</span>' +
                 '<span class="order-item-price">' + itemTotal + ' ₺</span>' +
               '</div>' +
-              '<button id="cancelBtn_' + item.id + '" onclick="showCancelItemModal(' + item.id + ', ' + item.quantity + ', \\'' + item.product_name.replace(/'/g, "\\'") + '\\')" style="padding: 6px 12px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3); transition: all 0.3s; white-space: nowrap; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 70px;" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(239, 68, 68, 0.4)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'0 2px 8px rgba(239, 68, 68, 0.3)\\'; }" ontouchstart="if(!this.disabled) { this.style.transform=\\'scale(0.95)\\'; }" ontouchend="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; }" class="cancel-item-btn"><span id="cancelBtnText_' + item.id + '">İptal</span><svg id="cancelBtnSpinner_' + item.id + '" style="display: none; width: 14px; height: 14px; animation: spin 1s linear infinite;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></button>' +
+              (currentStaff && currentStaff.is_manager 
+                ? '<button id="cancelBtn_' + item.id + '" onclick="showCancelItemModal(' + item.id + ', ' + item.quantity + ', \\'' + item.product_name.replace(/'/g, "\\'") + '\\')" style="padding: 6px 12px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3); transition: all 0.3s; white-space: nowrap; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 70px;" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(239, 68, 68, 0.4)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'0 2px 8px rgba(239, 68, 68, 0.3)\\'; }" ontouchstart="if(!this.disabled) { this.style.transform=\\'scale(0.95)\\'; }" ontouchend="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; }" class="cancel-item-btn"><span id="cancelBtnText_' + item.id + '">İptal</span><svg id="cancelBtnSpinner_' + item.id + '" style="display: none; width: 14px; height: 14px; animation: spin 1s linear infinite;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></button>'
+                : '<button onclick="showManagerRequiredMessage()" style="padding: 6px 12px; background: linear-gradient(135deg, #9ca3af 0%, #6b7280 100%); color: white; border: none; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(107, 114, 128, 0.3); transition: all 0.3s; white-space: nowrap; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 70px; opacity: 0.7;" onmouseover="this.style.opacity=\\'0.9\\';" onmouseout="this.style.opacity=\\'0.7\\';"><span>İptal</span></button>') +
             '</div>' +
           '</div>' +
           '<div style="font-size: 11px; color: #9ca3af; margin-top: 4px; margin-bottom: 8px; padding-left: 4px;">👤 ' + itemStaffName + ' • ' + (item.added_date || '') + ' ' + (item.added_time || '') + '</div>';
@@ -7104,44 +6628,6 @@ function generateMobileHTML(serverURL) {
       }).join('');
     }
     
-    async function requestTableAdisyon() {
-      if (!selectedTable) {
-        showToast('error', 'Adisyon Yazdırılamadı', 'Lütfen önce bir masa seçin.');
-        return;
-      }
-      if (isRequestingTableAdisyon) {
-        return;
-      }
-      
-      const confirmResult = confirm(selectedTable.name + ' için kasa yazıcısından adisyon fişi yazdırılsın mı?');
-      if (!confirmResult) {
-        return;
-      }
-      
-      try {
-        isRequestingTableAdisyon = true;
-        
-        const response = await fetch(API_URL + '/request-table-adisyon', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tableId: selectedTable.id })
-        });
-        
-        const result = await response.json().catch(() => ({}));
-        
-        if (response.ok && result.success) {
-          showToast('success', 'Adisyon Gönderildi', 'Kasa yazıcısına adisyon fişi gönderildi.');
-        } else {
-          showToast('error', 'Adisyon Yazdırılamadı', (result && result.error) || 'Adisyon fişi yazdırılırken bir hata oluştu.');
-        }
-      } catch (error) {
-        console.error('Adisyon isteği hatası:', error);
-        showToast('error', 'Adisyon Yazdırılamadı', 'Sunucuya ulaşılamadı. Lütfen tekrar deneyin.');
-      } finally {
-        isRequestingTableAdisyon = false;
-      }
-    }
-    
     function goBackToTables() {
       selectedTable = null;
       document.getElementById('tableSelection').style.display = 'block';
@@ -7152,26 +6638,8 @@ function generateMobileHTML(serverURL) {
         cartEl.style.display = 'none';
         cartEl.classList.remove('open');
       }
-      const searchInputEl = document.getElementById('searchInput');
-      if (searchInputEl) {
-        searchInputEl.value = '';
-      }
-      // Mevcut siparişler panelini kapalı hale getir
-      existingOrdersExpanded = false;
-      const contentEl = document.getElementById('existingOrdersContent');
-      const toggleIconEl = document.getElementById('existingOrdersToggleIcon');
-      if (contentEl) contentEl.style.display = 'none';
-      if (toggleIconEl) toggleIconEl.textContent = '▼';
+      document.getElementById('searchInput').value = '';
       renderTables();
-    }
-
-    function toggleExistingOrders() {
-      const contentEl = document.getElementById('existingOrdersContent');
-      const toggleIconEl = document.getElementById('existingOrdersToggleIcon');
-      if (!contentEl || !toggleIconEl) return;
-      existingOrdersExpanded = !existingOrdersExpanded;
-      contentEl.style.display = existingOrdersExpanded ? 'block' : 'none';
-      toggleIconEl.textContent = existingOrdersExpanded ? '▲' : '▼';
     }
     
     // Masa Aktar Modal İşlemleri
@@ -7219,11 +6687,10 @@ function generateMobileHTML(serverURL) {
             '</div>';
           }
           
-          // Dolu masalar için mobil masa renkleriyle uyumlu kan kırmızısı tonlar
-          return '<button onclick="selectSourceTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + (isSelected ? '#b91c1c' : '#7f1d1d') + '; border-radius: 12px; background: ' + (isSelected ? 'linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%)' : 'linear-gradient(135deg, #b91c1c 0%, #7f1d1d 100%)') + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(220, 38, 38, 0.5)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
-            '<div style="width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: white; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(248, 113, 113, 0.7);">' + table.number + '</div>' +
-            '<span style="font-size: 11px; color: #fee2e2; font-weight: 700;">' + table.name + '</span>' +
-            '<span style="font-size: 9px; color: #fecaca; margin-top: 4px; font-weight: 600;">Dolu</span>' +
+          return '<button onclick="selectSourceTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + (isSelected ? '#059669' : '#065f46') + '; border-radius: 12px; background: ' + (isSelected ? 'linear-gradient(135deg, #065f46 0%, #022c22 100%)' : 'linear-gradient(135deg, #047857 0%, #065f46 100%)') + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(5, 150, 105, 0.45)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
+            '<div style="width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #047857 0%, #022c22 100%); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: white; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(5, 150, 105, 0.6);">' + table.number + '</div>' +
+            '<span style="font-size: 11px; color: #ecfdf5; font-weight: 700;">' + table.name + '</span>' +
+            '<span style="font-size: 9px; color: #bbf7d0; margin-top: 4px; font-weight: 600;">Dolu</span>' +
           '</button>';
         }).join('');
         
@@ -7252,21 +6719,20 @@ function generateMobileHTML(serverURL) {
             '</div>';
           }
           
-          // Boş masalar için mobil masa renkleriyle uyumlu backgroundlar
           const bgColor = isOutside
-            ? (isSelected ? '#fef3c7' : '#fffbeb')  // dışarı: soft sarı
-            : (isSelected ? '#fce7f3' : '#fdf2f8'); // içeri: soft pembe
+            ? (isSelected ? '#fef3c7' : '#fffbeb')
+            : (isSelected ? '#ede9fe' : '#faf5ff');
           const borderColor = isOutside
             ? (isSelected ? '#fbbf24' : '#facc15')
-            : (isSelected ? '#f472b6' : '#fbcfe8');
+            : (isSelected ? '#a855f7' : '#c4b5fd');
           const circleBg = isOutside
             ? 'linear-gradient(135deg, #facc15 0%, #eab308 100%)'
-            : 'linear-gradient(135deg, #f9a8d4 0%, #f472b6 100%)';
-          const nameColor = isOutside ? '#92400e' : '#9d174d';
-          const statusColor = isOutside ? '#b45309' : '#be185d';
+            : '#f3f4f6';
+          const nameColor = isOutside ? '#92400e' : '#111827';
+          const statusColor = isOutside ? '#b45309' : '#4b5563';
           
           return '<button onclick="selectTargetTable(\\'' + table.id + '\\')" style="padding: 12px; border: 2px solid ' + borderColor + '; border-radius: 12px; background: ' + bgColor + '; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80px; transition: all 0.3s; transform: ' + (isSelected ? 'scale(1.05)' : 'scale(1)') + ';" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(148, 163, 184, 0.3)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }" ' + (isSelected ? 'disabled' : '') + '>' +
-            '<div style="width: 40px; height: 40px; border-radius: 50%; background: ' + circleBg + '; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: ' + (isOutside ? '#78350f' : '#831843') + '; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(248, 113, 113, 0.25);">' + table.number + '</div>' +
+            '<div style="width: 40px; height: 40px; border-radius: 50%; background: ' + circleBg + '; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; color: ' + (isOutside ? '#78350f' : '#4b5563') + '; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(148, 163, 184, 0.3);">' + table.number + '</div>' +
             '<span style="font-size: 11px; color: ' + nameColor + '; font-weight: 700;">' + table.name + '</span>' +
             '<span style="font-size: 9px; color: ' + statusColor + '; margin-top: 4px; font-weight: 600;">Boş</span>' +
           '</button>';
@@ -7696,7 +7162,17 @@ function generateMobileHTML(serverURL) {
     let cancelItemId = null;
     let cancelItemMaxQuantity = 1;
     
+    function showManagerRequiredMessage() {
+      showToast('error', 'Yetki Yok', 'İptal ettirmek için lütfen müdürle görüşünüz.');
+    }
+    
     function showCancelItemModal(itemId, maxQuantity, productName) {
+      // Müdür kontrolü
+      if (!currentStaff || !currentStaff.is_manager) {
+        showManagerRequiredMessage();
+        return;
+      }
+      
       cancelItemId = itemId;
       cancelItemMaxQuantity = maxQuantity;
       document.getElementById('cancelItemName').textContent = productName;
@@ -7737,6 +7213,10 @@ function generateMobileHTML(serverURL) {
       input.value = value;
     }
     
+    // İptal işlemi için geçici değişkenler
+    let pendingCancelItemId = null;
+    let pendingCancelQuantity = null;
+    
     function confirmCancelItem() {
       if (!cancelItemId) return;
       
@@ -7746,75 +7226,203 @@ function generateMobileHTML(serverURL) {
         return;
       }
       
-      // İptal edilecek ürün bilgilerini sakla
-      const itemIdToCancel = cancelItemId;
-      const quantityToCancel = cancelQuantity;
+      // Müdür kontrolü
+      if (!currentStaff || !currentStaff.is_manager) {
+        showManagerRequiredMessage();
+        return;
+      }
       
-      // Modal'ı hemen kapat
+      // İptal edilecek ürün bilgilerini sakla
+      pendingCancelItemId = cancelItemId;
+      pendingCancelQuantity = cancelQuantity;
+      
+      // Modal'ı kapat
       hideCancelItemModal();
       
+      // İptal işlemini başlat (fiş yazdırılacak)
+      startCancelProcess();
+    }
+    
+    async function startCancelProcess() {
+      if (!pendingCancelItemId || !pendingCancelQuantity) return;
+      
       // Mevcut siparişler listesindeki iptal butonunu bul ve loading durumuna geçir
-      const cancelBtn = document.getElementById('cancelBtn_' + itemIdToCancel);
-      const cancelBtnText = document.getElementById('cancelBtnText_' + itemIdToCancel);
-      const cancelBtnSpinner = document.getElementById('cancelBtnSpinner_' + itemIdToCancel);
+      const cancelBtn = document.getElementById('cancelBtn_' + pendingCancelItemId);
+      const cancelBtnText = document.getElementById('cancelBtnText_' + pendingCancelItemId);
+      const cancelBtnSpinner = document.getElementById('cancelBtnSpinner_' + pendingCancelItemId);
       
       if (cancelBtn) {
         cancelBtn.disabled = true;
         cancelBtn.style.opacity = '0.7';
         cancelBtn.style.cursor = 'not-allowed';
         cancelBtn.style.pointerEvents = 'none';
-        if (cancelBtnText) cancelBtnText.textContent = 'İptal...';
+        if (cancelBtnText) cancelBtnText.textContent = 'İşleniyor...';
         if (cancelBtnSpinner) cancelBtnSpinner.style.display = 'block';
       }
       
-      // İptal işlemini arka planda gerçekleştir
-      (async () => {
-        try {
-          const response = await fetch(API_URL + '/cancel-table-order-item', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              itemId: itemIdToCancel,
-              cancelQuantity: quantityToCancel
-            })
-          });
-          
-          const result = await response.json();
-          
-          if (result.success) {
-            showToast('success', 'Başarılı', 'Ürün başarıyla iptal edildi');
-            // Siparişleri yenile
-            if (selectedTable) {
-              await loadExistingOrders(selectedTable.id);
-            }
-          } else {
-            showToast('error', 'Hata', result.error || 'Ürün iptal edilemedi');
-            // Hata durumunda butonu tekrar aktif hale getir
-            if (cancelBtn) {
-              cancelBtn.disabled = false;
-              cancelBtn.style.opacity = '1';
-              cancelBtn.style.cursor = 'pointer';
-              cancelBtn.style.pointerEvents = 'auto';
-              if (cancelBtnText) cancelBtnText.textContent = 'İptal';
-              if (cancelBtnSpinner) cancelBtnSpinner.style.display = 'none';
-            }
+      // İptal işlemini başlat (fiş yazdırılacak, açıklama bekleniyor)
+      try {
+        const response = await fetch(API_URL + '/cancel-table-order-item', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            itemId: pendingCancelItemId,
+            cancelQuantity: pendingCancelQuantity,
+            staffId: currentStaff ? currentStaff.id : null,
+            cancelReason: '' // Geçici olarak boş, açıklama modal'ından sonra gönderilecek
+          })
+        });
+        
+        const result = await response.json();
+        
+        if (result.requiresReason === true || (result.error && result.error.includes('İptal açıklaması'))) {
+          // Açıklama modal'ını aç (fiş henüz yazdırılmadı)
+          if (cancelBtnText) cancelBtnText.textContent = 'İptal';
+          if (cancelBtnSpinner) cancelBtnSpinner.style.display = 'none';
+          showCancelReasonModal();
+        } else if (result.success) {
+          // Başarılı (açıklama ile birlikte gönderildi)
+          showToast('success', 'Başarılı', 'Ürün başarıyla iptal edildi');
+          hideCancelReasonModal();
+          if (selectedTable) {
+            await loadExistingOrders(selectedTable.id);
           }
-        } catch (error) {
-          console.error('İptal hatası:', error);
-          showToast('error', 'Hata', 'Ürün iptal edilirken bir hata oluştu');
+          pendingCancelItemId = null;
+          pendingCancelQuantity = null;
+        } else {
+          showToast('error', 'Hata', result.error || 'Ürün iptal edilemedi');
           // Hata durumunda butonu tekrar aktif hale getir
-          if (cancelBtn) {
-            cancelBtn.disabled = false;
-            cancelBtn.style.opacity = '1';
-            cancelBtn.style.cursor = 'pointer';
-            cancelBtn.style.pointerEvents = 'auto';
-            if (cancelBtnText) cancelBtnText.textContent = 'İptal';
-            if (cancelBtnSpinner) cancelBtnSpinner.style.display = 'none';
+          resetCancelButton(cancelBtn, cancelBtnText, cancelBtnSpinner);
+          pendingCancelItemId = null;
+          pendingCancelQuantity = null;
+        }
+      } catch (error) {
+        console.error('İptal hatası:', error);
+        showToast('error', 'Hata', 'Ürün iptal edilirken bir hata oluştu');
+        resetCancelButton(cancelBtn, cancelBtnText, cancelBtnSpinner);
+        pendingCancelItemId = null;
+        pendingCancelQuantity = null;
+      }
+    }
+    
+    function resetCancelButton(cancelBtn, cancelBtnText, cancelBtnSpinner) {
+      if (cancelBtn) {
+        cancelBtn.disabled = false;
+        cancelBtn.style.opacity = '1';
+        cancelBtn.style.cursor = 'pointer';
+        cancelBtn.style.pointerEvents = 'auto';
+        if (cancelBtnText) cancelBtnText.textContent = 'İptal';
+        if (cancelBtnSpinner) cancelBtnSpinner.style.display = 'none';
+      }
+    }
+    
+    function showCancelReasonModal() {
+      document.getElementById('cancelReasonModal').style.display = 'flex';
+      document.getElementById('cancelReasonInput').value = '';
+      document.getElementById('cancelReasonInput').focus();
+    }
+    
+    function hideCancelReasonModal() {
+      document.getElementById('cancelReasonModal').style.display = 'none';
+    }
+    
+    async function submitCancelReason() {
+      const cancelReason = document.getElementById('cancelReasonInput').value.trim();
+      
+      if (!cancelReason || cancelReason === '') {
+        showToast('error', 'Hata', 'Lütfen iptal açıklaması yazın');
+        return;
+      }
+      
+      if (!pendingCancelItemId || !pendingCancelQuantity) {
+        showToast('error', 'Hata', 'İptal işlemi bulunamadı');
+        hideCancelReasonModal();
+        return;
+      }
+      
+      const confirmBtn = document.getElementById('confirmCancelReasonBtn');
+      const confirmBtnText = document.getElementById('confirmCancelReasonBtnText');
+      const confirmBtnSpinner = document.getElementById('confirmCancelReasonBtnSpinner');
+      
+      if (confirmBtn) {
+        confirmBtn.disabled = true;
+        if (confirmBtnText) confirmBtnText.textContent = 'Kaydediliyor...';
+        if (confirmBtnSpinner) confirmBtnSpinner.style.display = 'block';
+      }
+      
+      try {
+        const response = await fetch(API_URL + '/cancel-table-order-item', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            itemId: pendingCancelItemId,
+            cancelQuantity: pendingCancelQuantity,
+            staffId: currentStaff ? currentStaff.id : null,
+            cancelReason: cancelReason
+          })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          showToast('success', 'Başarılı', 'Ürün başarıyla iptal edildi');
+          hideCancelReasonModal();
+          
+          // Siparişleri yenile
+          if (selectedTable) {
+            await loadExistingOrders(selectedTable.id);
+          }
+          
+          // Buton durumunu resetle
+          if (confirmBtn) {
+            confirmBtn.disabled = false;
+            if (confirmBtnText) confirmBtnText.textContent = 'Tamamla';
+            if (confirmBtnSpinner) confirmBtnSpinner.style.display = 'none';
+          }
+        } else {
+          showToast('error', 'Hata', result.error || 'İptal açıklaması kaydedilemedi');
+          if (confirmBtn) {
+            confirmBtn.disabled = false;
+            if (confirmBtnText) confirmBtnText.textContent = 'Tamamla';
+            if (confirmBtnSpinner) confirmBtnSpinner.style.display = 'none';
           }
         }
-      })();
+      } catch (error) {
+        console.error('İptal açıklaması kaydetme hatası:', error);
+        showToast('error', 'Hata', 'İptal açıklaması kaydedilirken bir hata oluştu');
+        if (confirmBtn) {
+          confirmBtn.disabled = false;
+          if (confirmBtnText) confirmBtnText.textContent = 'Tamamla';
+          if (confirmBtnSpinner) confirmBtnSpinner.style.display = 'none';
+        }
+      } finally {
+        pendingCancelItemId = null;
+        pendingCancelQuantity = null;
+      }
+    }
+    
+    // Yayın Mesajı Fonksiyonları
+    function showBroadcastMessage(message, date, time) {
+      const modal = document.getElementById('broadcastMessageModal');
+      const messageText = document.getElementById('broadcastMessageText');
+      const messageDate = document.getElementById('broadcastMessageDate');
+      
+      if (modal && messageText && messageDate) {
+        messageText.textContent = message;
+        messageDate.textContent = date + ' ' + time;
+        modal.style.display = 'flex';
+      }
+    }
+    
+    function closeBroadcastMessage() {
+      const modal = document.getElementById('broadcastMessageModal');
+      if (modal) {
+        modal.style.display = 'none';
+      }
     }
     
     function hideNoteModal() {
@@ -8088,7 +7696,8 @@ function startAPIServer() {
     res.json((db.staff || []).map(s => ({
       id: s.id,
       name: s.name,
-      surname: s.surname
+      surname: s.surname,
+      is_manager: s.is_manager || false
     })));
   });
 
@@ -8096,13 +7705,14 @@ function startAPIServer() {
     const { password } = req.body;
     const staff = (db.staff || []).find(s => s.password === password.toString());
     if (staff) {
-      res.json({ 
-        success: true, 
-        staff: { 
-          id: staff.id, 
-          name: staff.name, 
-          surname: staff.surname 
-        } 
+      res.json({
+        success: true,
+        staff: {
+          id: staff.id,
+          name: staff.name,
+          surname: staff.surname,
+          is_manager: staff.is_manager || false
+        }
       });
     } else {
       res.status(401).json({ success: false, error: 'Şifre hatalı' });
@@ -8262,10 +7872,23 @@ function startAPIServer() {
   // Ürün iptal etme (mobil arayüz için)
   appExpress.post('/api/cancel-table-order-item', async (req, res) => {
     try {
-      const { itemId, cancelQuantity } = req.body;
+      const { itemId, cancelQuantity, staffId } = req.body;
       
       if (!itemId) {
         return res.status(400).json({ success: false, error: 'Ürün ID\'si gerekli' });
+      }
+
+      // Müdür kontrolü
+      if (staffId) {
+        const staff = (db.staff || []).find(s => s.id === staffId);
+        if (!staff || !staff.is_manager) {
+          return res.status(403).json({ 
+            success: false, 
+            error: 'İptal yetkisi yok. İptal ettirmek için lütfen müdürle görüşünüz.' 
+          });
+        }
+      } else {
+        return res.status(400).json({ success: false, error: 'Personel bilgisi gerekli' });
       }
 
       const item = db.tableOrderItems.find(oi => oi.id === itemId);
@@ -8308,7 +7931,23 @@ function startAPIServer() {
         return res.status(400).json({ success: false, error: 'Bu ürünün kategorisine yazıcı atanmamış' });
       }
 
-      // İptal fişi yazdır
+      // İptal açıklaması kontrolü - açıklama yoksa fiş yazdırma, sadece açıklama iste
+      let { cancelReason } = req.body;
+      const hasCancelReason = cancelReason && cancelReason.trim() !== '';
+      
+      if (!hasCancelReason) {
+        // Açıklama yok, fiş yazdırma - sadece açıklama iste
+        return res.status(200).json({ 
+          success: false, 
+          requiresReason: true,
+          message: 'Lütfen iptal açıklaması girin.' 
+        });
+      }
+      
+      // Açıklama var, işleme devam et - fiş yazdır
+      cancelReason = cancelReason.trim();
+      
+      // İptal fişi yazdır (sadece açıklama varsa)
       try {
         const now = new Date();
         const cancelDate = now.toLocaleDateString('tr-TR');
@@ -8337,18 +7976,66 @@ function startAPIServer() {
       // Masa siparişinin toplam tutarını güncelle
       order.total_amount = Math.max(0, order.total_amount - cancelAmount);
 
-      // Eğer tüm ürün iptal ediliyorsa, item'ı sil
+      // İptal açıklamasını kaydet
       if (quantityToCancel >= item.quantity) {
+        // Tüm ürün iptal ediliyorsa, item'ı silmeden önce açıklamayı kaydet
+        item.cancel_reason = cancelReason.trim();
+        item.cancel_date = new Date().toISOString();
+        // İptal edilmiş item'ı ayrı bir tabloya kaydetmek yerine, silmeden önce loglayabiliriz
         const itemIndex = db.tableOrderItems.findIndex(oi => oi.id === itemId);
         if (itemIndex !== -1) {
           db.tableOrderItems.splice(itemIndex, 1);
         }
       } else {
-        // Sadece bir kısmı iptal ediliyorsa, quantity'yi azalt
+        // Sadece bir kısmı iptal ediliyorsa, quantity'yi azalt ve açıklamayı kaydet
         item.quantity -= quantityToCancel;
+        item.cancel_reason = cancelReason.trim();
+        item.cancel_date = new Date().toISOString();
       }
 
       saveDatabase();
+
+      // Firebase'e iptal kaydı ekle
+      if (firestore && firebaseCollection && firebaseAddDoc && firebaseServerTimestamp) {
+        try {
+          const now = new Date();
+          const cancelDate = now.toLocaleDateString('tr-TR');
+          const cancelTime = getFormattedTime(now);
+          
+          // Siparişi oluşturan garson bilgisini bul
+          const orderStaffName = order.staff_name || item.staff_name || null;
+          
+          // İptal eden personel bilgisi
+          const cancelStaff = staffId ? (db.staff || []).find(s => s.id === staffId) : null;
+          const cancelStaffName = cancelStaff ? `${cancelStaff.name} ${cancelStaff.surname}` : null;
+          const cancelStaffIsManager = cancelStaff ? (cancelStaff.is_manager || false) : false;
+          
+          const cancelRef = firebaseCollection(firestore, 'cancels');
+          await firebaseAddDoc(cancelRef, {
+            item_id: itemId,
+            order_id: order.id,
+            table_id: order.table_id,
+            table_name: order.table_name,
+            table_type: order.table_type,
+            product_id: item.product_id,
+            product_name: item.product_name,
+            quantity: quantityToCancel,
+            price: item.price,
+            cancel_reason: cancelReason,
+            cancel_date: cancelDate,
+            cancel_time: cancelTime,
+            staff_id: staffId || null,
+            staff_name: cancelStaffName,
+            staff_is_manager: cancelStaffIsManager,
+            order_staff_name: orderStaffName, // Siparişi oluşturan garson
+            source: 'mobile', // 'desktop' veya 'mobile'
+            created_at: firebaseServerTimestamp()
+          });
+          console.log('✅ İptal kaydı Firebase\'e başarıyla kaydedildi');
+        } catch (error) {
+          console.error('❌ Firebase\'e iptal kaydı kaydedilemedi:', error);
+        }
+      }
 
       // Mobil personel arayüzüne gerçek zamanlı güncelleme gönder
       if (io) {
@@ -8391,93 +8078,6 @@ function startAPIServer() {
     });
     
     res.json(ordersWithItems);
-  });
-
-  // Masa için kasa yazıcısından adisyon fişi iste
-  appExpress.post('/api/request-table-adisyon', async (req, res) => {
-    try {
-      const { tableId } = req.body || {};
-      
-      if (!tableId) {
-        return res.status(400).json({ success: false, error: 'tableId gerekli' });
-      }
-      
-      const pendingOrders = (db.tableOrders || []).filter(
-        o => o.table_id === tableId && o.status === 'pending'
-      );
-      
-      if (!pendingOrders || pendingOrders.length === 0) {
-        return res.status(404).json({ success: false, error: 'Bu masaya ait aktif sipariş bulunamadı.' });
-      }
-      
-      const allItems = [];
-      pendingOrders.forEach(order => {
-        const items = (db.tableOrderItems || []).filter(
-          item => item.order_id === order.id
-        );
-        items.forEach(item => {
-          allItems.push({
-            id: item.product_id,
-            name: item.product_name,
-            price: item.price,
-            quantity: item.quantity,
-            isGift: item.isGift || false
-          });
-        });
-      });
-      
-      if (allItems.length === 0) {
-        return res.status(400).json({ success: false, error: 'Bu masanın siparişinde ürün bulunamadı.' });
-      }
-      
-      const cashierPrinter = db.settings && db.settings.cashierPrinter;
-      if (!cashierPrinter || !cashierPrinter.printerName) {
-        return res.status(400).json({ success: false, error: 'Kasa yazıcısı ayarlanmamış. Lütfen masaüstü uygulamadan kasa yazıcısı seçin.' });
-      }
-      
-      const firstOrder = pendingOrders[0];
-      const now = new Date();
-      
-      const receiptData = {
-        sale_id: null,
-        items: allItems,
-        paymentMethod: 'Adisyon',
-        sale_date: now.toLocaleDateString('tr-TR'),
-        sale_time: getFormattedTime(now),
-        orderNote: firstOrder.order_note || null,
-        tableName: firstOrder.table_name || null,
-        tableType: firstOrder.table_type || null,
-        cashierOnly: true
-      };
-      
-      // Toplam tutarı hesapla (ikramlar hariç)
-      const totalAmount = allItems.reduce((sum, item) => {
-        if (item.isGift) return sum;
-        return sum + (item.price * item.quantity);
-      }, 0);
-      
-      const cashierReceiptData = {
-        ...receiptData,
-        totalAmount
-      };
-      
-      const result = await printToPrinter(
-        cashierPrinter.printerName,
-        cashierPrinter.printerType,
-        cashierReceiptData,
-        false,
-        null
-      );
-      
-      if (result && result.success) {
-        return res.json({ success: true });
-      } else {
-        return res.status(500).json({ success: false, error: (result && result.error) || 'Adisyon fişi yazdırılamadı.' });
-      }
-    } catch (error) {
-      console.error('Mobil adisyon yazdırma hatası:', error);
-      return res.status(500).json({ success: false, error: 'Adisyon yazdırma sırasında bir hata oluştu.' });
-    }
   });
 
   // Mobil personel arayüzü için static dosyalar
@@ -8529,6 +8129,61 @@ function startAPIServer() {
 
   appExpress.get('/mobile', (req, res) => {
     res.send(generateMobileHTML(serverURL));
+  });
+
+  // Mesaj gönderme API endpoint'i
+  appExpress.post('/api/broadcast-message', async (req, res) => {
+    try {
+      const { message } = req.body;
+      
+      if (!message || message.trim() === '') {
+        return res.status(400).json({ success: false, error: 'Mesaj içeriği gerekli' });
+      }
+
+      const now = new Date();
+      const messageDate = now.toLocaleDateString('tr-TR');
+      const messageTime = getFormattedTime(now);
+
+      // Firebase'e mesaj kaydet
+      if (firestore && firebaseCollection && firebaseAddDoc && firebaseServerTimestamp) {
+        try {
+          const broadcastsRef = firebaseCollection(firestore, 'broadcasts');
+          await firebaseAddDoc(broadcastsRef, {
+            message: message.trim(),
+            date: messageDate,
+            time: messageTime,
+            created_at: firebaseServerTimestamp()
+          });
+          console.log('✅ Mesaj Firebase\'e başarıyla kaydedildi');
+        } catch (error) {
+          console.error('❌ Firebase\'e mesaj kaydedilemedi:', error);
+        }
+      }
+
+      // Socket.IO ile tüm clientlara gönder
+      if (io) {
+        io.emit('broadcast-message', {
+          message: message.trim(),
+          date: messageDate,
+          time: messageTime
+        });
+        console.log('✅ Mesaj tüm clientlara gönderildi');
+      }
+
+      // Desktop uygulamaya da gönder
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('broadcast-message', {
+          message: message.trim(),
+          date: messageDate,
+          time: messageTime
+        });
+      }
+
+      res.json({ success: true, message: 'Mesaj başarıyla gönderildi' });
+    } catch (error) {
+      console.error('Mesaj gönderme hatası:', error);
+      res.status(500).json({ success: false, error: 'Mesaj gönderilirken bir hata oluştu' });
+    }
   });
 
   appExpress.post('/api/orders', async (req, res) => {
@@ -8813,7 +8468,8 @@ ipcMain.handle('create-staff', (event, staffData) => {
     id: newId,
     name: name.trim(),
     surname: surname.trim(),
-    password: password.toString()
+    password: password.toString(),
+    is_manager: false // Varsayılan olarak müdür değil
   };
   db.staff.push(newStaff);
   saveDatabase();
@@ -8903,8 +8559,31 @@ ipcMain.handle('get-staff', () => {
   return db.staff.map(s => ({
     id: s.id,
     name: s.name,
-    surname: s.surname
+    surname: s.surname,
+    is_manager: s.is_manager || false
   }));
+});
+
+// Müdür atama/kaldırma
+ipcMain.handle('set-staff-manager', (event, staffId, isManager) => {
+  if (!db.staff) db.staff = [];
+  const staff = db.staff.find(s => s.id === staffId);
+  if (!staff) {
+    return { success: false, error: 'Personel bulunamadı' };
+  }
+  
+  // Eğer müdür yapılıyorsa, diğer tüm personellerin müdürlüğünü kaldır
+  if (isManager) {
+    db.staff.forEach(s => {
+      if (s.id !== staffId) {
+        s.is_manager = false;
+      }
+    });
+  }
+  
+  staff.is_manager = isManager;
+  saveDatabase();
+  return { success: true, staff: staff };
 });
 
 ipcMain.handle('verify-staff-pin', (event, password) => {
@@ -8914,5 +8593,176 @@ ipcMain.handle('verify-staff-pin', (event, password) => {
     return { success: true, staff: { id: staff.id, name: staff.name, surname: staff.surname } };
   }
   return { success: false, error: 'Şifre hatalı' };
+});
+
+// Mesaj gönderme IPC handler
+ipcMain.handle('send-broadcast-message', async (event, message) => {
+  if (!message || message.trim() === '') {
+    return { success: false, error: 'Mesaj içeriği gerekli' };
+  }
+
+  const now = new Date();
+  const messageDate = now.toLocaleDateString('tr-TR');
+  const messageTime = getFormattedTime(now);
+
+  // Firebase'e mesaj kaydet
+  if (firestore && firebaseCollection && firebaseAddDoc && firebaseServerTimestamp) {
+    try {
+      const broadcastsRef = firebaseCollection(firestore, 'broadcasts');
+      await firebaseAddDoc(broadcastsRef, {
+        message: message.trim(),
+        date: messageDate,
+        time: messageTime,
+        created_at: firebaseServerTimestamp()
+      });
+      console.log('✅ Mesaj Firebase\'e başarıyla kaydedildi');
+    } catch (error) {
+      console.error('❌ Firebase\'e mesaj kaydedilemedi:', error);
+    }
+  }
+
+  // Socket.IO ile tüm clientlara gönder
+  if (io) {
+    io.emit('broadcast-message', {
+      message: message.trim(),
+      date: messageDate,
+      time: messageTime
+    });
+    console.log('✅ Mesaj tüm clientlara gönderildi');
+  }
+
+  // Desktop uygulamaya da gönder
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('broadcast-message', {
+      message: message.trim(),
+      date: messageDate,
+      time: messageTime
+    });
+  }
+
+  return { success: true, message: 'Mesaj başarıyla gönderildi' };
+});
+
+// Table Sync IPC Handlers
+let tableSyncInterval = null;
+let isTableSyncActive = false;
+
+// Masaları Firebase'e senkronize et
+async function syncTablesToFirebase() {
+  if (!firestore || !firebaseCollection || !firebaseDoc || !firebaseSetDoc) {
+    console.warn('⚠️ Firebase başlatılamadı, masalar senkronize edilemedi');
+    return;
+  }
+
+  try {
+    const tableOrders = db.tableOrders || [];
+    const tableOrderItems = db.tableOrderItems || [];
+
+    // Her masa için Firebase'de bir doküman oluştur/güncelle
+    const tablesMap = new Map();
+
+    // Tüm siparişleri masalara göre grupla
+    tableOrders.forEach(order => {
+      if (!tablesMap.has(order.table_id)) {
+        tablesMap.set(order.table_id, {
+          table_id: order.table_id,
+          table_name: order.table_name,
+          table_type: order.table_type,
+          table_number: parseInt(order.table_id.replace(/[^0-9]/g, '')) || 0,
+          is_occupied: order.status === 'pending',
+          total_amount: order.total_amount || 0,
+          items: [],
+          status: order.status || 'empty'
+        });
+      }
+
+      const table = tablesMap.get(order.table_id);
+      if (order.status === 'pending') {
+        table.is_occupied = true;
+        table.total_amount = order.total_amount || 0;
+      }
+    });
+
+    // Sipariş item'larını masalara ekle
+    tableOrderItems.forEach(item => {
+      const order = tableOrders.find(o => o.id === item.order_id);
+      if (order && order.status === 'pending') {
+        const table = tablesMap.get(order.table_id);
+        if (table) {
+          table.items.push({
+            product_id: item.product_id,
+            product_name: item.product_name,
+            quantity: item.quantity,
+            price: item.price,
+            isGift: item.isGift || false
+          });
+        }
+      }
+    });
+
+    // Firebase'e kaydet
+    for (const [tableId, tableData] of tablesMap) {
+      try {
+        const tableRef = firebaseDoc(firestore, 'tables', tableId);
+        await firebaseSetDoc(tableRef, tableData, { merge: true });
+      } catch (error) {
+        console.error(`❌ Masa Firebase'e kaydedilemedi (${tableId}):`, error);
+      }
+    }
+
+    console.log(`✅ ${tablesMap.size} masa Firebase'e senkronize edildi`);
+  } catch (error) {
+    console.error('❌ Masalar senkronize edilirken hata oluştu:', error);
+  }
+}
+
+ipcMain.handle('start-table-sync', async (event) => {
+  if (isTableSyncActive) {
+    return { success: true, message: 'Senkronizasyon zaten aktif' };
+  }
+
+  try {
+    // İlk senkronizasyonu hemen yap
+    await syncTablesToFirebase();
+    
+    // Her 5 saniyede bir senkronize et
+    tableSyncInterval = setInterval(async () => {
+      await syncTablesToFirebase();
+    }, 5000);
+
+    isTableSyncActive = true;
+    console.log('✅ Masa senkronizasyonu başlatıldı');
+    return { success: true, message: 'Masa senkronizasyonu başlatıldı' };
+  } catch (error) {
+    console.error('❌ Masa senkronizasyonu başlatılamadı:', error);
+    return { success: false, error: error.message || 'Senkronizasyon başlatılamadı' };
+  }
+});
+
+ipcMain.handle('stop-table-sync', async (event) => {
+  if (!isTableSyncActive) {
+    return { success: true, message: 'Senkronizasyon zaten durdurulmuş' };
+  }
+
+  try {
+    if (tableSyncInterval) {
+      clearInterval(tableSyncInterval);
+      tableSyncInterval = null;
+    }
+    isTableSyncActive = false;
+    console.log('⏹️ Masa senkronizasyonu durduruldu');
+    return { success: true, message: 'Masa senkronizasyonu durduruldu' };
+  } catch (error) {
+    console.error('❌ Masa senkronizasyonu durdurulamadı:', error);
+    return { success: false, error: error.message || 'Senkronizasyon durdurulamadı' };
+  }
+});
+
+ipcMain.handle('get-table-sync-status', (event) => {
+  return { 
+    success: true, 
+    isActive: isTableSyncActive,
+    isEnabled: isTableSyncActive
+  };
 });
 

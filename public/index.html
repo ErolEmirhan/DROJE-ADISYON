@@ -33,9 +33,13 @@
     let isAuthenticated = false;
     let realtimeUnsubscribe = null;
     let allSales = []; // Tüm satışları sakla
-    let activeTab = 'sales'; // 'sales', 'reports', 'staff', 'tables'
-    let reportDateFilter = 'all'; // 'all', 'week', 'month'
+    let activeTab = 'sales'; // 'sales', 'reports', 'staff', 'tables', 'cancels'
+    let reportDateFilter = 'all'; // 'all', 'yesterday', 'week', 'month', 'custom'
+    let salesDateFilter = 'all'; // Satış geçmişi için tarih filtresi
+    let customDateRange = { start: null, end: null }; // Özel tarih aralığı
+    let salesCustomDateRange = { start: null, end: null }; // Satış geçmişi için özel tarih aralığı
     let tablesUnsubscribe = null; // Masalar için real-time listener
+    let activeTablesUnsubscribe = null; // Aktif masa sayısı için real-time listener
 
     try {
       // Firebase zaten başlatılmış mı kontrol et
@@ -98,16 +102,34 @@
 
     // Sayfa yüklendiğinde kontrol et
     window.addEventListener('load', () => {
-      if (!db) {
-        console.error('Firebase başlatılamadı');
-        return;
+      // Splash screen'i göster
+      const loader = document.getElementById('loader');
+      if (loader) {
+        loader.style.display = 'flex';
       }
-      
-      if (sessionStorage.getItem('adminAuthenticated') === 'true') {
-        showDashboard();
-      } else {
-        showLogin();
-      }
+
+      // 2.5 saniye sonra splash screen'i kapat
+      setTimeout(() => {
+        if (loader) {
+          loader.style.opacity = '0';
+          loader.style.transition = 'opacity 0.5s ease';
+          setTimeout(() => {
+            loader.style.display = 'none';
+            
+            // Firebase kontrolü ve dashboard gösterimi
+            if (!db) {
+              console.error('Firebase başlatılamadı');
+              return;
+            }
+            
+            if (sessionStorage.getItem('adminAuthenticated') === 'true') {
+              showDashboard();
+            } else {
+              showLogin();
+            }
+          }, 500);
+        }
+      }, 2500);
     });
 
     // Satışları yükle
@@ -192,19 +214,37 @@
             items: items,
             items_array: itemsArray, // Gerçek Firebase verileri
             itemsText: data.items || 'Ürün bulunamadı',
-            isExpense: data.isExpense || false
+            isExpense: data.isExpense === true || data.isExpense === 'true' || data.payment_method === 'Masraf'
           });
         });
 
-        // sale_date'e göre sırala (en yeni önce)
+        // Tarih + saate göre sırala (en yeni satış en üstte)
         sales.sort((a, b) => {
-          if (!a.sale_date || !b.sale_date) return 0;
-          const [dayA, monthA, yearA] = a.sale_date.split('.');
-          const [dayB, monthB, yearB] = b.sale_date.split('.');
-          if (!dayA || !dayB) return 0;
-          const dateA = new Date(yearA, monthA - 1, dayA);
-          const dateB = new Date(yearB, monthB - 1, dayB);
-          return dateB - dateA;
+          if (a.sale_date && b.sale_date) {
+            const [dayA, monthA, yearA] = a.sale_date.split('.');
+            const [dayB, monthB, yearB] = b.sale_date.split('.');
+            if (dayA && monthA && yearA && dayB && monthB && yearB) {
+              const dateA = new Date(yearA, monthA - 1, dayA);
+              const dateB = new Date(yearB, monthB - 1, dayB);
+              
+              if (a.sale_time) {
+                const [hA, mA, sA] = a.sale_time.split(':');
+                dateA.setHours(parseInt(hA) || 0, parseInt(mA) || 0, parseInt(sA) || 0, 0);
+              }
+              if (b.sale_time) {
+                const [hB, mB, sB] = b.sale_time.split(':');
+                dateB.setHours(parseInt(hB) || 0, parseInt(mB) || 0, parseInt(sB) || 0, 0);
+              }
+              
+              const diff = dateB - dateA;
+              if (diff !== 0) return diff;
+            }
+          }
+          
+          // Tarih/saat yoksa veya eşitse, sale_id'ye göre (büyükten küçüğe) sırala
+          const idA = parseInt(a.sale_id || a.id) || 0;
+          const idB = parseInt(b.sale_id || b.id) || 0;
+          return idB - idA;
         });
 
         allSales = sales; // Tüm satışları sakla
@@ -302,7 +342,7 @@
             items: items,
             items_array: itemsArray, // Gerçek Firebase verileri
             itemsText: data.items || 'Ürün bulunamadı',
-            isExpense: data.isExpense || false
+            isExpense: data.isExpense === true || data.isExpense === 'true' || data.payment_method === 'Masraf'
           });
         });
 
@@ -354,25 +394,156 @@
       }
     }
 
+    // Satışları tarih filtresine göre filtrele
+    function filterSalesByDateForHistory(sales) {
+      const now = new Date();
+      now.setHours(23, 59, 59, 999);
+      
+      if (salesDateFilter === 'yesterday') {
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setHours(0, 0, 0, 0);
+        const yesterdayEnd = new Date(yesterday);
+        yesterdayEnd.setHours(23, 59, 59, 999);
+        
+        return sales.filter(sale => {
+          if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
+          const [day, month, year] = sale.sale_date.split('.');
+          if (!day || !month || !year) return false;
+          const saleDate = new Date(year, month - 1, day);
+          saleDate.setHours(0, 0, 0, 0);
+          return saleDate >= yesterday && saleDate <= yesterdayEnd;
+        });
+      } else if (salesDateFilter === 'week') {
+        const weekAgo = new Date(now);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        weekAgo.setHours(0, 0, 0, 0);
+        
+        return sales.filter(sale => {
+          if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
+          const [day, month, year] = sale.sale_date.split('.');
+          if (!day || !month || !year) return false;
+          const saleDate = new Date(year, month - 1, day);
+          saleDate.setHours(0, 0, 0, 0);
+          return saleDate >= weekAgo && saleDate <= now;
+        });
+      } else if (salesDateFilter === 'month') {
+        const monthAgo = new Date(now);
+        monthAgo.setMonth(monthAgo.getMonth() - 1);
+        monthAgo.setHours(0, 0, 0, 0);
+        
+        return sales.filter(sale => {
+          if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
+          const [day, month, year] = sale.sale_date.split('.');
+          if (!day || !month || !year) return false;
+          const saleDate = new Date(year, month - 1, day);
+          saleDate.setHours(0, 0, 0, 0);
+          return saleDate >= monthAgo && saleDate <= now;
+        });
+      } else if (salesDateFilter === 'custom' && salesCustomDateRange.start && salesCustomDateRange.end) {
+        const startDate = new Date(salesCustomDateRange.start);
+        startDate.setHours(0, 0, 0, 0);
+        const endDate = new Date(salesCustomDateRange.end);
+        endDate.setHours(23, 59, 59, 999);
+        
+        return sales.filter(sale => {
+          if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
+          const [day, month, year] = sale.sale_date.split('.');
+          if (!day || !month || !year) return false;
+          const saleDate = new Date(year, month - 1, day);
+          saleDate.setHours(0, 0, 0, 0);
+          return saleDate >= startDate && saleDate <= endDate;
+        });
+      }
+      
+      return sales; // 'all' için tüm satışlar
+    }
+
     // Satışları render et
     function renderSales(sales) {
       const container = document.getElementById('salesContainer');
       if (!container) return;
 
-      if (sales.length === 0) {
-        container.innerHTML = `
+      // Tarih filtresine göre filtrele
+      const filteredSales = filterSalesByDateForHistory(sales);
+
+      // Header ve tarih filtresi butonu
+      const filterLabels = {
+        'all': 'Tüm Zamanlar',
+        'yesterday': 'Dün',
+        'week': 'Son 1 Hafta',
+        'month': 'Son 1 Ay',
+        'custom': salesCustomDateRange.start && salesCustomDateRange.end 
+          ? `${salesCustomDateRange.start.toLocaleDateString('tr-TR')} - ${salesCustomDateRange.end.toLocaleDateString('tr-TR')}`
+          : 'Özel Tarih'
+      };
+
+      let html = `
+        <div id="salesHeader" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding: 0 4px;">
+          <h2 style="font-size: 18px; font-weight: 700; color: #1f2937; margin: 0;">Satış Geçmişi</h2>
+          <div class="date-filter-wrapper">
+            <button class="date-filter-trigger" onclick="toggleSalesDateFilterModal(event)">
+              <span>📅</span>
+              <span id="salesDateFilterLabel">${filterLabels[salesDateFilter] || 'Tüm Zamanlar'}</span>
+              <span class="date-filter-arrow">▼</span>
+            </button>
+            <div id="salesDateFilterModal" class="date-filter-modal">
+              <div class="date-filter-modal-content">
+                <div class="date-filter-option ${salesDateFilter === 'yesterday' ? 'active' : ''}" onclick="setSalesDateFilter('yesterday'); closeSalesDateFilterModal();">
+                  <span class="date-filter-icon">📆</span>
+                  <span>Dün</span>
+                </div>
+                <div class="date-filter-option ${salesDateFilter === 'week' ? 'active' : ''}" onclick="setSalesDateFilter('week'); closeSalesDateFilterModal();">
+                  <span class="date-filter-icon">📅</span>
+                  <span>Son 1 Hafta</span>
+                </div>
+                <div class="date-filter-option ${salesDateFilter === 'month' ? 'active' : ''}" onclick="setSalesDateFilter('month'); closeSalesDateFilterModal();">
+                  <span class="date-filter-icon">📅</span>
+                  <span>Son 1 Ay</span>
+                </div>
+                <div class="date-filter-option ${salesDateFilter === 'all' ? 'active' : ''}" onclick="setSalesDateFilter('all'); closeSalesDateFilterModal();">
+                  <span class="date-filter-icon">📊</span>
+                  <span>Tüm Zamanlar</span>
+                </div>
+                <div class="date-filter-divider"></div>
+                <div class="date-filter-option ${salesDateFilter === 'custom' ? 'active' : ''}" onclick="document.getElementById('salesCustomDateRangeSection').style.display = 'block';">
+                  <span class="date-filter-icon">🗓️</span>
+                  <span>Özel Tarih Aralığı</span>
+                </div>
+                <div id="salesCustomDateRangeSection" class="custom-date-range-section" style="display: ${salesDateFilter === 'custom' ? 'block' : 'none'};">
+                  <div class="custom-date-inputs">
+                    <div class="custom-date-input-group">
+                      <label>Başlangıç:</label>
+                      <input type="date" id="salesCustomDateStart" value="${salesCustomDateRange.start ? formatDateForInput(salesCustomDateRange.start) : ''}">
+                    </div>
+                    <div class="custom-date-input-group">
+                      <label>Bitiş:</label>
+                      <input type="date" id="salesCustomDateEnd" value="${salesCustomDateRange.end ? formatDateForInput(salesCustomDateRange.end) : ''}">
+                    </div>
+                  </div>
+                  <button onclick="setSalesCustomDateRange()" class="custom-date-apply-btn">Uygula</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      if (filteredSales.length === 0) {
+        html += `
           <div class="empty-state">
             <div class="empty-icon">📊</div>
-            <h3>Henüz Satış Yok</h3>
-            <p>Satış yapıldıkça burada görünecek</p>
+            <h3>Seçilen Tarih Aralığında Satış Yok</h3>
+            <p>Farklı bir tarih aralığı seçmeyi deneyin</p>
           </div>
         `;
+        container.innerHTML = html;
         return;
       }
 
-      // Tarihe göre grupla
+      // Tarihe göre grupla (filtrelenmiş satışlar üzerinde)
       const salesByDate = {};
-      sales.forEach(sale => {
+      filteredSales.forEach(sale => {
         const date = sale.sale_date || 'Bilinmeyen';
         if (!salesByDate[date]) {
           salesByDate[date] = [];
@@ -391,22 +562,89 @@
         const dateB = new Date(yearB, monthB - 1, dayB);
         return dateB - dateA;
       });
-
-      let html = '';
       sortedDates.forEach(date => {
-        const daySales = salesByDate[date];
-        const dayTotal = daySales.reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+        let daySales = salesByDate[date];
+        
+        // Her tarih grubu içindeki satışları saat bilgisine göre sırala (en yeni önce)
+        daySales.sort((a, b) => {
+          // Önce saat bilgisine göre sırala
+          if (a.sale_time && b.sale_time) {
+            const [hA, mA, sA] = a.sale_time.split(':').map(Number);
+            const [hB, mB, sB] = b.sale_time.split(':').map(Number);
+            const timeA = (hA || 0) * 3600 + (mA || 0) * 60 + (sA || 0);
+            const timeB = (hB || 0) * 3600 + (mB || 0) * 60 + (sB || 0);
+            if (timeB !== timeA) return timeB - timeA; // En yeni saat önce
+          }
+          
+          // Saat bilgisi yoksa veya eşitse sale_id'ye göre sırala (büyükten küçüğe)
+          const idA = parseInt(a.sale_id || a.id || 0);
+          const idB = parseInt(b.sale_id || b.id || 0);
+          return idB - idA;
+        });
+        
+        // Masrafları hariç tut
+        const dayTotal = daySales
+          .filter(sale => !sale.isExpense && sale.payment_method !== 'Masraf')
+          .reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
         
         html += `
           <div class="date-group">
             <div class="date-header">
               <div>
-                <h2 class="date-title">${formatDateDisplay(date)}</h2>
-                <p class="date-subtitle">${daySales.length} satış • Toplam: ₺${dayTotal.toFixed(2)}</p>
+                <div class="date-title-wrapper">
+                  <div class="date-icon">📅</div>
+                  <div>
+                    <h2 class="date-title">${formatDateDisplay(date)}</h2>
+                  </div>
+                </div>
+              </div>
+              <div class="date-stats">
+                <div class="date-stat-item">
+                  <span class="date-stat-label">Satış</span>
+                  <span class="date-stat-value">${daySales.length}</span>
+                </div>
+                <div class="date-stat-item">
+                  <span class="date-stat-label">Toplam</span>
+                  <span class="date-stat-value amount">₺${dayTotal.toFixed(2)}</span>
+                </div>
               </div>
             </div>
             <div class="sales-grid">
               ${daySales.map(sale => {
+                // Masraf kontrolü - birden fazla yöntemle kontrol et
+                const isExpense = sale.isExpense === true || 
+                                  sale.isExpense === 'true' ||
+                                  sale.payment_method === 'Masraf' ||
+                                  (sale.items_array && sale.items_array.length > 0 && (
+                                    sale.items_array[0].isExpense === true ||
+                                    sale.items_array[0].isExpense === 'true' ||
+                                    (sale.items_array[0].product_id && sale.items_array[0].product_id.toString().startsWith('expense-'))
+                                  ));
+                
+                // Masraf ise farklı görünüm
+                if (isExpense) {
+                  const expenseTitle = sale.items_array && sale.items_array.length > 0 
+                    ? sale.items_array[0].product_name 
+                    : (sale.itemsText || sale.items || 'Masraf');
+                  
+                  return `
+                    <div class="sale-card expense-card">
+                      <div class="expense-header">
+                        <div class="expense-info">
+                          <h3 class="expense-title">${expenseTitle}</h3>
+                          <p class="expense-time">${sale.sale_time || ''}</p>
+                          <span class="badge badge-expense">💰 Masraf</span>
+                        </div>
+                        <div class="expense-amount">
+                          <p class="expense-label">MİKTAR</p>
+                          <p class="expense-value">₺${parseFloat(sale.total_amount || 0).toFixed(2)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                }
+                
+                // Normal satış görünümü
                 const itemsHtml = sale.items && sale.items.length > 0
                   ? sale.items.map(item => `
                     <div class="sale-item">
@@ -453,11 +691,148 @@
       container.innerHTML = html;
     }
 
+    // Satış geçmişi tarih filtresini güncelle
+    function updateSalesDateFilterButton() {
+      const label = document.getElementById('salesDateFilterLabel');
+      if (!label) return;
+
+      const filterLabels = {
+        'all': 'Tüm Zamanlar',
+        'yesterday': 'Dün',
+        'week': 'Son 1 Hafta',
+        'month': 'Son 1 Ay',
+        'custom': salesCustomDateRange.start && salesCustomDateRange.end 
+          ? `${salesCustomDateRange.start.toLocaleDateString('tr-TR')} - ${salesCustomDateRange.end.toLocaleDateString('tr-TR')}`
+          : 'Özel Tarih'
+      };
+
+      label.textContent = filterLabels[salesDateFilter] || 'Tüm Zamanlar';
+    }
+
+    // Satış geçmişi tarih filtresini değiştir
+    function setSalesDateFilter(filter) {
+      salesDateFilter = filter;
+      renderSales(allSales);
+      updateSalesDateFilterButton();
+    }
+
+    // Satış geçmişi özel tarih aralığı seç
+    function setSalesCustomDateRange() {
+      const startInput = document.getElementById('salesCustomDateStart');
+      const endInput = document.getElementById('salesCustomDateEnd');
+      
+      if (!startInput || !endInput) return;
+      
+      const start = startInput.value;
+      const end = endInput.value;
+      
+      if (!start || !end) {
+        alert('Lütfen başlangıç ve bitiş tarihlerini seçin');
+        return;
+      }
+      
+      const startDate = parseDateFromInput(start);
+      const endDate = parseDateFromInput(end);
+      
+      if (startDate > endDate) {
+        alert('Başlangıç tarihi bitiş tarihinden sonra olamaz');
+        return;
+      }
+      
+      salesCustomDateRange.start = startDate;
+      salesCustomDateRange.end = endDate;
+      salesDateFilter = 'custom';
+      renderSales(allSales);
+      updateSalesDateFilterButton();
+      closeSalesDateFilterModal();
+    }
+
+    // Satış geçmişi tarih filtresi modal'ını aç/kapa
+    function toggleSalesDateFilterModal(event) {
+      if (event) {
+        event.stopPropagation();
+      }
+      const modal = document.getElementById('salesDateFilterModal');
+      if (modal) {
+        const isOpen = modal.classList.contains('show');
+        // Önce tüm modal'ları kapat
+        document.querySelectorAll('.date-filter-modal').forEach(m => m.classList.remove('show'));
+        if (!isOpen) {
+          modal.classList.add('show');
+        }
+      }
+    }
+
+    function closeSalesDateFilterModal() {
+      const modal = document.getElementById('salesDateFilterModal');
+      if (modal) {
+        modal.classList.remove('show');
+      }
+      const customSection = document.getElementById('salesCustomDateRangeSection');
+      if (customSection && salesDateFilter !== 'custom') {
+        customSection.style.display = 'none';
+      }
+    }
+
+    // Aktif masa sayısını gerçek zamanlı dinle
+    function startActiveTablesListener() {
+      if (!db) {
+        updateActiveTablesCount(0);
+        return;
+      }
+
+      // Önceki listener'ı temizle
+      if (activeTablesUnsubscribe) {
+        activeTablesUnsubscribe();
+        activeTablesUnsubscribe = null;
+      }
+
+      const tablesRef = db.collection('tables');
+      activeTablesUnsubscribe = tablesRef.onSnapshot((snapshot) => {
+        let activeCount = 0;
+        snapshot.forEach((doc) => {
+          const table = doc.data();
+          const isOccupied = table.is_occupied === true || 
+                            table.is_occupied === 'true' || 
+                            table.is_occupied === 1 ||
+                            (table.status && (table.status === 'occupied' || table.status === 'dolu')) ||
+                            (table.items && Array.isArray(table.items) && table.items.length > 0);
+          if (isOccupied) {
+            activeCount++;
+          }
+        });
+        updateActiveTablesCount(activeCount);
+      }, (error) => {
+        console.error('Aktif masa sayısı dinlenemedi:', error);
+        updateActiveTablesCount(0);
+      });
+    }
+
+    // Aktif masa sayısını güncelle
+    function updateActiveTablesCount(count) {
+      const activeTablesValue = document.querySelector('.stat-card-pink .stat-value');
+      if (activeTablesValue) {
+        activeTablesValue.textContent = count;
+      }
+    }
+
     // İstatistikleri güncelle
     function updateStats(sales) {
       const today = new Date().toLocaleDateString('tr-TR');
-      const todaySales = sales.filter(s => s.sale_date === today);
+      // Masrafları hariç tut
+      const todaySales = sales.filter(s => 
+        s.sale_date === today && 
+        !s.isExpense && 
+        s.payment_method !== 'Masraf'
+      );
       const todayRevenue = todaySales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+      
+      // Günlük masrafları hesapla
+      const todayExpenses = sales.filter(s => 
+        s.sale_date === today && 
+        (s.isExpense || s.payment_method === 'Masraf')
+      );
+      const todayExpenseTotal = todayExpenses.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
       
       const statsGrid = document.getElementById('statsGrid');
       if (!statsGrid) return;
@@ -470,6 +845,13 @@
             <div class="stat-value">₺${todayRevenue.toFixed(2)}</div>
           </div>
         </div>
+        <div class="stat-card stat-card-red">
+          <div class="stat-icon">💸</div>
+          <div class="stat-content">
+            <h3>Günlük Masraf</h3>
+            <div class="stat-value">₺${todayExpenseTotal.toFixed(2)}</div>
+          </div>
+        </div>
         <div class="stat-card stat-card-purple">
           <div class="stat-icon">📊</div>
           <div class="stat-content">
@@ -477,7 +859,17 @@
             <div class="stat-value">${todaySales.length}</div>
           </div>
         </div>
+        <div class="stat-card stat-card-pink">
+          <div class="stat-icon">🪑</div>
+          <div class="stat-content">
+            <h3>Aktif Masa</h3>
+            <div class="stat-value">0</div>
+          </div>
+        </div>
       `;
+
+      // Aktif masa sayısını başlat
+      startActiveTablesListener();
     }
 
     function showLoading(show) {
@@ -508,14 +900,41 @@
 
     // Mevcut görünümü render et
     function renderCurrentView() {
+      // Eğer masalar sekmesinden çıkılıyorsa, listener'ı temizle
+      if (activeTab !== 'tables' && tablesUnsubscribe) {
+        tablesUnsubscribe();
+        tablesUnsubscribe = null;
+      }
+
+      // Aktif masa listener'ını her zaman çalıştır (stats için gerekli)
+      if (!activeTablesUnsubscribe) {
+        startActiveTablesListener();
+      }
+
+      // Container'ları göster/gizle
+      const salesContainer = document.getElementById('salesContainer');
+      const reportsContainer = document.getElementById('reportsContainer');
+      const staffContainer = document.getElementById('staffContainer');
+      const tablesContainer = document.getElementById('tablesContainer');
+      const cancelsContainer = document.getElementById('cancelsContainer');
+      
+      if (salesContainer) salesContainer.style.display = activeTab === 'sales' ? 'block' : 'none';
+      if (reportsContainer) reportsContainer.style.display = activeTab === 'reports' ? 'block' : 'none';
+      if (staffContainer) staffContainer.style.display = activeTab === 'staff' ? 'block' : 'none';
+      if (tablesContainer) tablesContainer.style.display = activeTab === 'tables' ? 'block' : 'none';
+      if (cancelsContainer) cancelsContainer.style.display = activeTab === 'cancels' ? 'block' : 'none';
+      
       if (activeTab === 'sales') {
         renderSales(allSales);
+        updateSalesDateFilterButton();
       } else if (activeTab === 'reports') {
         renderReports();
       } else if (activeTab === 'staff') {
         renderStaffDetails();
       } else if (activeTab === 'tables') {
         renderTables();
+      } else if (activeTab === 'cancels') {
+        renderCancels();
       }
     }
 
@@ -524,7 +943,22 @@
       const now = new Date();
       now.setHours(23, 59, 59, 999);
       
-      if (reportDateFilter === 'week') {
+      if (reportDateFilter === 'yesterday') {
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setHours(0, 0, 0, 0);
+        const yesterdayEnd = new Date(yesterday);
+        yesterdayEnd.setHours(23, 59, 59, 999);
+        
+        return sales.filter(sale => {
+          if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
+          const [day, month, year] = sale.sale_date.split('.');
+          if (!day || !month || !year) return false;
+          const saleDate = new Date(year, month - 1, day);
+          saleDate.setHours(0, 0, 0, 0);
+          return saleDate >= yesterday && saleDate <= yesterdayEnd;
+        });
+      } else if (reportDateFilter === 'week') {
         const weekAgo = new Date(now);
         weekAgo.setDate(weekAgo.getDate() - 7);
         weekAgo.setHours(0, 0, 0, 0);
@@ -550,9 +984,70 @@
           saleDate.setHours(0, 0, 0, 0);
           return saleDate >= monthAgo && saleDate <= now;
         });
+      } else if (reportDateFilter === 'custom' && customDateRange.start && customDateRange.end) {
+        const startDate = new Date(customDateRange.start);
+        startDate.setHours(0, 0, 0, 0);
+        const endDate = new Date(customDateRange.end);
+        endDate.setHours(23, 59, 59, 999);
+        
+        return sales.filter(sale => {
+          if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
+          const [day, month, year] = sale.sale_date.split('.');
+          if (!day || !month || !year) return false;
+          const saleDate = new Date(year, month - 1, day);
+          saleDate.setHours(0, 0, 0, 0);
+          return saleDate >= startDate && saleDate <= endDate;
+        });
       }
       
       return sales; // 'all' için tüm satışlar
+    }
+
+    // Tarih formatını dönüştür (YYYY-MM-DD -> DD.MM.YYYY)
+    function formatDateForInput(date) {
+      if (!date) return '';
+      const d = new Date(date);
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
+      return `${year}-${month}-${day}`;
+    }
+
+    // Tarih formatını dönüştür (DD.MM.YYYY -> YYYY-MM-DD)
+    function parseDateFromInput(dateStr) {
+      if (!dateStr) return null;
+      const [year, month, day] = dateStr.split('-');
+      return new Date(year, month - 1, day);
+    }
+
+    // Özel tarih aralığı seç
+    function setCustomDateRange() {
+      const startInput = document.getElementById('customDateStart');
+      const endInput = document.getElementById('customDateEnd');
+      
+      if (!startInput || !endInput) return;
+      
+      const start = startInput.value;
+      const end = endInput.value;
+      
+      if (!start || !end) {
+        alert('Lütfen başlangıç ve bitiş tarihlerini seçin');
+        return;
+      }
+      
+      const startDate = parseDateFromInput(start);
+      const endDate = parseDateFromInput(end);
+      
+      if (startDate > endDate) {
+        alert('Başlangıç tarihi bitiş tarihinden sonra olamaz');
+        return;
+      }
+      
+      customDateRange.start = startDate;
+      customDateRange.end = endDate;
+      reportDateFilter = 'custom';
+      renderReports();
+      closeDateFilterModal();
     }
 
     // Tarih filtresini değiştir
@@ -588,10 +1083,13 @@
 
     // Detaylı Raporlama render et
     function renderReports() {
-      const container = document.getElementById('salesContainer');
+      const container = document.getElementById('reportsContainer');
       if (!container) return;
 
-      let reportSales = allSales.filter(sale => !sale.isExpense);
+      // Masrafları filtrele
+      let reportSales = allSales.filter(sale => 
+        !sale.isExpense && sale.payment_method !== 'Masraf'
+      );
       reportSales = filterSalesByDate(reportSales);
 
       if (reportSales.length === 0) {
@@ -612,7 +1110,8 @@
         let itemsArray = [];
         
         if (sale.items_array && Array.isArray(sale.items_array)) {
-          itemsArray = sale.items_array;
+          // Masraf itemlarını filtrele
+          itemsArray = sale.items_array.filter(item => !item.isExpense);
         } else if (sale.items) {
           const items = sale.items.split(', ');
           itemsArray = items.map(item => {
@@ -632,7 +1131,7 @@
         }
         
         itemsArray.forEach(item => {
-          if (!item || !item.product_name) return;
+          if (!item || !item.product_name || item.isExpense) return;
           
           const productName = item.product_name;
           const quantity = item.quantity || 1;
@@ -690,24 +1189,68 @@
 
       const totalRevenue = reportSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
 
+      // Seçilen zaman dilimindeki masrafları hesapla
+      let periodExpenses = allSales.filter(sale => 
+        (sale.isExpense || sale.payment_method === 'Masraf')
+      );
+      periodExpenses = filterSalesByDate(periodExpenses);
+      const totalExpense = periodExpenses.reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+
       const filterLabels = {
         'all': 'Tüm Zamanlar',
+        'yesterday': 'Dün',
         'week': 'Son 1 Hafta',
-        'month': 'Son 1 Ay'
+        'month': 'Son 1 Ay',
+        'custom': customDateRange.start && customDateRange.end 
+          ? `${customDateRange.start.toLocaleDateString('tr-TR')} - ${customDateRange.end.toLocaleDateString('tr-TR')}`
+          : 'Özel Tarih Aralığı'
       };
+
+      // Seçilen zaman dilimi bilgisi
+      let periodInfo = '';
+      if (reportDateFilter === 'yesterday') {
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        periodInfo = yesterday.toLocaleDateString('tr-TR');
+      } else if (reportDateFilter === 'week') {
+        const weekAgo = new Date();
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        periodInfo = `${weekAgo.toLocaleDateString('tr-TR')} - ${new Date().toLocaleDateString('tr-TR')}`;
+      } else if (reportDateFilter === 'month') {
+        const monthAgo = new Date();
+        monthAgo.setMonth(monthAgo.getMonth() - 1);
+        periodInfo = `${monthAgo.toLocaleDateString('tr-TR')} - ${new Date().toLocaleDateString('tr-TR')}`;
+      } else if (reportDateFilter === 'custom' && customDateRange.start && customDateRange.end) {
+        periodInfo = `${customDateRange.start.toLocaleDateString('tr-TR')} - ${customDateRange.end.toLocaleDateString('tr-TR')}`;
+      } else {
+        periodInfo = 'Tüm Zamanlar';
+      }
 
       let html = `
         <div class="reports-container">
           <div class="reports-header">
-            <h2 class="reports-title">Detaylı Raporlama</h2>
+            <div>
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 4px; flex-wrap: nowrap;">
+                <h2 class="reports-title" style="white-space: nowrap;">📊 Detaylı Raporlama</h2>
+                <button class="analyze-btn" onclick="showAnalysisModal()" style="flex-shrink: 0;">
+                  <span>🔍</span>
+                  <span>Analiz Et</span>
+                </button>
+              </div>
+              <p class="reports-subtitle">Kapsamlı satış analizi ve istatistikler</p>
+            </div>
             <div class="date-filter-wrapper">
               <button class="date-filter-trigger" onclick="toggleDateFilterModal(event)">
                 <span>📅</span>
-                <span>${filterLabels[reportDateFilter]}</span>
+                <span>${filterLabels[reportDateFilter] || 'Tarih Seç'}</span>
                 <span class="date-filter-arrow">▼</span>
               </button>
               <div id="dateFilterModal" class="date-filter-modal">
                 <div class="date-filter-modal-content">
+                  <div class="date-filter-option ${reportDateFilter === 'yesterday' ? 'active' : ''}" onclick="setReportDateFilter('yesterday'); closeDateFilterModal();">
+                    <span class="date-filter-icon">📆</span>
+                    <span>Dün</span>
+                  </div>
                   <div class="date-filter-option ${reportDateFilter === 'week' ? 'active' : ''}" onclick="setReportDateFilter('week'); closeDateFilterModal();">
                     <span class="date-filter-icon">📆</span>
                     <span>Son 1 Hafta</span>
@@ -720,7 +1263,88 @@
                     <span class="date-filter-icon">📊</span>
                     <span>Tüm Zamanlar</span>
                   </div>
+                  <div class="date-filter-divider"></div>
+                  <div class="date-filter-option ${reportDateFilter === 'custom' ? 'active' : ''}" onclick="document.getElementById('customDateRangeSection').style.display = 'block';">
+                    <span class="date-filter-icon">🗓️</span>
+                    <span>Özel Tarih Aralığı</span>
+                  </div>
+                  <div id="customDateRangeSection" class="custom-date-range-section" style="display: ${reportDateFilter === 'custom' ? 'block' : 'none'};">
+                    <div class="custom-date-inputs">
+                      <div class="custom-date-input-group">
+                        <label>Başlangıç:</label>
+                        <input type="date" id="customDateStart" value="${formatDateForInput(customDateRange.start)}" class="custom-date-input">
+                      </div>
+                      <div class="custom-date-input-group">
+                        <label>Bitiş:</label>
+                        <input type="date" id="customDateEnd" value="${formatDateForInput(customDateRange.end)}" class="custom-date-input">
+                      </div>
+                    </div>
+                    <button class="custom-date-apply-btn" onclick="setCustomDateRange();">Uygula</button>
+                  </div>
                 </div>
+              </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Seçilen Zaman Dilimi Ciro ve Masraf Bilgisi -->
+          <div class="period-revenue-container">
+            <div class="period-revenue-card">
+              <div class="period-card-background"></div>
+              <div class="period-card-icon">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+              <div class="period-revenue-content">
+                <div class="period-revenue-label">
+                  <span class="period-label-icon">📈</span>
+                  <span>Seçilen Zaman Dilimi Cirosu</span>
+                </div>
+                <div class="period-revenue-period">${periodInfo}</div>
+                <div class="period-revenue-amount">₺${totalRevenue.toFixed(2)}</div>
+              </div>
+              <div class="period-card-decoration">
+                <svg viewBox="0 0 200 200" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="revenueGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" style="stop-color:rgba(255,255,255,0.15);stop-opacity:1" />
+                      <stop offset="100%" style="stop-color:rgba(255,255,255,0);stop-opacity:1" />
+                    </linearGradient>
+                  </defs>
+                  <path d="M0,200 Q50,150 100,120 T200,80 L200,200 Z" fill="url(#revenueGradient)"/>
+                </svg>
+              </div>
+            </div>
+            <div class="period-expense-card">
+              <div class="period-card-background"></div>
+              <div class="period-card-icon">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+              <div class="period-revenue-content">
+                <div class="period-revenue-label">
+                  <span class="period-label-icon">📉</span>
+                  <span>Seçilen Zaman Dilimi Masrafı</span>
+                </div>
+                <div class="period-revenue-period">${periodInfo}</div>
+                <div class="period-revenue-amount">₺${totalExpense.toFixed(2)}</div>
+              </div>
+              <div class="period-card-decoration">
+                <svg viewBox="0 0 200 200" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="expenseGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" style="stop-color:rgba(255,255,255,0.15);stop-opacity:1" />
+                      <stop offset="100%" style="stop-color:rgba(255,255,255,0);stop-opacity:1" />
+                    </linearGradient>
+                  </defs>
+                  <path d="M0,200 Q50,150 100,120 T200,80 L200,200 Z" fill="url(#expenseGradient)"/>
+                </svg>
               </div>
             </div>
           </div>
@@ -756,80 +1380,130 @@
             </div>
           </div>
 
-          <div class="reports-grid">
-            <div class="report-card report-card-top-sold">
-              <h3 class="report-card-title">🏆 En Çok Satılan Ürünler</h3>
-              <div class="product-list">
-                ${topProductsByCount.length > 0 ? topProductsByCount.map(([product, stats], index) => `
-                  <div class="product-item">
-                    <div class="product-rank">${index + 1}</div>
-                    <div class="product-info">
-                      <div class="product-name">${product}</div>
-                      <div class="product-details">
-                        <span>${stats.count} adet</span>
-                        ${stats.price > 0 ? `<span>• Birim: ₺${stats.price.toFixed(2)}</span>` : ''}
+          <div class="reports-container-modern">
+            <!-- Üst Kutu: Yükselen Grafik -->
+            <div class="report-group report-group-rising">
+              <div class="report-group-header">
+                <div class="report-group-title">
+                  <svg class="chart-icon chart-icon-rising" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 18L9 12L13 16L21 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M21 8H15V14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  <span>Yükselen Performans</span>
+                </div>
+                <div class="report-group-chart">
+                  <svg class="chart-svg chart-rising" viewBox="0 0 120 40" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="risingGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" style="stop-color:#10b981;stop-opacity:0.3" />
+                        <stop offset="100%" style="stop-color:#10b981;stop-opacity:0" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M0,35 Q15,25 30,20 T60,15 T90,10 T120,5" fill="url(#risingGradient)" stroke="none"/>
+                    <path d="M0,35 Q15,25 30,20 T60,15 T90,10 T120,5" stroke="#10b981" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                    <circle cx="120" cy="5" r="3" fill="#10b981"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="report-group-cards">
+                <div class="report-card report-card-top-earning">
+                  <h3 class="report-card-title">En Çok Kazandıran Ürünler</h3>
+                  <div class="product-list">
+                    ${topProductsByRevenue.length > 0 ? topProductsByRevenue.map(([product, stats], index) => `
+                      <div class="product-item">
+                        <div class="product-rank">${index + 1}</div>
+                        <div class="product-info">
+                          <div class="product-name">${product}</div>
+                          <div class="product-meta">
+                            <span class="product-quantity">${stats.count} adet</span>
+                            <span class="product-total product-total-emphasis">₺${stats.revenue.toFixed(2)}</span>
+                          </div>
+                        </div>
                       </div>
-                      <div class="product-revenue">Toplam: ₺${stats.revenue.toFixed(2)}</div>
-                    </div>
+                    `).join('') : '<p class="no-data">Veri yok</p>'}
                   </div>
-                `).join('') : '<p class="no-data">Veri yok</p>'}
+                </div>
+
+                <div class="report-card report-card-top-sold">
+                  <h3 class="report-card-title">En Çok Satılan Ürünler</h3>
+                  <div class="product-list">
+                    ${topProductsByCount.length > 0 ? topProductsByCount.map(([product, stats], index) => `
+                      <div class="product-item">
+                        <div class="product-rank">${index + 1}</div>
+                        <div class="product-info">
+                          <div class="product-name">${product}</div>
+                          <div class="product-meta">
+                            <span class="product-quantity">${stats.count} adet</span>
+                            <span class="product-total">₺${stats.revenue.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    `).join('') : '<p class="no-data">Veri yok</p>'}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div class="report-card">
-              <h3 class="report-card-title">📉 En Az Satılan Ürünler</h3>
-              <div class="product-list">
-                ${bottomProductsByCount.length > 0 ? bottomProductsByCount.map(([product, stats], index) => `
-                  <div class="product-item">
-                    <div class="product-rank">${index + 1}</div>
-                    <div class="product-info">
-                      <div class="product-name">${product}</div>
-                      <div class="product-details">
-                        <span>${stats.count} adet</span>
-                        ${stats.price > 0 ? `<span>• Birim: ₺${stats.price.toFixed(2)}</span>` : ''}
-                      </div>
-                      <div class="product-revenue">Toplam: ₺${stats.revenue.toFixed(2)}</div>
-                    </div>
-                  </div>
-                `).join('') : '<p class="no-data">Veri yok</p>'}
+            <!-- Alt Kutu: Alçalan Grafik -->
+            <div class="report-group report-group-falling">
+              <div class="report-group-header">
+                <div class="report-group-title">
+                  <svg class="chart-icon chart-icon-falling" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 6L9 12L13 8L21 16" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M21 16H15V10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  <span>Düşük Performans</span>
+                </div>
+                <div class="report-group-chart">
+                  <svg class="chart-svg chart-falling" viewBox="0 0 120 40" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="fallingGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" style="stop-color:#f59e0b;stop-opacity:0.3" />
+                        <stop offset="100%" style="stop-color:#f59e0b;stop-opacity:0" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M0,5 Q15,15 30,20 T60,25 T90,30 T120,35" fill="url(#fallingGradient)" stroke="none"/>
+                    <path d="M0,5 Q15,15 30,20 T60,25 T90,30 T120,35" stroke="#f59e0b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                    <circle cx="120" cy="35" r="3" fill="#f59e0b"/>
+                  </svg>
+                </div>
               </div>
-            </div>
-
-            <div class="report-card report-card-top-earning">
-              <h3 class="report-card-title">💵 En Çok Kazandıran Ürünler</h3>
-              <div class="product-list">
-                ${topProductsByRevenue.length > 0 ? topProductsByRevenue.map(([product, stats], index) => `
-                  <div class="product-item">
-                    <div class="product-rank">${index + 1}</div>
-                    <div class="product-info">
-                      <div class="product-name">${product}</div>
-                      <div class="product-revenue-large">₺${stats.revenue.toFixed(2)}</div>
-                      <div class="product-details">
-                        <span>${stats.count} adet</span>
-                        ${stats.price > 0 ? `<span>• Birim: ₺${stats.price.toFixed(2)}</span>` : ''}
+              <div class="report-group-cards">
+                <div class="report-card report-card-least-earning">
+                  <h3 class="report-card-title">En Az Kazandıran Ürünler</h3>
+                  <div class="product-list">
+                    ${bottomProductsByRevenue.length > 0 ? bottomProductsByRevenue.map(([product, stats], index) => `
+                      <div class="product-item">
+                        <div class="product-rank">${index + 1}</div>
+                        <div class="product-info">
+                          <div class="product-name">${product}</div>
+                          <div class="product-meta">
+                            <span class="product-quantity">${stats.count} adet</span>
+                            <span class="product-total">₺${stats.revenue.toFixed(2)}</span>
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    `).join('') : '<p class="no-data">Veri yok</p>'}
                   </div>
-                `).join('') : '<p class="no-data">Veri yok</p>'}
-              </div>
-            </div>
+                </div>
 
-            <div class="report-card">
-              <h3 class="report-card-title">💸 En Az Kazandıran Ürünler</h3>
-              <div class="product-list">
-                ${bottomProductsByRevenue.length > 0 ? bottomProductsByRevenue.map(([product, stats], index) => `
-                  <div class="product-item">
-                    <div class="product-rank">${index + 1}</div>
-                    <div class="product-info">
-                      <div class="product-name">${product}</div>
-                      <div class="product-revenue-large">₺${stats.revenue.toFixed(2)}</div>
-                      <div class="product-details">
-                        <span>${stats.count} adet</span>
-                        ${stats.price > 0 ? `<span>• Birim: ₺${stats.price.toFixed(2)}</span>` : ''}
+                <div class="report-card report-card-least-sold">
+                  <h3 class="report-card-title">En Az Satılan Ürünler</h3>
+                  <div class="product-list">
+                    ${bottomProductsByCount.length > 0 ? bottomProductsByCount.map(([product, stats], index) => `
+                      <div class="product-item">
+                        <div class="product-rank">${index + 1}</div>
+                        <div class="product-info">
+                          <div class="product-name">${product}</div>
+                          <div class="product-meta">
+                            <span class="product-quantity">${stats.count} adet</span>
+                            <span class="product-total">₺${stats.revenue.toFixed(2)}</span>
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    `).join('') : '<p class="no-data">Veri yok</p>'}
                   </div>
-                `).join('') : '<p class="no-data">Veri yok</p>'}
+                </div>
               </div>
             </div>
           </div>
@@ -859,7 +1533,7 @@
 
     // Masalar render et
     function renderTables() {
-      const container = document.getElementById('salesContainer');
+      const container = document.getElementById('tablesContainer');
       if (!container) return;
 
       // Firebase'den masaları dinle
@@ -889,6 +1563,11 @@
       const tablesRef = db.collection('tables');
       
       tablesUnsubscribe = tablesRef.onSnapshot((snapshot) => {
+        // Aktif sekme kontrolü - eğer masalar sekmesinde değilsek, render etme
+        if (activeTab !== 'tables') {
+          return;
+        }
+
         insideTables.length = 0;
         outsideTables.length = 0;
         packageTablesInside.length = 0;
@@ -896,6 +1575,15 @@
 
         snapshot.forEach((doc) => {
           const table = doc.data();
+          
+          // Masa verisini normalize et - is_occupied değerini sağlamlaştır
+          if (table.items && Array.isArray(table.items) && table.items.length > 0) {
+            table.is_occupied = true;
+          } else if (table.is_occupied === undefined || table.is_occupied === null) {
+            table.is_occupied = false;
+          } else {
+            table.is_occupied = table.is_occupied === true || table.is_occupied === 'true' || table.is_occupied === 1;
+          }
           
           if (table.table_id.startsWith('inside-') && !table.table_id.startsWith('package-')) {
             insideTables.push(table);
@@ -914,33 +1602,48 @@
         packageTablesInside.sort((a, b) => a.table_number - b.table_number);
         packageTablesOutside.sort((a, b) => a.table_number - b.table_number);
 
-        // Render
-        let html = `
-          <div class="tables-container">
-            <div class="tables-section">
-              <h2 class="section-title">📋 İçeri Masalar</h2>
-              <div class="tables-grid">
-                ${insideTables.map(table => renderTableCard(table)).join('')}
-              </div>
-            </div>
-            
-            <div class="tables-section">
-              <h2 class="section-title">☀️ Dışarı Masalar</h2>
-              <div class="tables-grid">
-                ${outsideTables.map(table => renderTableCard(table)).join('')}
-              </div>
-            </div>
-            
-            <div class="tables-section">
-              <h2 class="section-title">📦 Paket Masaları</h2>
-              <div class="tables-grid package-grid">
-                ${[...packageTablesInside, ...packageTablesOutside].map(table => renderTableCard(table)).join('')}
-              </div>
-            </div>
-          </div>
-        `;
+        // Render - tekrar aktif sekme kontrolü
+        if (activeTab !== 'tables') {
+          return;
+        }
 
-        container.innerHTML = html;
+        // Render işlemini requestAnimationFrame ile optimize et - yanıp sönmeyi önler
+        requestAnimationFrame(() => {
+          // Tekrar aktif sekme kontrolü
+          if (activeTab !== 'tables') {
+            return;
+          }
+
+          let html = `
+            <div class="tables-container">
+              <div class="tables-section">
+                <h2 class="section-title">📋 İçeri Masalar</h2>
+                <div class="tables-grid">
+                  ${insideTables.map(table => renderTableCard(table)).join('')}
+                </div>
+              </div>
+              
+              <div class="tables-section">
+                <h2 class="section-title">☀️ Dışarı Masalar</h2>
+                <div class="tables-grid">
+                  ${outsideTables.map(table => renderTableCard(table)).join('')}
+                </div>
+              </div>
+              
+              <div class="tables-section">
+                <h2 class="section-title">📦 Paket Masaları</h2>
+                <div class="tables-grid package-grid">
+                  ${[...packageTablesInside, ...packageTablesOutside].map(table => renderTableCard(table)).join('')}
+                </div>
+              </div>
+            </div>
+          `;
+
+          // Son kontrol - aktif sekme hala masalar mı?
+          if (activeTab === 'tables') {
+            container.innerHTML = html;
+          }
+        });
       }, (error) => {
         console.error('Masalar yüklenirken hata:', error);
         container.innerHTML = `
@@ -955,9 +1658,15 @@
 
     // Masa kartı render et
     function renderTableCard(table) {
-      const isOccupied = table.is_occupied;
+      // Masa durumunu sağlam bir şekilde kontrol et
+      const isOccupied = table.is_occupied === true || 
+                        table.is_occupied === 'true' || 
+                        table.is_occupied === 1 ||
+                        (table.status && (table.status === 'occupied' || table.status === 'dolu')) ||
+                        (table.items && Array.isArray(table.items) && table.items.length > 0);
+      
       const totalAmount = parseFloat(table.total_amount || 0);
-      const items = table.items || [];
+      const items = Array.isArray(table.items) ? table.items : [];
       const itemsCount = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
       
       const isInside = table.table_type === 'inside' || table.table_id.startsWith('inside-') || table.table_id.startsWith('package-inside-');
@@ -1011,32 +1720,421 @@
         `;
       }
 
+      // Dolu masalar için modern gradient kırmızı tasarım
+      if (isOccupied) {
+        return `
+          <div class="table-card table-card-occupied">
+            <div class="table-card-gradient">
+              <div class="table-number-occupied">${table.table_number}</div>
+              <div class="table-amount-occupied">₺${totalAmount.toFixed(2)}</div>
+            </div>
+          </div>
+        `;
+      }
+
+      // Boş masalar için mevcut tasarım
       return `
-        <div class="table-card ${isOccupied ? 'occupied' : ''}" style="background: ${bgColor}; border-color: ${borderColor};">
-          ${isOccupied ? `<div class="table-amount-badge">₺${totalAmount.toFixed(2)}</div>` : ''}
-          <div class="table-card-header" style="${isOccupied ? 'margin-top: 18px;' : ''}">
-            <div class="table-number" style="color: ${isOccupied ? '#ffffff' : 'var(--text-main)'};">${table.table_number}</div>
+        <div class="table-card" style="background: ${bgColor}; border-color: ${borderColor};">
+          <div class="table-card-header">
+            <div class="table-number" style="color: var(--text-main);">${table.table_number}</div>
             <div class="table-status" style="background: ${statusColor}20; color: ${statusColor};">
               ${statusText}
             </div>
           </div>
-          <div class="table-name" style="color: ${isOccupied ? '#ffffff' : 'var(--text-main)'};">${table.table_name}</div>
-          ${isOccupied ? `
-            <div class="table-details">
-              <div class="table-items-count">
-                <span class="items-label" style="color: ${isOccupied ? 'rgba(255,255,255,0.8)' : 'var(--text-muted)'};">Ürün Sayısı:</span>
-                <span class="items-value" style="color: ${isOccupied ? '#ffffff' : 'var(--text-main)'};">${itemsCount}</span>
-              </div>
-              ${itemsHtml}
-            </div>
-          ` : ''}
+          <div class="table-name" style="color: var(--text-main);">${table.table_name}</div>
         </div>
       `;
     }
 
     // Personel Detayları render et
+    // İptaller listesini render et
+    function renderCancels() {
+      const container = document.getElementById('cancelsContainer');
+      if (!container) return;
+
+      if (!db) {
+        container.innerHTML = '<div class="error-message">Firebase bağlantısı kurulamadı</div>';
+        return;
+      }
+
+      // Loading göster
+      container.innerHTML = `
+        <div style="text-align: center; padding: 60px 20px; color: #6b7280;">
+          <div style="font-size: 48px; margin-bottom: 16px;">⏳</div>
+          <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">İptal kayıtları yükleniyor...</div>
+        </div>
+      `;
+
+      // Firebase'den iptal kayıtlarını çek
+      const cancelsRef = db.collection('cancels');
+      
+      // Önce created_at ile sıralamayı dene
+      cancelsRef.orderBy('created_at', 'desc').get().then((querySnapshot) => {
+        const cancels = [];
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          cancels.push({
+            id: doc.id,
+            ...data
+          });
+        });
+
+        if (cancels.length === 0) {
+          container.innerHTML = `
+            <div style="text-align: center; padding: 60px 20px; color: #6b7280;">
+              <div style="font-size: 48px; margin-bottom: 16px;">📭</div>
+              <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">Henüz iptal kaydı yok</div>
+              <div style="font-size: 14px;">İptal edilen ürünler burada görünecek</div>
+            </div>
+          `;
+          return;
+        }
+
+        let html = '<div class="cancels-list">';
+        
+        cancels.forEach((cancel) => {
+          const cancelDate = cancel.cancel_date || 'Bilinmeyen';
+          const cancelTime = cancel.cancel_time || '';
+          const staffName = cancel.staff_name || 'Bilinmiyor';
+          const orderStaffName = cancel.order_staff_name || 'Bilinmiyor';
+          const staffIsManager = cancel.staff_is_manager || false;
+          const source = cancel.source === 'mobile' ? '📱 Mobil' : '💻 Masaüstü';
+          const totalAmount = (cancel.price || 0) * (cancel.quantity || 0);
+          
+          html += `
+            <div class="cancel-card">
+              <div class="cancel-header">
+                <div class="cancel-header-left">
+                  <div class="cancel-product-name">${cancel.product_name || 'Bilinmeyen Ürün'}</div>
+                  <div class="cancel-meta">
+                    <span class="cancel-meta-item">${cancelDate} ${cancelTime}</span>
+                    <span class="cancel-meta-separator">•</span>
+                    <span class="cancel-meta-item">${cancel.table_name || 'Bilinmeyen Masa'}</span>
+                    <span class="cancel-meta-separator">•</span>
+                    <span class="cancel-meta-item">${source}</span>
+                  </div>
+                </div>
+                <div class="cancel-header-right">
+                  <div class="cancel-amount">₺${totalAmount.toFixed(2)}</div>
+                </div>
+              </div>
+              <div class="cancel-details">
+                <div class="cancel-detail-row">
+                  <span class="cancel-detail-label">Miktar:</span>
+                  <span class="cancel-detail-value">${cancel.quantity || 0} adet</span>
+                </div>
+                <div class="cancel-detail-row">
+                  <span class="cancel-detail-label">Birim Fiyat:</span>
+                  <span class="cancel-detail-value">₺${(cancel.price || 0).toFixed(2)}</span>
+                </div>
+                <div class="cancel-detail-row">
+                  <span class="cancel-detail-label">İptal Eden Personel:</span>
+                  <span class="cancel-detail-value">
+                    ${staffName || 'Bilinmiyor'}${staffIsManager ? ' (Müdür)' : ''}
+                  </span>
+                </div>
+                <div class="cancel-detail-row">
+                  <span class="cancel-detail-label">Sipariş Sorumlusu Garson:</span>
+                  <span class="cancel-detail-value">${orderStaffName || 'Bilinmiyor'}</span>
+                </div>
+              </div>
+              <div class="cancel-reason">
+                <div class="cancel-reason-label">İptal Açıklaması:</div>
+                <div class="cancel-reason-text">${cancel.cancel_reason || 'Açıklama yok'}</div>
+              </div>
+            </div>
+          `;
+        });
+
+        html += '</div>';
+        container.innerHTML = html;
+      }).catch((error) => {
+        console.error('İptal kayıtları yüklenirken hata:', error);
+        
+        // Eğer created_at field'ı yoksa veya index hatası varsa, tüm kayıtları çek ve manuel sırala
+        if ((error.message && (error.message.includes('created_at') || error.message.includes('index'))) || error.code === 'failed-precondition') {
+          cancelsRef.get().then((querySnapshot) => {
+            const cancels = [];
+            querySnapshot.forEach((doc) => {
+              const data = doc.data();
+              cancels.push({
+                id: doc.id,
+                ...data
+              });
+            });
+
+            // Tarihe göre manuel sırala
+            cancels.sort((a, b) => {
+              const dateA = a.cancel_date || '';
+              const dateB = b.cancel_date || '';
+              const timeA = a.cancel_time || '';
+              const timeB = b.cancel_time || '';
+              if (dateA !== dateB) return dateB.localeCompare(dateA);
+              return timeB.localeCompare(timeA);
+            });
+
+            if (cancels.length === 0) {
+              container.innerHTML = `
+                <div style="text-align: center; padding: 60px 20px; color: #6b7280;">
+                  <div style="font-size: 48px; margin-bottom: 16px;">📭</div>
+                  <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">Henüz iptal kaydı yok</div>
+                  <div style="font-size: 14px;">İptal edilen ürünler burada görünecek</div>
+                </div>
+              `;
+              return;
+            }
+
+            let html = '<div class="cancels-list">';
+            
+            cancels.forEach((cancel) => {
+              const cancelDate = cancel.cancel_date || 'Bilinmeyen';
+              const cancelTime = cancel.cancel_time || '';
+              const staffName = cancel.staff_name || 'Bilinmiyor';
+              const orderStaffName = cancel.order_staff_name || 'Bilinmiyor';
+              const staffIsManager = cancel.staff_is_manager || false;
+              const source = cancel.source === 'mobile' ? '📱 Mobil' : '💻 Masaüstü';
+              const totalAmount = (cancel.price || 0) * (cancel.quantity || 0);
+              
+              html += `
+                <div class="cancel-card">
+                  <div class="cancel-header">
+                    <div class="cancel-header-left">
+                      <div class="cancel-product-name">${cancel.product_name || 'Bilinmeyen Ürün'}</div>
+                      <div class="cancel-meta">
+                        <span class="cancel-meta-item">${cancelDate} ${cancelTime}</span>
+                        <span class="cancel-meta-separator">•</span>
+                        <span class="cancel-meta-item">${cancel.table_name || 'Bilinmeyen Masa'}</span>
+                        <span class="cancel-meta-separator">•</span>
+                        <span class="cancel-meta-item">${source}</span>
+                      </div>
+                    </div>
+                    <div class="cancel-header-right">
+                      <div class="cancel-amount">₺${totalAmount.toFixed(2)}</div>
+                    </div>
+                  </div>
+                  <div class="cancel-details">
+                    <div class="cancel-detail-row">
+                      <span class="cancel-detail-label">Miktar:</span>
+                      <span class="cancel-detail-value">${cancel.quantity || 0} adet</span>
+                    </div>
+                    <div class="cancel-detail-row">
+                      <span class="cancel-detail-label">Birim Fiyat:</span>
+                      <span class="cancel-detail-value">₺${(cancel.price || 0).toFixed(2)}</span>
+                    </div>
+                    <div class="cancel-detail-row">
+                      <span class="cancel-detail-label">İptal Eden Personel:</span>
+                      <span class="cancel-detail-value">
+                        ${staffName || 'Bilinmiyor'}${staffIsManager ? ' (Müdür)' : ''}
+                      </span>
+                    </div>
+                    <div class="cancel-detail-row">
+                      <span class="cancel-detail-label">Sipariş Sorumlusu Garson:</span>
+                      <span class="cancel-detail-value">${orderStaffName || 'Bilinmiyor'}</span>
+                    </div>
+                  </div>
+                  <div class="cancel-reason">
+                    <div class="cancel-reason-label">İptal Açıklaması:</div>
+                    <div class="cancel-reason-text">${cancel.cancel_reason || 'Açıklama yok'}</div>
+                  </div>
+                </div>
+              `;
+            });
+
+            html += '</div>';
+            container.innerHTML = html;
+          }).catch((fallbackError) => {
+            console.error('İptal kayıtları yüklenirken hata (fallback):', fallbackError);
+            container.innerHTML = `
+              <div class="error-message">
+                <div style="font-size: 24px; margin-bottom: 12px;">⚠️</div>
+                <div>İptal kayıtları yüklenirken bir hata oluştu</div>
+                <div style="font-size: 12px; margin-top: 8px; color: #9ca3af;">${fallbackError.message}</div>
+              </div>
+            `;
+          });
+        } else {
+          container.innerHTML = `
+            <div class="error-message">
+              <div style="font-size: 24px; margin-bottom: 12px;">⚠️</div>
+              <div>İptal kayıtları yüklenirken bir hata oluştu</div>
+              <div style="font-size: 12px; margin-top: 8px; color: #9ca3af;">${error.message}</div>
+            </div>
+          `;
+        }
+      });
+    }
+
+    // Toast Notification Fonksiyonları
+    function showToast(type, title, message) {
+      // Mevcut toast'ı kaldır
+      const existingToast = document.getElementById('toastNotification');
+      if (existingToast) {
+        existingToast.remove();
+      }
+
+      // Yeni toast oluştur
+      const toast = document.createElement('div');
+      toast.id = 'toastNotification';
+      toast.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 10001;
+        background: ${type === 'success' ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'};
+        color: white;
+        padding: 20px 24px;
+        border-radius: 16px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.1) inset;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        min-width: 320px;
+        max-width: 420px;
+        animation: toastSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        backdrop-filter: blur(10px);
+      `;
+
+      const icon = type === 'success' 
+        ? '<svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
+        : '<svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>';
+
+      toast.innerHTML = `
+        <div style="width: 40px; height: 40px; background: rgba(255,255,255,0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+          ${icon}
+        </div>
+        <div style="flex: 1;">
+          <div style="font-size: 14px; font-weight: 700; margin-bottom: 4px; opacity: 0.95;">${title}</div>
+          <div style="font-size: 15px; font-weight: 500; line-height: 1.4;">${message}</div>
+        </div>
+        <button onclick="hideToast()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 28px; height: 28px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">
+          <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      `;
+
+      document.body.appendChild(toast);
+
+      // Otomatik kapat (3 saniye)
+      setTimeout(() => {
+        hideToast();
+      }, 3000);
+    }
+
+    function hideToast() {
+      const toast = document.getElementById('toastNotification');
+      if (toast) {
+        toast.style.animation = 'toastSlideOut 0.3s ease forwards';
+        setTimeout(() => {
+          toast.remove();
+        }, 300);
+      }
+    }
+
+    // Mesaj Gönderme Fonksiyonları
+    function showSendMessageModal() {
+      document.getElementById('sendMessageModal').style.display = 'flex';
+      document.getElementById('messageContentInput').value = '';
+      document.getElementById('messageContentInput').focus();
+    }
+
+    function hideSendMessageModal() {
+      document.getElementById('sendMessageModal').style.display = 'none';
+    }
+
+    async function sendBroadcastMessage() {
+      const messageContent = document.getElementById('messageContentInput').value.trim();
+      
+      if (!messageContent || messageContent === '') {
+        alert('Lütfen mesaj içeriği yazın');
+        return;
+      }
+
+      const sendBtn = document.getElementById('sendMessageBtn');
+      const sendBtnText = document.getElementById('sendMessageBtnText');
+      const sendBtnSpinner = document.getElementById('sendMessageBtnSpinner');
+
+      if (sendBtn) {
+        sendBtn.disabled = true;
+        if (sendBtnText) sendBtnText.textContent = 'Gönderiliyor...';
+        if (sendBtnSpinner) sendBtnSpinner.style.display = 'block';
+      }
+
+      try {
+        // Backend API'ye mesaj gönder (local IP'yi bul veya localhost kullan)
+        let localIP = window.location.hostname;
+        
+        // Eğer hostname boşsa veya file:// protokolü kullanılıyorsa localhost kullan
+        if (!localIP || localIP === '' || window.location.protocol === 'file:') {
+          localIP = 'localhost';
+        }
+        
+        const apiUrl = `http://${localIP}:3000/api/broadcast-message`;
+        
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: messageContent
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+
+        if (result.success) {
+          showToast('success', 'Başarılı', 'Mesaj başarıyla gönderildi!');
+          hideSendMessageModal();
+        } else {
+          showToast('error', 'Hata', 'Mesaj gönderilirken bir hata oluştu: ' + (result.error || 'Bilinmeyen hata'));
+        }
+      } catch (error) {
+        console.error('Mesaj gönderme hatası:', error);
+        
+        // Eğer localhost ile başarısız olursa, Firebase'e direkt kaydet
+        if (error.message.includes('Failed to fetch') || error.message.includes('Failed to parse URL')) {
+          try {
+            const now = new Date();
+            const messageDate = now.toLocaleDateString('tr-TR');
+            const messageTime = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            // Firebase'e direkt kaydet
+            if (db) {
+              await db.collection('broadcasts').add({
+                message: messageContent,
+                date: messageDate,
+                time: messageTime,
+                created_at: firebase.firestore.FieldValue.serverTimestamp()
+              });
+              
+              showToast('success', 'Başarılı', 'Mesaj Firebase\'e kaydedildi! (Backend bağlantısı kurulamadı, ancak mesaj kaydedildi)');
+              hideSendMessageModal();
+            } else {
+              throw new Error('Firebase bağlantısı yok');
+            }
+          } catch (firebaseError) {
+            console.error('Firebase kayıt hatası:', firebaseError);
+            showToast('error', 'Hata', 'Mesaj gönderilemedi. Lütfen internet bağlantınızı ve backend servisinin çalıştığını kontrol edin.');
+          }
+        } else {
+          showToast('error', 'Hata', 'Mesaj gönderilirken bir hata oluştu: ' + error.message);
+        }
+      } finally {
+        if (sendBtn) {
+          sendBtn.disabled = false;
+          if (sendBtnText) sendBtnText.textContent = 'Gönder';
+          if (sendBtnSpinner) sendBtnSpinner.style.display = 'none';
+        }
+      }
+    }
+
     function renderStaffDetails() {
-      const container = document.getElementById('salesContainer');
+      const container = document.getElementById('staffContainer');
       if (!container) return;
 
       const reportSales = allSales.filter(sale => !sale.isExpense);
@@ -1221,13 +2319,655 @@
       });
     }
 
+    // Analiz Modal Fonksiyonları
+    function showAnalysisModal() {
+      const modal = document.getElementById('analysisModal');
+      if (!modal) return;
+      
+      modal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+      
+      // Analizi başlat
+      startAnalysis();
+    }
+
+    function closeAnalysisModal() {
+      const modal = document.getElementById('analysisModal');
+      if (!modal) return;
+      
+      modal.style.display = 'none';
+      document.body.style.overflow = '';
+      
+      // Typing'i durdur
+      if (typingInterval) {
+        clearInterval(typingInterval);
+        typingInterval = null;
+      }
+    }
+
+    let typingInterval = null;
+    let currentAnalysisText = '';
+    let currentIndex = 0;
+
+    // Typing efekti ile metin yazdır
+    function typeText(text, element, callback) {
+      currentAnalysisText = text;
+      currentIndex = 0;
+      element.textContent = '';
+      
+      if (typingInterval) {
+        clearInterval(typingInterval);
+      }
+      
+      const indicator = document.getElementById('analysisTypingIndicator');
+      if (indicator) indicator.style.display = 'flex';
+      
+      typingInterval = setInterval(() => {
+        if (currentIndex < text.length) {
+          element.textContent += text[currentIndex];
+          currentIndex++;
+          element.scrollTop = element.scrollHeight;
+        } else {
+          clearInterval(typingInterval);
+          typingInterval = null;
+          if (indicator) indicator.style.display = 'none';
+          if (callback) callback();
+        }
+      }, 30); // Her karakter 30ms'de yazılsın
+    }
+
+    // Analiz yap
+    async function startAnalysis() {
+      const content = document.getElementById('analysisContent');
+      if (!content) return;
+      
+      content.innerHTML = '';
+      
+      // Dün ve bugün verilerini hesapla
+      const today = new Date().toLocaleDateString('tr-TR');
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toLocaleDateString('tr-TR');
+      
+      // Masrafları hariç tut
+      const todaySales = allSales.filter(s => 
+        s.sale_date === today && 
+        !s.isExpense && 
+        s.payment_method !== 'Masraf'
+      );
+      const yesterdaySales = allSales.filter(s => 
+        s.sale_date === yesterdayStr && 
+        !s.isExpense && 
+        s.payment_method !== 'Masraf'
+      );
+      
+      const todayRevenue = todaySales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+      const yesterdayRevenue = yesterdaySales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+      
+      // Ürün istatistikleri (fiyat bilgisi ile)
+      const todayProductStats = {};
+      const yesterdayProductStats = {};
+      const productPrices = {}; // Ürün adı -> fiyat mapping
+      
+      todaySales.forEach(sale => {
+        const items = sale.items_array || sale.items || [];
+        items.forEach(item => {
+          if (item && item.product_name && !item.isExpense) {
+            const name = item.product_name;
+            if (!todayProductStats[name]) {
+              todayProductStats[name] = { count: 0, revenue: 0 };
+            }
+            const qty = item.quantity || 1;
+            const price = parseFloat(item.price) || 0;
+            todayProductStats[name].count += qty;
+            todayProductStats[name].revenue += price * qty;
+            
+            // Fiyat bilgisini kaydet
+            if (price > 0 && (!productPrices[name] || productPrices[name] === 0)) {
+              productPrices[name] = price;
+            }
+          }
+        });
+      });
+      
+      yesterdaySales.forEach(sale => {
+        const items = sale.items_array || sale.items || [];
+        items.forEach(item => {
+          if (item && item.product_name && !item.isExpense) {
+            const name = item.product_name;
+            if (!yesterdayProductStats[name]) {
+              yesterdayProductStats[name] = { count: 0, revenue: 0 };
+            }
+            const qty = item.quantity || 1;
+            const price = parseFloat(item.price) || 0;
+            yesterdayProductStats[name].count += qty;
+            yesterdayProductStats[name].revenue += price * qty;
+            
+            // Fiyat bilgisini kaydet
+            if (price > 0 && (!productPrices[name] || productPrices[name] === 0)) {
+              productPrices[name] = price;
+            }
+          }
+        });
+      });
+      
+      // Firebase'den ürün fiyatlarını al (eğer satış verilerinde yoksa)
+      if (db && db.collection) {
+        try {
+          const productsRef = db.collection('products');
+          const productsSnapshot = await productsRef.get();
+          if (productsSnapshot && productsSnapshot.forEach) {
+            productsSnapshot.forEach((doc) => {
+              const product = doc.data();
+              const productName = product.name;
+              const productPrice = parseFloat(product.price) || 0;
+              if (productName && productPrice > 0) {
+                if (!productPrices[productName] || productPrices[productName] === 0) {
+                  productPrices[productName] = productPrice;
+                }
+              }
+            });
+          }
+        } catch (error) {
+          console.log('Firebase ürün fiyatları alınamadı, satış verilerinden devam ediliyor:', error);
+        }
+      }
+      
+      // En çok satılan ürünler (count'a göre)
+      const todayTopProducts = Object.entries(todayProductStats)
+        .sort(([, a], [, b]) => b.count - a.count)
+        .slice(0, 5);
+      const yesterdayTopProducts = Object.entries(yesterdayProductStats)
+        .sort(([, a], [, b]) => b.count - a.count)
+        .slice(0, 5);
+      
+      // En az satılan ürünler
+      const todayLeastProducts = Object.entries(todayProductStats)
+        .sort(([, a], [, b]) => a.count - b.count)
+        .slice(0, 5);
+      
+      // Tüm ürünler (bugün + dün birleşik)
+      const allProducts = new Set([...Object.keys(todayProductStats), ...Object.keys(yesterdayProductStats)]);
+      
+      const revenueDiff = todayRevenue - yesterdayRevenue;
+      const revenuePercent = yesterdayRevenue > 0 ? ((revenueDiff / yesterdayRevenue) * 100).toFixed(1) : 0;
+      const salesDiff = todaySales.length - yesterdaySales.length;
+      const todayAvg = todaySales.length > 0 ? todayRevenue / todaySales.length : 0;
+      const yesterdayAvg = yesterdaySales.length > 0 ? yesterdayRevenue / yesterdaySales.length : 0;
+      
+      // Akıllı öneriler ve riskler sistemi
+      const recommendations = [];
+      const risks = [];
+      
+      // 1. En az satılan pahalı ürünler için fiyat indirimi önerisi
+      const expensiveLowSales = todayLeastProducts
+        .filter(([name, stats]) => {
+          const price = productPrices[name] || 0;
+          return price > 50 && stats.count <= 2; // 50 TL üzeri ve 2 veya daha az satış
+        })
+        .sort(([nameA], [nameB]) => (productPrices[nameB] || 0) - (productPrices[nameA] || 0))
+        .slice(0, 3);
+      
+      expensiveLowSales.forEach(([name, stats]) => {
+        const currentPrice = productPrices[name] || 0;
+        if (currentPrice > 0) {
+          const suggestedPrice = Math.round(currentPrice * 0.85); // %15 indirim
+          recommendations.push({
+            type: 'price_reduction',
+            product: name,
+            currentPrice: currentPrice,
+            suggestedPrice: suggestedPrice,
+            reason: 'Yüksek fiyatlı ancak düşük satış hacimli ürün',
+            sales: stats.count
+          });
+        }
+      });
+      
+      // 2. Çok satılan ama düşük fiyatlı ürünler için fiyat artırma önerisi
+      const popularLowPrice = todayTopProducts
+        .filter(([name, stats]) => {
+          const price = productPrices[name] || 0;
+          return price > 0 && price < 30 && stats.count >= 5; // 30 TL altı ve 5+ satış
+        })
+        .sort(([, a], [, b]) => b.count - a.count)
+        .slice(0, 3);
+      
+      popularLowPrice.forEach(([name, stats]) => {
+        const currentPrice = productPrices[name] || 0;
+        if (currentPrice > 0) {
+          const suggestedPrice = Math.round(currentPrice * 1.15); // %15 artış
+          recommendations.push({
+            type: 'price_increase',
+            product: name,
+            currentPrice: currentPrice,
+            suggestedPrice: suggestedPrice,
+            reason: 'Yüksek talep gören ancak düşük fiyatlı ürün',
+            sales: stats.count
+          });
+        }
+      });
+      
+      // 3. Kârlılık analizi - yüksek satış ama düşük gelir
+      const highVolumeLowRevenue = todayTopProducts
+        .filter(([name, stats]) => {
+          const price = productPrices[name] || 0;
+          const avgRevenuePerSale = stats.count > 0 ? stats.revenue / stats.count : 0;
+          return stats.count >= 8 && avgRevenuePerSale < price * 0.7; // Çok satış ama düşük ortalama gelir
+        });
+      
+      if (highVolumeLowRevenue.length > 0) {
+        highVolumeLowRevenue.forEach(([name, stats]) => {
+          recommendations.push({
+            type: 'profitability',
+            product: name,
+            reason: 'Yüksek satış hacmi ancak düşük kâr marjı tespit edildi',
+            sales: stats.count,
+            avgRevenue: (stats.revenue / stats.count).toFixed(2)
+          });
+        });
+      }
+      
+      // 4. Stok optimizasyonu - hiç satılmayan ürünler
+      const unsoldProducts = Array.from(allProducts)
+        .filter(name => !todayProductStats[name] || todayProductStats[name].count === 0)
+        .filter(name => productPrices[name] && productPrices[name] > 0)
+        .slice(0, 3);
+      
+      if (unsoldProducts.length > 0) {
+        unsoldProducts.forEach(name => {
+          risks.push({
+            type: 'unsold',
+            product: name,
+            reason: 'Bugün hiç satılmayan ürün - stok kontrolü gerekli',
+            price: productPrices[name]
+          });
+        });
+      }
+      
+      // 5. Trend analizi - dün çok satılan ama bugün az satılan
+      const decliningProducts = yesterdayTopProducts
+        .filter(([name]) => {
+          const todayCount = todayProductStats[name]?.count || 0;
+          const yesterdayCount = yesterdayProductStats[name]?.count || 0;
+          return yesterdayCount >= 5 && todayCount < yesterdayCount * 0.5; // %50'den fazla düşüş
+        })
+        .slice(0, 3);
+      
+      if (decliningProducts.length > 0) {
+        decliningProducts.forEach(([name]) => {
+          risks.push({
+            type: 'declining',
+            product: name,
+            reason: 'Dün popüler olan ancak bugün satışları düşen ürün',
+            yesterdaySales: yesterdayProductStats[name]?.count || 0,
+            todaySales: todayProductStats[name]?.count || 0
+          });
+        });
+      }
+      
+      // 6. Genel trend analizi
+      if (revenueDiff < 0 && Math.abs(revenuePercent) > 10) {
+        risks.push({
+          type: 'revenue_decline',
+          reason: `Ciroda %${Math.abs(revenuePercent)} düşüş tespit edildi. Acil aksiyon gerekli.`,
+          percentage: Math.abs(revenuePercent)
+        });
+        recommendations.push({
+          type: 'general',
+          reason: 'Müşteri çekme kampanyaları ve promosyonlar düşünülmeli'
+        });
+      } else if (revenueDiff > 0 && revenuePercent > 10) {
+        recommendations.push({
+          type: 'general',
+          reason: `%${revenuePercent} ciro artışı devam ettirilmeli. Mevcut strateji başarılı.`
+        });
+      }
+      
+      if (salesDiff < -5) {
+        risks.push({
+          type: 'sales_decline',
+          reason: 'Satış sayısında önemli düşüş var. Personel performansı ve müşteri memnuniyeti gözden geçirilmeli.',
+          decline: Math.abs(salesDiff)
+        });
+      }
+      
+      if (todayAvg < yesterdayAvg * 0.8) {
+        risks.push({
+          type: 'avg_decline',
+          reason: 'Ortalama satış değeri düşüyor. Yüksek değerli ürünlere yönelik cross-selling stratejileri uygulanmalı.',
+          todayAvg: todayAvg.toFixed(2),
+          yesterdayAvg: yesterdayAvg.toFixed(2)
+        });
+      }
+      
+      // 7. En çok satılan ürün için stok önerisi
+      if (todayTopProducts.length > 0 && todayTopProducts[0][1].count > 10) {
+        recommendations.push({
+          type: 'stock',
+          product: todayTopProducts[0][0],
+          reason: 'Yüksek talep gören ürün - stok seviyesi kontrol edilmeli ve artırılmalı',
+          sales: todayTopProducts[0][1].count
+        });
+      }
+      
+      // Önce yazı metnini oluştur
+      let analysisText = `SATIŞ ANALİZİ RAPORU\n\n`;
+      analysisText += `Tarih: ${today}\n`;
+      analysisText += `Analiz Zamanı: ${new Date().toLocaleTimeString('tr-TR')}\n\n`;
+      analysisText += `─────────────────────────────────────\n\n`;
+      
+      analysisText += `CİRO KARŞILAŞTIRMASI\n\n`;
+      analysisText += `Dün (${yesterdayStr}): ₺${yesterdayRevenue.toFixed(2)}\n`;
+      analysisText += `Bugün (${today}): ₺${todayRevenue.toFixed(2)}\n\n`;
+      
+      if (revenueDiff > 0) {
+        analysisText += `Yükseliş tespit edildi. Bugün dünden ₺${Math.abs(revenueDiff).toFixed(2)} daha fazla ciro elde edildi.\n`;
+        analysisText += `Artış oranı: %${Math.abs(revenuePercent)}\n\n`;
+      } else if (revenueDiff < 0) {
+        analysisText += `Düşüş tespit edildi. Bugün dünden ₺${Math.abs(revenueDiff).toFixed(2)} daha az ciro elde edildi.\n`;
+        analysisText += `Düşüş oranı: %${Math.abs(revenuePercent)}\n\n`;
+      } else {
+        analysisText += `Ciro değişikliği tespit edilmedi.\n\n`;
+      }
+      
+      analysisText += `─────────────────────────────────────\n\n`;
+      analysisText += `SATIŞ SAYISI\n\n`;
+      analysisText += `Dün: ${yesterdaySales.length} satış\n`;
+      analysisText += `Bugün: ${todaySales.length} satış\n\n`;
+      
+      if (salesDiff > 0) {
+        analysisText += `Bugün ${salesDiff} satış daha fazla yapıldı.\n\n`;
+      } else if (salesDiff < 0) {
+        analysisText += `Bugün ${Math.abs(salesDiff)} satış daha az yapıldı.\n\n`;
+      }
+      
+      if (todayTopProducts.length > 0) {
+        analysisText += `─────────────────────────────────────\n\n`;
+        analysisText += `EN ÇOK SATILAN ÜRÜNLER\n\n`;
+        todayTopProducts.forEach(([name, stats], index) => {
+          analysisText += `${index + 1}. ${name}: ${stats.count} adet\n`;
+        });
+        analysisText += `\n`;
+      }
+      
+      analysisText += `─────────────────────────────────────\n\n`;
+      analysisText += `Detaylı analiz tabloları aşağıda gösterilmektedir.\n\n`;
+      
+      // HTML tabloları
+      const htmlTables = `
+        <div class="analysis-summary">
+          <div class="analysis-card revenue-card">
+            <div class="analysis-card-header">
+              <span class="analysis-icon">💰</span>
+              <h3>Ciro Analizi</h3>
+            </div>
+            <div class="analysis-card-body">
+              <div class="analysis-comparison">
+                <div class="comparison-item">
+                  <span class="comparison-label">Dün</span>
+                  <span class="comparison-value">₺${yesterdayRevenue.toFixed(2)}</span>
+                </div>
+                <div class="comparison-arrow">→</div>
+                <div class="comparison-item">
+                  <span class="comparison-label">Bugün</span>
+                  <span class="comparison-value ${revenueDiff >= 0 ? 'positive' : 'negative'}">₺${todayRevenue.toFixed(2)}</span>
+                </div>
+              </div>
+              <div class="analysis-trend ${revenueDiff >= 0 ? 'trend-up' : 'trend-down'}">
+                ${revenueDiff >= 0 ? '📈' : '📉'} ${revenueDiff >= 0 ? 'Yükseliş' : 'Düşüş'}: %${Math.abs(revenuePercent)}
+              </div>
+            </div>
+          </div>
+          
+          <div class="analysis-card sales-card">
+            <div class="analysis-card-header">
+              <span class="analysis-icon">🛒</span>
+              <h3>Satış Sayısı</h3>
+            </div>
+            <div class="analysis-card-body">
+              <div class="analysis-comparison">
+                <div class="comparison-item">
+                  <span class="comparison-label">Dün</span>
+                  <span class="comparison-value">${yesterdaySales.length}</span>
+                </div>
+                <div class="comparison-arrow">→</div>
+                <div class="comparison-item">
+                  <span class="comparison-label">Bugün</span>
+                  <span class="comparison-value ${salesDiff >= 0 ? 'positive' : 'negative'}">${todaySales.length}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          ${todayTopProducts.length > 0 ? `
+          <div class="analysis-card products-card">
+            <div class="analysis-card-header">
+              <span class="analysis-icon">⭐</span>
+              <h3>En Çok Satılan</h3>
+            </div>
+            <div class="analysis-card-body">
+              ${todayTopProducts.map(([name, stats], idx) => `
+                <div class="product-item">
+                  <span class="product-rank">${idx + 1}</span>
+                  <span class="product-name">${name}</span>
+                  <span class="product-count">${stats.count} adet</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          ` : ''}
+        </div>
+        
+        <div class="analysis-tables">
+          <div class="analysis-table recommendations-table">
+            <div class="table-header">
+              <span class="table-icon">💡</span>
+              <h3>Öneriler</h3>
+            </div>
+            <div class="table-body">
+              ${recommendations.length > 0 ? recommendations.map(rec => {
+                if (typeof rec === 'string') {
+                  return `<div class="table-row"><span class="row-bullet">•</span><span class="row-text">${rec}</span></div>`;
+                }
+                
+                // Fiyat indirimi önerisi
+                if (rec.type === 'price_reduction') {
+                  return `
+                    <div class="table-row recommendation-price">
+                      <span class="row-bullet">💰</span>
+                      <div class="row-content">
+                        <div class="row-main-text">
+                          <strong>${rec.product}</strong> için fiyat indirimi öneriliyor
+                        </div>
+                        <div class="price-suggestion">
+                          <span class="old-price">₺${rec.currentPrice.toFixed(2)}</span>
+                          <span class="new-price">₺${rec.suggestedPrice.toFixed(2)}</span>
+                          <span class="price-change">(%${Math.round((1 - rec.suggestedPrice/rec.currentPrice) * 100)} indirim)</span>
+                        </div>
+                        <div class="row-reason">${rec.reason} - Sadece ${rec.sales} satış</div>
+                      </div>
+                    </div>
+                  `;
+                }
+                
+                // Fiyat artırma önerisi
+                if (rec.type === 'price_increase') {
+                  return `
+                    <div class="table-row recommendation-price">
+                      <span class="row-bullet">📈</span>
+                      <div class="row-content">
+                        <div class="row-main-text">
+                          <strong>${rec.product}</strong> için fiyat artırımı öneriliyor
+                        </div>
+                        <div class="price-suggestion">
+                          <span class="old-price">₺${rec.currentPrice.toFixed(2)}</span>
+                          <span class="new-price">₺${rec.suggestedPrice.toFixed(2)}</span>
+                          <span class="price-change positive">(%${Math.round((rec.suggestedPrice/rec.currentPrice - 1) * 100)} artış)</span>
+                        </div>
+                        <div class="row-reason">${rec.reason} - ${rec.sales} satış ile yüksek talep</div>
+                      </div>
+                    </div>
+                  `;
+                }
+                
+                // Kârlılık önerisi
+                if (rec.type === 'profitability') {
+                  return `
+                    <div class="table-row">
+                      <span class="row-bullet">💼</span>
+                      <div class="row-content">
+                        <div class="row-main-text"><strong>${rec.product}</strong>: ${rec.reason}</div>
+                        <div class="row-reason">${rec.sales} satış, ortalama gelir: ₺${rec.avgRevenue}</div>
+                      </div>
+                    </div>
+                  `;
+                }
+                
+                // Stok önerisi
+                if (rec.type === 'stock') {
+                  return `
+                    <div class="table-row">
+                      <span class="row-bullet">📦</span>
+                      <div class="row-content">
+                        <div class="row-main-text"><strong>${rec.product}</strong>: ${rec.reason}</div>
+                        <div class="row-reason">${rec.sales} satış ile yüksek talep</div>
+                      </div>
+                    </div>
+                  `;
+                }
+                
+                // Genel öneri
+                return `
+                  <div class="table-row">
+                    <span class="row-bullet">💡</span>
+                    <span class="row-text">${rec.reason}</span>
+                  </div>
+                `;
+              }).join('') : '<div class="table-row"><span class="row-text">Şu an için özel öneri bulunmuyor.</span></div>'}
+            </div>
+          </div>
+          
+          <div class="analysis-table risks-table">
+            <div class="table-header">
+              <span class="table-icon">⚠️</span>
+              <h3>Riskler</h3>
+            </div>
+            <div class="table-body">
+              ${risks.length > 0 ? risks.map(risk => {
+                if (typeof risk === 'string') {
+                  return `<div class="table-row"><span class="row-bullet">⚠️</span><span class="row-text">${risk}</span></div>`;
+                }
+                
+                // Satılmayan ürün riski
+                if (risk.type === 'unsold') {
+                  return `
+                    <div class="table-row risk-item">
+                      <span class="row-bullet">❌</span>
+                      <div class="row-content">
+                        <div class="row-main-text"><strong>${risk.product}</strong>: ${risk.reason}</div>
+                        <div class="row-reason">Mevcut fiyat: ₺${risk.price.toFixed(2)}</div>
+                      </div>
+                    </div>
+                  `;
+                }
+                
+                // Düşen ürün riski
+                if (risk.type === 'declining') {
+                  return `
+                    <div class="table-row risk-item">
+                      <span class="row-bullet">📉</span>
+                      <div class="row-content">
+                        <div class="row-main-text"><strong>${risk.product}</strong>: ${risk.reason}</div>
+                        <div class="row-reason">Dün: ${risk.yesterdaySales} satış → Bugün: ${risk.todaySales} satış</div>
+                      </div>
+                    </div>
+                  `;
+                }
+                
+                // Ciro düşüşü
+                if (risk.type === 'revenue_decline') {
+                  return `
+                    <div class="table-row risk-item">
+                      <span class="row-bullet">💰</span>
+                      <span class="row-text">${risk.reason}</span>
+                    </div>
+                  `;
+                }
+                
+                // Satış düşüşü
+                if (risk.type === 'sales_decline') {
+                  return `
+                    <div class="table-row risk-item">
+                      <span class="row-bullet">🛒</span>
+                      <span class="row-text">${risk.reason}</span>
+                    </div>
+                  `;
+                }
+                
+                // Ortalama düşüşü
+                if (risk.type === 'avg_decline') {
+                  return `
+                    <div class="table-row risk-item">
+                      <span class="row-bullet">📊</span>
+                      <div class="row-content">
+                        <div class="row-main-text">${risk.reason}</div>
+                        <div class="row-reason">Dün: ₺${risk.yesterdayAvg} → Bugün: ₺${risk.todayAvg}</div>
+                      </div>
+                    </div>
+                  `;
+                }
+                
+                return `<div class="table-row"><span class="row-bullet">⚠️</span><span class="row-text">${risk.reason || risk}</span></div>`;
+              }).join('') : '<div class="table-row"><span class="row-text">Tespit edilen risk bulunmuyor.</span></div>'}
+            </div>
+          </div>
+        </div>
+      `;
+      
+      // Önce yazıyı typing efektiyle göster, sonra tabloları ekle
+      typeTextThenShowTables(analysisText, htmlTables, content);
+    }
+
+    // Önce yazıyı yaz, sonra tabloları göster
+    function typeTextThenShowTables(text, htmlTables, element) {
+      element.innerHTML = '<div class="analysis-text-content"></div>';
+      const textContent = element.querySelector('.analysis-text-content');
+      const indicator = document.getElementById('analysisTypingIndicator');
+      if (indicator) indicator.style.display = 'flex';
+      
+      let currentIndex = 0;
+      
+      typingInterval = setInterval(() => {
+        if (currentIndex < text.length) {
+          textContent.textContent += text[currentIndex];
+          currentIndex++;
+          element.scrollTop = element.scrollHeight;
+        } else {
+          clearInterval(typingInterval);
+          typingInterval = null;
+          if (indicator) indicator.style.display = 'none';
+          
+          // Yazı bittikten sonra tabloları ekle
+          setTimeout(() => {
+            const tablesDiv = document.createElement('div');
+            tablesDiv.innerHTML = htmlTables;
+            element.appendChild(tablesDiv);
+            element.scrollTop = 0;
+          }, 300);
+        }
+      }, 25);
+    }
+
     // Global fonksiyonlar
     window.verifyPin = verifyPin;
     window.loadSales = loadSales;
     window.setActiveTab = setActiveTab;
     window.setReportDateFilter = setReportDateFilter;
+    window.setCustomDateRange = setCustomDateRange;
     window.toggleDateFilterModal = toggleDateFilterModal;
     window.closeDateFilterModal = closeDateFilterModal;
+    window.showAnalysisModal = showAnalysisModal;
+    window.closeAnalysisModal = closeAnalysisModal;
     window.logout = function() {
       sessionStorage.removeItem('adminAuthenticated');
       isAuthenticated = false;
@@ -1304,27 +3044,7 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
-    .header {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 4px;
-      margin-bottom: 18px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid #e5e7eb;
-    }
-
-    .header h1 {
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      color: var(--text-main);
-    }
-
-    .header p {
-      font-size: 13px;
-      color: var(--text-muted);
-    }
+    /* Header kaldırıldı - navbar kullanılıyor */
 
     /* Login - sade, aydınlık */
     .pin-section {
@@ -1406,116 +3126,288 @@
       display: block;
     }
 
-    .dashboard-header {
+    /* Modern Navbar */
+    .admin-navbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+      border-bottom: 2px solid #ec4899;
+      padding: 12px 20px;
+      margin: 0;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+      backdrop-filter: blur(10px);
+    }
+
+    .navbar-content {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin: 18px 0 16px;
-      padding: 10px 14px;
-      border-radius: var(--radius-lg);
-      background: #ffffff;
-      border: 1px solid var(--border-subtle);
+      max-width: 100%;
+      margin: 0 auto;
     }
 
-    .dashboard-header > div {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-    }
-
-    .dashboard-title {
-      font-size: 18px;
-      font-weight: 600;
-      color: var(--text-main);
+    .navbar-brand {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 12px;
+      flex: 1;
     }
 
-    .dashboard-title::before {
-      content: '';
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: #22c55e;
-      box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.25);
+    .navbar-logo {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 900;
+      font-size: 18px;
+      box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+    }
+
+    .navbar-logo-img {
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
+      flex-shrink: 0;
+      border-radius: 12px;
+    }
+
+    .navbar-title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .navbar-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: #1f2937;
+      line-height: 1.2;
+      margin: 0;
+      letter-spacing: -0.3px;
+    }
+
+    .navbar-subtitle {
+      font-size: 11px;
+      font-weight: 500;
+      color: #64748b;
+      line-height: 1.2;
+      margin: 0;
+    }
+
+    .navbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
     .refresh-btn,
     .logout-btn {
-      border-radius: 999px;
-      padding: 9px 16px;
+      border-radius: 12px;
+      padding: 10px 18px;
       font-size: 13px;
-      font-weight: 500;
-      border: 1px solid transparent;
+      font-weight: 600;
+      border: 2px solid transparent;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       cursor: pointer;
-      background: #ffffff;
-      transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     }
 
     .refresh-btn {
-      border-color: #22c55e33;
-      color: #15803d;
-      background: #ecfdf3;
+      border-color: #ec4899;
+      color: #ec4899;
+      background: #ffffff;
     }
 
     .refresh-btn:hover {
-      border-color: #22c55e66;
-      box-shadow: 0 4px 12px rgba(34, 197, 94, 0.18);
+      border-color: #db2777;
+      background: #fdf2f8;
+      box-shadow: 0 4px 16px rgba(236, 72, 153, 0.25);
+      transform: translateY(-1px);
     }
 
     .logout-btn {
-      border-color: #fecaca;
-      color: #b91c1c;
-      background: #fef2f2;
+      border-color: #ec4899;
+      color: #ffffff;
+      background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
     }
 
     .logout-btn:hover {
-      border-color: #f87171;
-      box-shadow: 0 4px 12px rgba(248, 113, 113, 0.18);
+      border-color: #db2777;
+      background: linear-gradient(135deg, #db2777 0%, #be185d 100%);
+      box-shadow: 0 4px 16px rgba(236, 72, 153, 0.35);
+      transform: translateY(-1px);
     }
 
     /* Stats */
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 18px;
+      gap: 16px;
+      margin-bottom: 24px;
     }
 
     .stat-card {
       background: #ffffff;
-      padding: 14px 14px 12px;
-      border-radius: var(--radius-md);
-      border: 1px solid var(--border-subtle);
+      padding: 14px 12px;
+      border-radius: 16px;
+      border: 2px solid #e5e7eb;
       display: flex;
       align-items: center;
       gap: 10px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      cursor: default;
     }
 
-    .stat-card-green { border-left: 3px solid #22c55e; }
-    .stat-card-purple { border-left: 3px solid #6366f1; }
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.8) 0%, rgba(255, 255, 255, 0.4) 100%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+    }
+
+    .stat-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(148, 163, 184, 0.1);
+    }
+
+    .stat-card:hover::before {
+      opacity: 1;
+    }
+
+    .stat-card-green {
+      border-color: #10b981;
+      background: #ffffff;
+    }
+
+    .stat-card-green:hover {
+      border-color: #059669;
+      box-shadow: 0 8px 24px rgba(16, 185, 129, 0.2), 0 0 0 1px rgba(16, 185, 129, 0.1);
+    }
+
+    .stat-card-red {
+      border-color: #ef4444;
+      background: #ffffff;
+    }
+
+    .stat-card-red:hover {
+      border-color: #dc2626;
+      box-shadow: 0 8px 24px rgba(239, 68, 68, 0.2), 0 0 0 1px rgba(239, 68, 68, 0.1);
+    }
+
+    .stat-card-purple {
+      border-color: #8b5cf6;
+      background: #ffffff;
+    }
+
+    .stat-card-purple:hover {
+      border-color: #7c3aed;
+      box-shadow: 0 8px 24px rgba(139, 92, 246, 0.2), 0 0 0 1px rgba(139, 92, 246, 0.1);
+    }
+
+    .stat-card-pink {
+      border-color: #ec4899;
+      background: #ffffff;
+    }
+
+    .stat-card-pink:hover {
+      border-color: #db2777;
+      box-shadow: 0 8px 24px rgba(236, 72, 153, 0.2), 0 0 0 1px rgba(236, 72, 153, 0.1);
+    }
 
     .stat-icon {
-      font-size: 22px;
+      font-size: 24px;
+      line-height: 1;
+      filter: grayscale(0.2);
+      transition: all 0.3s ease;
+      flex-shrink: 0;
+      min-width: 24px;
+    }
+
+    .stat-card:hover .stat-icon {
+      filter: grayscale(0);
+      transform: scale(1.1);
+    }
+
+    .stat-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .stat-content {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
     }
 
     .stat-content h3 {
       font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      margin: 0 0 6px 0;
+      letter-spacing: 0.1px;
       text-transform: uppercase;
-      letter-spacing: 0.14em;
-      color: var(--text-muted);
-      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.2;
+    }
+
+    .stat-card-green .stat-content h3 {
+      color: #059669;
+    }
+
+    .stat-card-red .stat-content h3 {
+      color: #dc2626;
+    }
+
+    .stat-card-purple .stat-content h3 {
+      color: #7c3aed;
+    }
+
+    .stat-card-pink .stat-content h3 {
+      color: #db2777;
     }
 
     .stat-value {
-      font-size: 18px;
-      font-weight: 700;
-      color: var(--text-main);
+      font-size: 20px;
+      font-weight: 800;
+      color: #1f2937;
+      line-height: 1.2;
+      letter-spacing: -0.3px;
+      white-space: nowrap;
+    }
+
+    .stat-card-green .stat-value {
+      color: #047857;
+    }
+
+    .stat-card-red .stat-value {
+      color: #b91c1c;
+    }
+
+    .stat-card-purple .stat-value {
+      color: #6d28d9;
+    }
+
+    .stat-card-pink .stat-value {
+      color: #ec4899;
     }
 
     /* Tarih grupları + satış kartları */
@@ -1524,26 +3416,133 @@
     }
 
     .date-group {
-      margin-bottom: 18px;
+      margin-bottom: 24px;
     }
 
     .date-header {
+      background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+      border-radius: 16px;
+      padding: 18px 20px;
+      border: 2px solid #a7f3d0;
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.08), 0 2px 4px rgba(16, 185, 129, 0.04);
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .date-header::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #10b981 0%, #059669 50%, #047857 100%);
+      border-radius: 16px 16px 0 0;
+    }
+
+    .date-header:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(16, 185, 129, 0.12), 0 4px 8px rgba(16, 185, 129, 0.06);
+      border-color: #10b981;
+      background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+    }
+
+    .date-header > div {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      flex-direction: column;
+    }
+
+    .date-title-wrapper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+    }
+
+    .date-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
       background: #ffffff;
-      border-radius: var(--radius-md);
-      padding: 10px 12px;
-      border: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      flex-shrink: 0;
     }
 
     .date-title {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--text-main);
+      font-size: 16px;
+      font-weight: 700;
+      color: #1f2937;
+      letter-spacing: -0.02em;
+      margin: 0;
+      line-height: 1.3;
     }
 
     .date-subtitle {
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-top: 2px;
+      font-size: 13px;
+      color: #6b7280;
+      margin-top: 6px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .date-stats {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      width: 100%;
+    }
+
+    .date-stat-item {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center;
+      gap: 8px;
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 10px 14px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+      border: 1px solid rgba(16, 185, 129, 0.1);
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .date-stat-item:hover {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      transform: translateY(-1px);
+    }
+
+    .date-stat-label {
+      font-size: 13px;
+      color: #047857;
+      font-weight: 600;
+      text-transform: none;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .date-stat-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #059669;
+      line-height: 1;
+    }
+
+    .date-stat-value.amount {
+      color: #047857;
     }
 
     .sales-grid {
@@ -1632,6 +3631,216 @@
       background: #fef9c3;
       color: #854d0e;
       border-color: #fde68a;
+    }
+
+    .badge-expense {
+      background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+      color: #c62828;
+      border-color: #ef5350;
+    }
+
+    /* Masraf Kartı Stilleri */
+    .expense-card {
+      background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+      border: 1px solid #ef5350;
+      border-left: 4px solid #e53935;
+      padding: 12px 16px;
+    }
+
+    .expense-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .expense-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .expense-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #c62828;
+      margin-bottom: 4px;
+    }
+
+    .expense-time {
+      color: #d32f2f;
+      font-size: 11px;
+      margin-bottom: 8px;
+    }
+
+    .expense-amount {
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .expense-label {
+      font-size: 10px;
+      color: #d32f2f;
+      font-weight: 700;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .expense-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #c62828;
+    }
+
+    /* İptaller Listesi Stilleri */
+    .cancels-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding: 20px 0;
+    }
+
+    .cancel-card {
+      background: linear-gradient(135deg, #ffffff 0%, #fef2f2 100%);
+      border: 2px solid #fecaca;
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.1);
+      transition: all 0.3s ease;
+    }
+
+    .cancel-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(239, 68, 68, 0.15);
+      border-color: #fca5a5;
+    }
+
+    .cancel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid #fee2e2;
+    }
+
+    .cancel-header-left {
+      flex: 1;
+    }
+
+    .cancel-product-name {
+      font-size: 18px;
+      font-weight: 700;
+      color: #1f2937;
+      margin-bottom: 8px;
+    }
+
+    .cancel-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    .cancel-meta-item {
+      display: flex;
+      align-items: center;
+    }
+
+    .cancel-meta-separator {
+      color: #d1d5db;
+      margin: 0 4px;
+    }
+
+    .cancel-header-right {
+      text-align: right;
+    }
+
+    .cancel-amount {
+      font-size: 22px;
+      font-weight: 800;
+      color: #dc2626;
+      letter-spacing: -0.5px;
+    }
+
+    .cancel-details {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+      padding: 12px;
+      background: #fef2f2;
+      border-radius: 10px;
+    }
+
+    .cancel-detail-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .cancel-detail-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .cancel-detail-value {
+      font-size: 15px;
+      font-weight: 700;
+      color: #1f2937;
+    }
+
+    .cancel-reason {
+      padding: 14px;
+      background: #ffffff;
+      border: 2px solid #fee2e2;
+      border-radius: 12px;
+      border-left: 4px solid #ef4444;
+    }
+
+    .cancel-reason-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #991b1b;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .cancel-reason-text {
+      font-size: 15px;
+      font-weight: 500;
+      color: #374151;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 768px) {
+      .cancel-header {
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .cancel-header-right {
+        text-align: left;
+        width: 100%;
+      }
+
+      .cancel-details {
+        grid-template-columns: 1fr;
+      }
+
+      .cancel-product-name {
+        font-size: 16px;
+      }
+
+      .cancel-amount {
+        font-size: 20px;
+      }
     }
 
     .sale-total {
@@ -1908,6 +4117,50 @@
       color: rgba(255, 255, 255, 0.8);
     }
 
+    /* Dolu Masalar - Modern Gradient Tasarım */
+    .table-card-occupied {
+      background: linear-gradient(135deg, #dc2626 0%, #b91c1c 50%, #991b1b 100%);
+      border: none;
+      padding: 0;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
+    }
+
+    .table-card-occupied:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(220, 38, 38, 0.35);
+    }
+
+    .table-card-gradient {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 8px;
+      min-height: 100%;
+    }
+
+    .table-number-occupied {
+      font-size: 24px;
+      font-weight: 800;
+      color: #ffffff;
+      line-height: 1;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      letter-spacing: -0.5px;
+    }
+
+    .table-amount-occupied {
+      font-size: 14px;
+      font-weight: 700;
+      color: #ffffff;
+      line-height: 1;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      opacity: 0.95;
+      margin-top: auto;
+    }
+
     .table-items-list {
       display: flex;
       flex-direction: column;
@@ -1997,62 +4250,210 @@
       box-shadow: 0 8px 18px rgba(220, 38, 38, 0.25);
     }
 
-    /* Loader */
-    #loader {
-      display: none;
+    /* Admin Splash Screen */
+    .admin-splash-screen {
       position: fixed;
-      inset: 0;
-      background: rgba(255, 255, 255, 0.8);
-      backdrop-filter: blur(8px);
-      z-index: 9999;
-      justify-content: center;
-      align-items: center;
-      flex-direction: column;
-    }
-
-    .loader-spinner {
-      width: 56px;
-      height: 56px;
-      border-radius: 999px;
-      border: 4px solid #e5e7eb;
-      border-top-color: var(--primary);
-      animation: spin 1s linear infinite;
-      margin-bottom: 10px;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .loader-text {
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text-muted);
-    }
-
-    /* Sekme butonları */
-    .tab-buttons {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin: 16px 0 18px;
-    }
-
-    .tab-btn {
-      padding: 10px 4px;
-      border-radius: 999px;
-      border: 1px solid var(--border-subtle);
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
       background: #ffffff;
-      font-size: 11px;
-      font-weight: 500;
-      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 99999;
+      overflow: hidden;
+    }
+
+    .splash-content {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      text-align: center;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 2px;
+      justify-content: center;
+    }
+
+    .splash-logo {
+      width: 120px;
+      height: 120px;
+      object-fit: contain;
+      margin-bottom: 32px;
+      animation: logoFadeIn 0.8s ease-out forwards;
+      opacity: 0;
+    }
+
+    .splash-main-text {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-weight: 800;
+      font-size: clamp(4rem, 12vw, 8rem);
+      line-height: 0.9;
+      letter-spacing: 0.15em;
+      color: #0a0a0a;
+      margin: 0;
+      padding: 0;
+      text-align: center;
+      text-transform: uppercase;
+      animation: mainTextReveal 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      opacity: 0;
+    }
+
+    .splash-decorative-line {
+      width: 0%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent 0%, #d1d5db 50%, transparent 100%);
+      margin: 32px auto 40px;
+      max-width: 400px;
+      animation: lineExpand 1s ease-out forwards;
+      animation-delay: 0.5s;
+      opacity: 0;
+    }
+
+    .splash-subtitle-text {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: clamp(0.875rem, 1.5vw, 1.125rem);
+      font-weight: 400;
+      color: #6b7280;
+      margin: 0;
+      padding: 0;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      text-align: center;
+      opacity: 0.7;
+      animation: subtitleFadeIn 0.8s ease-out forwards;
+      animation-delay: 0.3s;
+      opacity: 0;
+    }
+
+    @keyframes logoFadeIn {
+      from {
+        opacity: 0;
+        transform: scale(0.8);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    @keyframes mainTextReveal {
+      0% {
+        opacity: 0;
+        transform: translateY(40px) scale(0.95);
+        letter-spacing: 0.3em;
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        letter-spacing: 0.15em;
+      }
+    }
+
+    @keyframes subtitleFadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes lineExpand {
+      from {
+        width: 0%;
+        opacity: 0;
+      }
+      to {
+        width: 100%;
+        opacity: 1;
+      }
+    }
+
+    /* Dekoratif arka plan elementleri */
+    .admin-splash-screen::before {
+      content: '';
+      position: absolute;
+      top: 20%;
+      left: 10%;
+      width: 200px;
+      height: 200px;
+      background: radial-gradient(circle, rgba(236, 72, 153, 0.03) 0%, transparent 70%);
+      border-radius: 50%;
+      filter: blur(40px);
+      pointer-events: none;
+    }
+
+    .admin-splash-screen::after {
+      content: '';
+      position: absolute;
+      bottom: 20%;
+      right: 10%;
+      width: 300px;
+      height: 300px;
+      background: radial-gradient(circle, rgba(236, 72, 153, 0.02) 0%, transparent 70%);
+      border-radius: 50%;
+      filter: blur(60px);
+      pointer-events: none;
+    }
+
+    /* Sekme butonları */
+    .tab-buttons-container {
+      width: 100%;
+      padding: 0 16px;
+      margin-bottom: 20px;
+    }
+
+    .tab-buttons {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-rows: repeat(2, auto);
+      gap: 12px;
+      margin: 20px 0 24px;
+    }
+
+    @media (min-width: 768px) {
+      .tab-buttons {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: repeat(2, auto);
+      }
+    }
+
+    .tab-btn {
+      padding: 16px 8px;
+      border-radius: 16px;
+      border: 2px solid #e5e7eb;
+      background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+      font-size: 12px;
+      font-weight: 600;
+      color: #64748b;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
       cursor: pointer;
-      transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
-      min-height: 54px;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      min-height: 72px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    }
+
+    .tab-btn::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.8) 0%, rgba(255, 255, 255, 0.4) 100%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
     }
 
     .tab-btn span {
@@ -2062,17 +4463,75 @@
       overflow: hidden;
     }
 
+    .tab-btn-icon {
+      font-size: 24px;
+      line-height: 1;
+      filter: grayscale(0.3);
+      transition: all 0.3s ease;
+    }
+
+    .tab-btn-text {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      transition: all 0.3s ease;
+    }
+
+    .tab-btn-indicator {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #ec4899 0%, #db2777 100%);
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 0 0 16px 16px;
+    }
+
     .tab-btn:hover {
-      border-color: #d1d5db;
-      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
-      transform: translateY(-1px);
+      border-color: #cbd5e1;
+      background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%);
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(148, 163, 184, 0.1);
+      transform: translateY(-2px);
+      color: #475569;
+    }
+
+    .tab-btn:hover::before {
+      opacity: 1;
+    }
+
+    .tab-btn:hover .tab-btn-icon {
+      filter: grayscale(0);
+      transform: scale(1.1);
     }
 
     .tab-btn.active {
-      border-color: var(--primary);
-      background: var(--primary-soft);
-      color: var(--primary-strong);
-      box-shadow: 0 6px 16px rgba(220, 38, 38, 0.15);
+      border-color: #ec4899;
+      background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
+      color: #db2777;
+      box-shadow: 0 8px 24px rgba(236, 72, 153, 0.2), 0 0 0 1px rgba(236, 72, 153, 0.1);
+      transform: translateY(-2px);
+    }
+
+    .tab-btn.active::before {
+      opacity: 0;
+    }
+
+    .tab-btn.active .tab-btn-icon {
+      filter: grayscale(0);
+      transform: scale(1.15);
+    }
+
+    .tab-btn.active .tab-btn-text {
+      color: #db2777;
+      font-weight: 700;
+    }
+
+    .tab-btn.active .tab-btn-indicator {
+      transform: scaleX(1);
+      background: linear-gradient(90deg, #ec4899 0%, #db2777 100%);
     }
 
     /* Raporlar */
@@ -2092,6 +4551,64 @@
       font-size: 18px;
       font-weight: 600;
       color: var(--text-main);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .analyze-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 20px;
+      background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+      color: #1f2937;
+      border: 2px solid #ec4899;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 2px 8px rgba(236, 72, 153, 0.15);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .analyze-btn::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 0;
+    }
+
+    .analyze-btn span {
+      position: relative;
+      z-index: 1;
+      transition: color 0.3s ease;
+    }
+
+    .analyze-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(236, 72, 153, 0.3);
+      border-color: #db2777;
+    }
+
+    .analyze-btn:hover::before {
+      left: 0;
+    }
+
+    .analyze-btn:hover span {
+      color: #ffffff;
+    }
+
+    .analyze-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 8px rgba(236, 72, 153, 0.2);
     }
 
     .date-filter-wrapper {
@@ -2162,140 +4679,1086 @@
       font-weight: 500;
     }
 
-    .reports-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 16px;
-      margin-bottom: 18px;
+    .date-filter-divider {
+      height: 1px;
+      background: var(--border-subtle);
+      margin: 4px 0;
     }
 
-    .report-card {
-      position: relative;
-      background: #ffffff;
-      border-radius: var(--radius-md);
-      padding: 14px 14px 12px;
-      border: 1px solid var(--border-subtle);
-      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+    .custom-date-range-section {
+      padding: 10px;
+      background: var(--bg-subtle);
+      border-radius: 8px;
+      margin-top: 4px;
+    }
+
+    .custom-date-inputs {
       display: flex;
       flex-direction: column;
       gap: 8px;
+      margin-bottom: 10px;
     }
 
-    .report-card::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      border-radius: inherit;
-      border-top: 3px solid transparent;
-      pointer-events: none;
+    .custom-date-input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
 
-    .report-card-top-sold::before {
-      border-top-color: #16a34a;
-    }
-
-    .reports-grid .report-card:nth-child(2)::before {
-      border-top-color: #9ca3af;
-    }
-
-    .report-card-top-earning::before {
-      border-top-color: #2563eb;
-    }
-
-    .reports-grid .report-card:nth-child(4)::before {
-      border-top-color: #f97316;
-    }
-
-    .report-card-title {
-      font-size: 14px;
+    .custom-date-input-group label {
+      font-size: 11px;
       font-weight: 600;
-      margin-bottom: 4px;
+      color: var(--text-muted);
+    }
+
+    .custom-date-input {
+      padding: 6px 8px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      font-size: 12px;
+      background: #ffffff;
       color: var(--text-main);
     }
 
-    .product-list {
+    .custom-date-input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-soft);
+    }
+
+    .custom-date-apply-btn {
+      width: 100%;
+      padding: 8px;
+      background: var(--primary);
+      color: #ffffff;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .custom-date-apply-btn:hover {
+      background: var(--primary-strong);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(220, 38, 38, 0.2);
+    }
+
+    /* Seçilen Zaman Dilimi Ciro ve Masraf Container */
+    .period-revenue-container {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 18px;
+      margin-bottom: 28px;
+    }
+
+    /* Seçilen Zaman Dilimi Ciro Kartı */
+    .period-revenue-card,
+    .period-expense-card {
+      position: relative;
+      background: linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 10px 40px rgba(16, 185, 129, 0.3), 0 4px 16px rgba(16, 185, 129, 0.2);
+      overflow: hidden;
+      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .period-expense-card {
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 50%, #b91c1c 100%);
+      box-shadow: 0 10px 40px rgba(239, 68, 68, 0.3), 0 4px 16px rgba(239, 68, 68, 0.2);
+    }
+
+    .period-revenue-card:hover,
+    .period-expense-card:hover {
+      transform: translateY(-4px) scale(1.02);
+      box-shadow: 0 16px 48px rgba(16, 185, 129, 0.4), 0 8px 24px rgba(16, 185, 129, 0.3);
+    }
+
+    .period-expense-card:hover {
+      box-shadow: 0 16px 48px rgba(239, 68, 68, 0.4), 0 8px 24px rgba(239, 68, 68, 0.3);
+    }
+
+    .period-card-background {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: radial-gradient(circle at 80% 20%, rgba(255, 255, 255, 0.2) 0%, transparent 50%);
+      opacity: 0;
+      transition: opacity 0.4s ease;
+    }
+
+    .period-revenue-card:hover .period-card-background,
+    .period-expense-card:hover .period-card-background {
+      opacity: 1;
+    }
+
+    .period-card-icon {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      width: 56px;
+      height: 56px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      transition: all 0.3s ease;
+    }
+
+    .period-card-icon svg {
+      width: 28px;
+      height: 28px;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .period-revenue-card:hover .period-card-icon,
+    .period-expense-card:hover .period-card-icon {
+      transform: scale(1.1) rotate(5deg);
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    .period-card-decoration {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 200px;
+      height: 200px;
+      opacity: 0.3;
+      pointer-events: none;
+    }
+
+    .period-card-decoration svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .period-revenue-content {
+      position: relative;
+      z-index: 2;
       display: flex;
       flex-direction: column;
+      gap: 10px;
+    }
+
+    .period-revenue-label {
+      display: flex;
+      align-items: center;
       gap: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.95);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .period-label-icon {
+      font-size: 16px;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+    }
+
+    /* Analiz Modal */
+    .analysis-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .analysis-modal-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(8px);
+    }
+
+    .analysis-modal-content {
+      position: relative;
+      background: #ffffff;
+      border-radius: 20px;
+      width: 100%;
+      max-width: 900px;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+      animation: modalSlideIn 0.3s ease-out;
+    }
+
+    @keyframes modalSlideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-20px) scale(0.95);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .analysis-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px 28px;
+      border-bottom: 2px solid #ec4899;
+      background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
+    }
+
+    .analysis-modal-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: #1f2937;
+      margin: 0;
+    }
+
+    .analysis-modal-close {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      border: none;
+      background: #ffffff;
+      color: #6b7280;
+      font-size: 24px;
+      font-weight: 300;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      line-height: 1;
+    }
+
+    .analysis-modal-close:hover {
+      background: #f3f4f6;
+      color: #1f2937;
+      transform: rotate(90deg);
+    }
+
+    .analysis-modal-body {
+      padding: 28px;
+      overflow-y: auto;
+      flex: 1;
+      background: #ffffff;
+    }
+
+    .analysis-content {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #1f2937;
+      min-height: 200px;
+    }
+
+    .analysis-text-content {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.8;
+      color: #1f2937;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      margin-bottom: 24px;
+      padding: 20px;
+      background: #f9fafb;
+      border-radius: 12px;
+      border-left: 4px solid #ec4899;
+    }
+
+    .analysis-summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .analysis-card {
+      background: #ffffff;
+      border: 2px solid #e5e7eb;
+      border-radius: 16px;
+      padding: 20px;
+      transition: all 0.3s ease;
+    }
+
+    .analysis-card:hover {
+      border-color: #ec4899;
+      box-shadow: 0 4px 12px rgba(236, 72, 153, 0.1);
+      transform: translateY(-2px);
+    }
+
+    .analysis-card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #f3f4f6;
+    }
+
+    .analysis-icon {
+      font-size: 20px;
+    }
+
+    .analysis-card-header h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1f2937;
+      margin: 0;
+    }
+
+    .analysis-card-body {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .analysis-comparison {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .comparison-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+
+    .comparison-label {
+      font-size: 12px;
+      color: #6b7280;
+      font-weight: 500;
+    }
+
+    .comparison-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #1f2937;
+    }
+
+    .comparison-value.positive {
+      color: #10b981;
+    }
+
+    .comparison-value.negative {
+      color: #ef4444;
+    }
+
+    .comparison-arrow {
+      font-size: 20px;
+      color: #9ca3af;
+      font-weight: 300;
+    }
+
+    .analysis-trend {
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
+    }
+
+    .analysis-trend.trend-up {
+      background: #ecfdf5;
+      color: #059669;
+    }
+
+    .analysis-trend.trend-down {
+      background: #fef2f2;
+      color: #dc2626;
     }
 
     .product-item {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 6px 8px;
-      border-radius: 999px;
-      background: var(--bg-subtle);
-      border: 1px solid #e5e7eb;
+      gap: 12px;
+      padding: 10px;
+      background: #f9fafb;
+      border-radius: 10px;
     }
 
     .product-rank {
-      width: 22px;
-      height: 22px;
-      border-radius: 999px;
-      background: #eef2ff;
-      color: #4f46e5;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+      color: #ffffff;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 11px;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .product-name {
+      flex: 1;
       font-weight: 600;
+      color: #1f2937;
+    }
+
+    .product-count {
+      font-size: 13px;
+      color: #6b7280;
+      font-weight: 500;
+    }
+
+    .analysis-tables {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+    }
+
+    .analysis-table {
+      background: #ffffff;
+      border: 2px solid #e5e7eb;
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .table-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 20px;
+      background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+      border-bottom: 2px solid #e5e7eb;
+    }
+
+    .table-icon {
+      font-size: 18px;
+    }
+
+    .table-header h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1f2937;
+      margin: 0;
+    }
+
+    .recommendations-table .table-header {
+      border-bottom-color: #10b981;
+    }
+
+    .risks-table .table-header {
+      border-bottom-color: #ef4444;
+    }
+
+    .table-body {
+      padding: 16px 20px;
+    }
+
+    .table-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid #f3f4f6;
+    }
+
+    .table-row:last-child {
+      border-bottom: none;
+    }
+
+    .row-bullet {
+      color: #ec4899;
+      font-weight: 700;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+
+    .row-text {
+      flex: 1;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #374151;
+    }
+
+    .row-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .row-main-text {
+      font-size: 14px;
+      line-height: 1.5;
+      color: #1f2937;
+      font-weight: 500;
+    }
+
+    .row-reason {
+      font-size: 12px;
+      color: #6b7280;
+      line-height: 1.4;
+    }
+
+    .recommendation-price {
+      background: #f0fdf4;
+      border-left: 3px solid #10b981;
+      padding-left: 16px;
+    }
+
+    .risk-item {
+      background: #fef2f2;
+      border-left: 3px solid #ef4444;
+      padding-left: 16px;
+    }
+
+    .price-suggestion {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .old-price {
+      font-size: 14px;
+      color: #9ca3af;
+      text-decoration: line-through;
+      font-weight: 500;
+    }
+
+    .new-price {
+      font-size: 16px;
+      color: #10b981;
+      font-weight: 700;
+    }
+
+    .price-change {
+      font-size: 12px;
+      color: #6b7280;
+      font-weight: 500;
+    }
+
+    .price-change.positive {
+      color: #10b981;
+    }
+
+    .typing-indicator {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 16px;
+      padding: 12px;
+      background: #f9fafb;
+      border-radius: 8px;
+    }
+
+    .typing-indicator span {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ec4899;
+      animation: typingDot 1.4s infinite;
+    }
+
+    .typing-indicator span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .typing-indicator span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    @keyframes typingDot {
+      0%, 60%, 100% {
+        transform: translateY(0);
+        opacity: 0.7;
+      }
+      30% {
+        transform: translateY(-10px);
+        opacity: 1;
+      }
+    }
+
+    .period-revenue-period {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.85);
+      font-weight: 500;
+      letter-spacing: 0.3px;
+    }
+
+    .period-revenue-amount {
+      font-size: 36px;
+      font-weight: 900;
+      color: #ffffff;
+      line-height: 1.1;
+      text-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.2);
+      letter-spacing: -0.02em;
+      margin-top: 4px;
+    }
+
+    /* Raporlama Başlık İyileştirmeleri */
+    .reports-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 20px;
+      gap: 16px;
+    }
+
+    .reports-title {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin: 0;
+      line-height: 1.2;
+    }
+
+    .reports-subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      font-weight: 500;
+    }
+
+    .reports-container-modern {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .report-group {
+      position: relative;
+      background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+      border-radius: 20px;
+      padding: 20px;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.06);
+      overflow: hidden;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .report-group:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+
+    .report-group-rising {
+      background: linear-gradient(135deg, #ffffff 0%, #f0fdf4 50%, #ffffff 100%);
+      border-color: rgba(16, 185, 129, 0.15);
+    }
+
+    .report-group-rising::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #10b981 0%, #059669 50%, #047857 100%);
+    }
+
+    .report-group-falling {
+      background: linear-gradient(135deg, #ffffff 0%, #fffbeb 50%, #ffffff 100%);
+      border-color: rgba(245, 158, 11, 0.15);
+    }
+
+    .report-group-falling::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #f59e0b 0%, #d97706 50%, #b45309 100%);
+    }
+
+    .report-group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 2px solid #f1f5f9;
+    }
+
+    .report-group-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f172a;
+      letter-spacing: -0.02em;
+    }
+
+    .report-group-rising .report-group-title {
+      color: #059669;
+    }
+
+    .report-group-falling .report-group-title {
+      color: #d97706;
+    }
+
+    .chart-icon {
+      width: 24px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+
+    .chart-icon-rising {
+      color: #10b981;
+    }
+
+    .chart-icon-falling {
+      color: #f59e0b;
+    }
+
+    .report-group-chart {
+      width: 120px;
+      height: 40px;
+      flex-shrink: 0;
+      opacity: 0.8;
+      transition: opacity 0.3s ease;
+    }
+
+    .report-group:hover .report-group-chart {
+      opacity: 1;
+    }
+
+    .chart-svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .report-group-cards {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+
+    .reports-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .report-card {
+      position: relative;
+      background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+      border-radius: 16px;
+      padding: 18px;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.1);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+    }
+
+    .report-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      pointer-events: none;
+    }
+
+    .report-card::after {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -50%;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.3) 0%, transparent 70%);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .report-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .report-card:hover::after {
+      opacity: 1;
+    }
+
+    .report-card-top-sold {
+      background: linear-gradient(135deg, #ffffff 0%, #f0fdf4 100%);
+      border-color: rgba(16, 185, 129, 0.2);
+    }
+
+    .report-card-top-sold::before {
+      background: linear-gradient(90deg, #10b981 0%, #059669 50%, #047857 100%);
+    }
+
+    .report-card-top-sold:hover {
+      box-shadow: 0 8px 24px rgba(16, 185, 129, 0.15), 0 4px 8px rgba(16, 185, 129, 0.1);
+    }
+
+    .report-card-least-sold {
+      background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
+      border-color: rgba(107, 114, 128, 0.2);
+    }
+
+    .report-card-least-sold::before {
+      background: linear-gradient(90deg, #6b7280 0%, #4b5563 50%, #374151 100%);
+    }
+
+    .report-card-least-sold:hover {
+      box-shadow: 0 8px 24px rgba(107, 114, 128, 0.15), 0 4px 8px rgba(107, 114, 128, 0.1);
+    }
+
+    .report-card-top-earning {
+      background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%);
+      border-color: rgba(59, 130, 246, 0.2);
+    }
+
+    .report-card-top-earning::before {
+      background: linear-gradient(90deg, #3b82f6 0%, #2563eb 50%, #1d4ed8 100%);
+    }
+
+    .report-card-top-earning:hover {
+      box-shadow: 0 8px 24px rgba(59, 130, 246, 0.15), 0 4px 8px rgba(59, 130, 246, 0.1);
+    }
+
+    .report-card-least-earning {
+      background: linear-gradient(135deg, #ffffff 0%, #fffbeb 100%);
+      border-color: rgba(245, 158, 11, 0.2);
+    }
+
+    .report-card-least-earning::before {
+      background: linear-gradient(90deg, #f59e0b 0%, #d97706 50%, #b45309 100%);
+    }
+
+    .report-card-least-earning:hover {
+      box-shadow: 0 8px 24px rgba(245, 158, 11, 0.15), 0 4px 8px rgba(245, 158, 11, 0.1);
+    }
+
+    .report-card-title {
+      font-size: 12px;
+      font-weight: 700;
+      margin: 0;
+      color: #1f2937;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .report-card-title::before {
+      content: '';
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .report-card-top-sold .report-card-title {
+      color: #059669;
+    }
+
+    .report-card-least-sold .report-card-title {
+      color: #4b5563;
+    }
+
+    .report-card-top-earning .report-card-title {
+      color: #2563eb;
+    }
+
+    .report-card-least-earning .report-card-title {
+      color: #d97706;
+    }
+
+    .product-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .product-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 12px;
+      background: #ffffff;
+      border: 1.5px solid #f1f5f9;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .product-item::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: #e2e8f0;
+      transition: width 0.25s ease;
+    }
+
+    .product-item:hover {
+      background: #f8fafc;
+      border-color: #e2e8f0;
+      transform: translateX(2px);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    }
+
+    .product-item:hover::before {
+      width: 4px;
+    }
+
+    .report-card-top-sold .product-item:hover::before {
+      background: linear-gradient(180deg, #10b981 0%, #059669 100%);
+    }
+
+    .report-card-top-earning .product-item:hover::before {
+      background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+    }
+
+    .report-card-least-sold .product-item:hover::before {
+      background: linear-gradient(180deg, #6b7280 0%, #4b5563 100%);
+    }
+
+    .report-card-least-earning .product-item:hover::before {
+      background: linear-gradient(180deg, #f59e0b 0%, #d97706 100%);
+    }
+
+    .product-rank {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+      color: #475569;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      border: 2px solid #ffffff;
+      flex-shrink: 0;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      transition: all 0.25s ease;
+    }
+
+    .product-item:hover .product-rank {
+      transform: scale(1.05);
+    }
+
+    .report-card-top-sold .product-item:first-child .product-rank {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: #ffffff;
+      border-color: #10b981;
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+
+    .report-card-top-earning .product-item:first-child .product-rank {
+      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      color: #ffffff;
+      border-color: #3b82f6;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    .report-card-least-sold .product-item:first-child .product-rank {
+      background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+      color: #ffffff;
+      border-color: #6b7280;
+      box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3);
+    }
+
+    .report-card-least-earning .product-item:first-child .product-rank {
+      background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      color: #ffffff;
+      border-color: #f59e0b;
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
     }
 
     .product-info {
       flex: 1;
       min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
     }
 
     .product-name {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text-main);
-      white-space: nowrap;
-      text-overflow: ellipsis;
-      overflow: hidden;
-    }
-
-    .product-details {
-      font-size: 11px;
-      color: var(--text-muted);
-      margin-top: 2px;
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-
-    .product-revenue,
-    .product-revenue-large {
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 600;
-      color: #16a34a;
-      margin-top: 2px;
+      color: #0f172a;
+      line-height: 1.5;
+      word-break: break-word;
+      letter-spacing: -0.01em;
     }
 
-    .product-revenue-large {
-      font-size: 14px;
+    .product-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 4px;
     }
 
-    /* En çok satılan / en çok kazandıran için fiyat vurgusu */
-    .report-card-top-sold .product-revenue {
-      font-size: 14px;
+    .product-quantity {
+      font-size: 12px;
+      color: #64748b;
+      font-weight: 500;
+      background: #f1f5f9;
+      padding: 4px 8px;
+      border-radius: 6px;
     }
 
-    .report-card-top-sold .product-item:first-child .product-revenue {
-      font-size: 17px;
+    .product-total {
+      font-size: 15px;
       font-weight: 700;
-      color: #16a34a;
+      color: #059669;
+      letter-spacing: -0.02em;
     }
 
-    .report-card-top-earning .product-revenue-large {
-      font-size: 18px;
-      font-weight: 700;
-      color: #16a34a;
+    .product-total-emphasis {
+      font-size: 16px;
+      font-weight: 800;
+      color: #2563eb;
+      text-shadow: 0 1px 2px rgba(37, 99, 235, 0.1);
     }
 
-    .report-card-top-earning .product-item:first-child .product-revenue-large {
-      font-size: 20px;
+    .report-card-top-earning .product-total {
+      color: #2563eb;
+    }
+
+    .report-card-top-earning .product-total-emphasis {
+      color: #1d4ed8;
+    }
+
+    .report-card-least-earning .product-total {
+      color: #d97706;
+    }
+
+    .report-card-least-sold .product-total {
+      color: #475569;
     }
 
     .no-data {
@@ -2476,6 +5939,28 @@
       justify-content: center;
     }
 
+    @keyframes toastSlideIn {
+      from {
+        transform: translateX(400px) scale(0.9);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0) scale(1);
+        opacity: 1;
+      }
+    }
+
+    @keyframes toastSlideOut {
+      from {
+        transform: translateX(0) scale(1);
+        opacity: 1;
+      }
+      to {
+        transform: translateX(400px) scale(0.9);
+        opacity: 0;
+      }
+    }
+
     .staff-product-info {
       flex: 1;
     }
@@ -2514,6 +5999,30 @@
         gap: 6px;
       }
 
+      .admin-navbar {
+        padding: 10px 16px;
+      }
+
+      .navbar-content {
+        flex-direction: column;
+        gap: 12px;
+        align-items: stretch;
+      }
+
+      .navbar-brand {
+        justify-content: center;
+        text-align: center;
+      }
+
+      .navbar-title-group {
+        align-items: center;
+      }
+
+      .navbar-actions {
+        justify-content: center;
+        width: 100%;
+      }
+
       .dashboard-header > div {
         justify-content: stretch;
       }
@@ -2528,8 +6037,97 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
+      .reports-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+      }
+
+      .analysis-modal-content {
+        max-width: 95%;
+        max-height: 90vh;
+      }
+
+      .analysis-summary {
+        grid-template-columns: 1fr;
+      }
+
+      .analysis-tables {
+        grid-template-columns: 1fr;
+      }
+
+      .reports-title {
+        font-size: 20px;
+      }
+
+      .reports-subtitle {
+        font-size: 12px;
+      }
+
+      .period-revenue-container {
+        grid-template-columns: 1fr;
+        gap: 14px;
+        margin-bottom: 20px;
+      }
+
+      .period-revenue-card,
+      .period-expense-card {
+        padding: 20px 18px;
+        border-radius: 18px;
+      }
+
+      .period-card-icon {
+        width: 48px;
+        height: 48px;
+        top: 16px;
+        right: 16px;
+        border-radius: 14px;
+      }
+
+      .period-card-icon svg {
+        width: 24px;
+        height: 24px;
+      }
+
+      .period-revenue-label {
+        font-size: 10px;
+        gap: 6px;
+      }
+
+      .period-label-icon {
+        font-size: 14px;
+      }
+
+      .period-revenue-period {
+        font-size: 12px;
+      }
+
+      .period-revenue-amount {
+        font-size: 28px;
+      }
+
+      .period-card-decoration {
+        width: 150px;
+        height: 150px;
+      }
+
+      .custom-date-inputs {
+        gap: 6px;
+      }
+
+      .custom-date-input {
+        font-size: 11px;
+        padding: 5px 6px;
+      }
+
       .tab-buttons {
         gap: 8px;
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        grid-template-rows: repeat(2, auto) !important;
+      }
+
+      .tab-buttons-container {
+        padding: 0 12px;
       }
 
       /* Detaylı raporlama: 4 kutu tek ekrana daha rahat sığsın */
@@ -2537,48 +6135,95 @@
         display: none;
       }
 
+      .reports-container-modern {
+        gap: 12px;
+      }
+
+      .report-group {
+        padding: 16px 14px;
+        border-radius: 16px;
+      }
+
+      .report-group-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 14px;
+        padding-bottom: 12px;
+      }
+
+      .report-group-title {
+        font-size: 13px;
+      }
+
+      .chart-icon {
+        width: 20px;
+        height: 20px;
+      }
+
+      .report-group-chart {
+        width: 100px;
+        height: 35px;
+        align-self: flex-end;
+      }
+
+      .report-group-cards {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+
       .reports-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(2, 1fr) !important;
         gap: 10px;
       }
 
       .report-card {
-        padding: 10px 8px;
+        padding: 14px 12px;
+        gap: 12px;
+        border-radius: 14px;
       }
 
       .report-card-title {
-        font-size: 13px;
-        margin-bottom: 6px;
+        font-size: 10px;
+        margin-bottom: 4px;
       }
 
       .product-item {
-        padding: 6px 6px;
-      }
-
-      .product-name {
-        font-size: 12px;
-      }
-
-      .product-revenue,
-      .product-revenue-large {
-        font-size: 13px;
-      }
-
-      .report-card-top-sold .product-item:first-child .product-revenue {
-        font-size: 15px;
-      }
-
-      .report-card-top-earning .product-item:first-child .product-revenue-large {
-        font-size: 17px;
-      }
-
-      .reports-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        padding: 10px;
         gap: 10px;
       }
 
-      .report-card {
-        padding: 12px 10px;
+      .product-rank {
+        width: 22px;
+        height: 22px;
+        font-size: 11px;
+      }
+
+      .product-name {
+        font-size: 13px;
+      }
+
+      .product-meta {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+      }
+
+      .product-quantity {
+        font-size: 11px;
+      }
+
+      .product-total {
+        font-size: 13px;
+      }
+
+      .product-total-emphasis {
+        font-size: 14px;
+      }
+
+      .reports-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
       }
 
       .sale-header {
@@ -2622,6 +6267,79 @@
         font-size: 14px;
       }
 
+      .table-number-occupied {
+        font-size: 18px;
+      }
+
+      .table-amount-occupied {
+        font-size: 11px;
+      }
+
+      .table-card-gradient {
+        padding: 8px 6px;
+      }
+
+      .date-header {
+        padding: 14px 16px;
+        border-radius: 12px;
+      }
+
+      .date-header > div {
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+      }
+
+      .date-title-wrapper {
+        width: 100%;
+      }
+
+      .date-icon {
+        width: 36px;
+        height: 36px;
+        font-size: 16px;
+      }
+
+      .date-title {
+        font-size: 15px;
+      }
+
+      .date-subtitle {
+        font-size: 12px;
+        flex-wrap: wrap;
+      }
+
+      .date-stats {
+        display: flex !important;
+        flex-direction: row !important;
+        width: auto;
+        justify-content: flex-end;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+
+      .date-stat-item {
+        align-items: center;
+        flex: 0 0 auto;
+        flex-direction: row !important;
+        padding: 8px 12px;
+        border-radius: 10px;
+        display: flex !important;
+      }
+
+      .date-stat-value {
+        font-size: 16px;
+      }
+
+      .date-stat-label {
+        font-size: 12px;
+      }
+
+      .date-stat-value {
+        font-size: 16px;
+      }
+
       .table-status {
         font-size: 6px;
         padding: 1px 3px;
@@ -2642,17 +6360,16 @@
   </style>
 </head>
 <body>
-  <div id="loader">
-    <div class="loader-spinner"></div>
-    <div class="loader-text">Yükleniyor...</div>
+  <div id="loader" class="admin-splash-screen">
+    <div class="splash-content">
+      <img src="logo.png" alt="MAKARA Logo" class="splash-logo" onerror="this.style.display='none';">
+      <h1 class="splash-main-text">MAKARA</h1>
+      <div class="splash-decorative-line"></div>
+      <p class="splash-subtitle-text">Admin Dashboard</p>
+    </div>
   </div>
 
   <div class="container">
-    <div class="header">
-      <h1>MAKARA Admin Dashboard</h1>
-      <p>Anlık Satış Detayları ve İstatistikler</p>
-    </div>
-
     <div id="loginSection" class="pin-section">
       <h2>PIN ile Giriş</h2>
       <input type="password" id="pinInput" class="pin-input" placeholder="PIN Girin" maxlength="10" autofocus>
@@ -2661,19 +6378,33 @@
     </div>
 
     <div id="dashboard" class="dashboard">
-      <div class="dashboard-header">
-        <h1 class="dashboard-title">Satış Detayları</h1>
-        <div style="display: flex; gap: 12px;">
-          <button onclick="loadSales()" class="refresh-btn">
-            <span>🔄</span>
-            <span>Yenile</span>
-          </button>
-          <button onclick="logout()" class="logout-btn">
-            <span>🚪</span>
-            <span>Çıkış</span>
-          </button>
+      <!-- Modern Navbar -->
+      <nav class="admin-navbar">
+        <div class="navbar-content">
+          <div class="navbar-brand">
+            <img src="logo.png" alt="MAKARA Logo" class="navbar-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <div class="navbar-logo" style="display: none;">M</div>
+            <div class="navbar-title-group">
+              <h1 class="navbar-title">MAKARA Admin Dashboard</h1>
+              <p class="navbar-subtitle">Anlık Satış Detayları ve İstatistikler</p>
+            </div>
+          </div>
+          <div class="navbar-actions">
+            <button onclick="loadSales()" class="refresh-btn">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/>
+              </svg>
+              <span>Yenile</span>
+            </button>
+            <button onclick="logout()" class="logout-btn">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"/>
+              </svg>
+              <span>Çıkış</span>
+            </button>
+          </div>
         </div>
-      </div>
+      </nav>
       
       <!-- Tab Butonları - En Üstte Modern ve Kurumsal -->
       <div class="tab-buttons-container">
@@ -2698,12 +6429,77 @@
             <div class="tab-btn-text">Masalar</div>
             <div class="tab-btn-indicator"></div>
           </button>
+          <button class="tab-btn" data-tab="cancels" onclick="setActiveTab('cancels')">
+            <div class="tab-btn-icon">❌</div>
+            <div class="tab-btn-text">İptaller</div>
+            <div class="tab-btn-indicator"></div>
+          </button>
+          <button class="tab-btn" data-tab="send-message" onclick="showSendMessageModal()">
+            <div class="tab-btn-icon">📢</div>
+            <div class="tab-btn-text">Mesaj Gönder</div>
+            <div class="tab-btn-indicator"></div>
+          </button>
         </div>
       </div>
       
       <div class="stats-grid" id="statsGrid"></div>
       
       <div id="salesContainer" style="min-height: 200px;"></div>
+      <div id="reportsContainer" style="min-height: 200px; display: none;"></div>
+      <div id="staffContainer" style="min-height: 200px; display: none;"></div>
+      <div id="tablesContainer" style="min-height: 200px; display: none;"></div>
+      <div id="cancelsContainer" style="min-height: 200px; display: none;"></div>
+    </div>
+  </div>
+
+  <!-- Mesaj Gönderme Modal -->
+  <div id="sendMessageModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 10000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px);" onclick="if(event.target === this) hideSendMessageModal()">
+    <div style="background: white; border-radius: 24px; width: 100%; max-width: 500px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 25px 70px rgba(0,0,0,0.4); animation: slideUp 0.3s ease;">
+      <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="margin: 0; font-size: 22px; font-weight: 900;">📢 Mesaj Gönder</h2>
+          <button onclick="hideSendMessageModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 36px; height: 36px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; transition: all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.3)';" onmouseout="this.style.background='rgba(255,255,255,0.2)';">×</button>
+        </div>
+      </div>
+      <div style="padding: 24px;">
+        <div style="margin-bottom: 20px;">
+          <label style="display: block; margin-bottom: 8px; font-size: 15px; color: #374151; font-weight: 700;">Mesaj İçeriği <span style="color: #ef4444;">*</span>:</label>
+          <textarea id="messageContentInput" placeholder="Tüm mobil personellere ve kasaya gönderilecek mesajı yazın..." style="width: 100%; min-height: 150px; padding: 14px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 15px; font-family: inherit; resize: vertical; outline: none;" onfocus="this.style.borderColor='#3b82f6';" onblur="this.style.borderColor='#e5e7eb';"></textarea>
+        </div>
+        <div style="background: #dbeafe; border: 2px solid #93c5fd; border-radius: 12px; padding: 16px; margin-bottom: 24px;">
+          <p style="margin: 0; font-size: 13px; color: #1e40af; font-weight: 600; line-height: 1.6;">
+            ℹ️ Bu mesaj tüm mobil personellere ve masaüstü uygulamaya anlık olarak gönderilecektir.
+          </p>
+        </div>
+      </div>
+      <div style="border-top: 1px solid #e5e7eb; padding: 20px; display: flex; justify-content: flex-end; gap: 12px; background: #f9fafb;">
+        <button onclick="hideSendMessageModal()" style="padding: 14px 28px; background: #f3f4f6; color: #374151; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">İptal</button>
+        <button id="sendMessageBtn" onclick="sendBroadcastMessage()" style="padding: 14px 28px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; border: none; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 140px;" onmouseover="if(!this.disabled) { this.style.transform='scale(1.02)'; this.style.boxShadow='0 6px 16px rgba(59, 130, 246, 0.4)'; }" onmouseout="if(!this.disabled) { this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(59, 130, 246, 0.3)'; }">
+          <span id="sendMessageBtnText">Gönder</span>
+          <svg id="sendMessageBtnSpinner" style="display: none; width: 18px; height: 18px; animation: spin 1s linear infinite;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analiz Modal -->
+  <div id="analysisModal" class="analysis-modal" style="display: none;">
+    <div class="analysis-modal-overlay" onclick="closeAnalysisModal()"></div>
+    <div class="analysis-modal-content">
+      <div class="analysis-modal-header">
+        <h2 class="analysis-modal-title">🔍 Satış Analizi</h2>
+        <button class="analysis-modal-close" onclick="closeAnalysisModal()">×</button>
+      </div>
+      <div class="analysis-modal-body">
+        <div id="analysisContent" class="analysis-content"></div>
+        <div id="analysisTypingIndicator" class="typing-indicator" style="display: none;">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      </div>
     </div>
   </div>
 </body>

@@ -44,6 +44,8 @@ function App() {
     setTimeout(() => setActiveRoleSplash(null), 1300);
   };
 
+  const [broadcastMessage, setBroadcastMessage] = useState(null);
+
   useEffect(() => {
     loadCategories();
     
@@ -66,6 +68,14 @@ function App() {
       window.electronAPI.onUpdateProgress((progress) => {
         setUpdateDownloadProgress(progress);
       });
+
+      // Broadcast message listener
+      if (window.electronAPI.onBroadcastMessage) {
+        const cleanup = window.electronAPI.onBroadcastMessage((data) => {
+          setBroadcastMessage(data);
+        });
+        return cleanup;
+      }
     }
   }, []);
 
@@ -760,7 +770,88 @@ function App() {
           }}
         />
       )}
-      </div>
+
+      {/* Broadcast Message Modal */}
+      {broadcastMessage && (
+        <div 
+          className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-[100] animate-fade-in p-4" 
+          onClick={() => setBroadcastMessage(null)}
+          style={{ animation: 'fadeIn 0.3s ease' }}
+        >
+          <div 
+            className="bg-gradient-to-br from-white to-slate-50 rounded-[32px] max-w-md w-full shadow-2xl overflow-hidden relative border border-white/20" 
+            onClick={(e) => e.stopPropagation()}
+            style={{ 
+              animation: 'slideUpScale 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+              boxShadow: '0 30px 80px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.1) inset'
+            }}
+          >
+            {/* Dekoratif arka plan efektleri */}
+            <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-purple-200/20 to-blue-200/20 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+            <div className="absolute bottom-0 left-0 w-40 h-40 bg-gradient-to-tr from-pink-200/20 to-purple-200/20 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+            
+            {/* Header */}
+            <div className="relative bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 text-white p-7 overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
+              <div className="relative z-10 flex items-center gap-4">
+                <div className="w-14 h-14 bg-white/25 backdrop-blur-md rounded-2xl flex items-center justify-center shadow-lg border border-white/30">
+                  <span className="text-3xl">📢</span>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-2xl font-black text-white mb-1 tracking-tight" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.2)' }}>
+                    Yeni Mesaj
+                  </h3>
+                  <p className="text-sm font-medium text-white/95">Yönetimden bildirim</p>
+                </div>
+              </div>
+            </div>
+            
+            {/* Content */}
+            <div className="relative z-10 p-7">
+              <div className="mb-5">
+                <p className="text-base font-medium text-gray-800 leading-relaxed whitespace-pre-wrap tracking-wide">
+                  {broadcastMessage.message}
+                </p>
+              </div>
+              <div className="bg-gradient-to-r from-slate-100 to-slate-50 border border-slate-200 rounded-2xl p-4 flex items-center justify-center gap-2">
+                <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p className="text-sm font-semibold text-slate-600">
+                  {broadcastMessage.date} {broadcastMessage.time}
+                </p>
+              </div>
+            </div>
+            
+            {/* Footer */}
+            <div className="relative z-10 border-t border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 flex justify-center">
+              <button
+                onClick={() => setBroadcastMessage(null)}
+                className="px-12 py-4 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 hover:from-indigo-700 hover:via-purple-700 hover:to-pink-600 text-white font-bold rounded-2xl transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 relative overflow-hidden group"
+                style={{
+                  boxShadow: '0 8px 20px rgba(102, 126, 234, 0.4)',
+                  letterSpacing: '0.3px'
+                }}
+              >
+                <span className="relative z-10">Anladım</span>
+                <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              </button>
+            </div>
+          </div>
+          
+          <style>{`
+            @keyframes fadeIn {
+              from { opacity: 0; }
+              to { opacity: 1; }
+            }
+            @keyframes slideUpScale {
+              from { transform: translateY(40px) scale(0.9); opacity: 0; }
+              to { transform: translateY(0) scale(1); opacity: 1; }
+            }
+          `}</style>
+        </div>
+      )}
+    </div>
     </>
   );
 }
