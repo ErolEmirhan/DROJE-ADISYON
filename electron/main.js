@@ -5480,25 +5480,6 @@ function generateMobileHTML(serverURL) {
       box-shadow: 0 20px 60px rgba(0,0,0,0.3); 
       min-height: calc(100vh - 20px);
     }
-    .header {
-      text-align: center;
-      margin-bottom: 4px;
-      padding-bottom: 6px;
-      border-bottom: 2px solid #e0e0e0;
-    }
-    .header h1 {
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      font-size: 24px;
-      margin-bottom: 2px;
-      font-weight: bold;
-    }
-    .header p {
-      color: #666;
-      font-size: 14px;
-    }
     .table-type-tabs {
       display: flex;
       gap: 10px;
@@ -5627,37 +5608,98 @@ function generateMobileHTML(serverURL) {
     }
     .category-tabs {
       display: flex;
-      gap: 10px;
-      overflow-x: auto;
+      flex-direction: column;
+      gap: 8px;
       padding-bottom: 8px;
+      max-height: 90px;
+      width: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
       -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
+      scrollbar-width: thin;
+      scrollbar-color: #a855f7 #f1f1f1;
     }
     .category-tabs::-webkit-scrollbar {
-      display: none;
+      height: 6px;
+    }
+    .category-tabs::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 10px;
+    }
+    .category-tabs::-webkit-scrollbar-thumb {
+      background: #a855f7;
+      border-radius: 10px;
+    }
+    .category-tabs::-webkit-scrollbar-thumb:hover {
+      background: #9333ea;
+    }
+    .category-tabs-row {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+      width: max-content;
+      min-width: 100%;
     }
     .category-tab {
-      padding: 12px 20px;
+      padding: 10px 16px;
       border: 2px solid #e5e7eb;
-      border-radius: 12px;
-      background: white;
-      font-size: 14px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
+      font-size: 13px;
       font-weight: 600;
       white-space: nowrap;
       cursor: pointer;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      color: #6b7280;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      color: #4b5563;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+      text-align: center;
+      flex-shrink: 0;
+      min-width: fit-content;
+      position: relative;
+      overflow: hidden;
+    }
+    .category-tab::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+      transition: left 0.5s;
+    }
+    .category-tab:hover::before {
+      left: 100%;
+    }
+    .category-tab:hover {
+      border-color: #d1d5db;
+      background: linear-gradient(135deg, #ffffff 0%, #f3f4f6 100%);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+      transform: translateY(-2px);
+      color: #374151;
     }
     .category-tab:active {
-      transform: scale(0.96);
+      transform: scale(0.97) translateY(0);
     }
     .category-tab.active {
-      border-color: #a855f7;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
-      color: white;
-      box-shadow: 0 4px 12px rgba(168, 85, 247, 0.3);
-      transform: translateY(-1px);
+      border-color: #fbcfe8;
+      background: linear-gradient(135deg, #fce7f3 0%, #fdf2f8 100%);
+      color: #ec4899;
+      box-shadow: 0 4px 16px rgba(236, 72, 153, 0.25), 0 2px 8px rgba(236, 72, 153, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      transform: translateY(-2px);
+      font-weight: 700;
+      position: relative;
+    }
+    .category-tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #f472b6 0%, #ec4899 50%, #f472b6 100%);
+      border-radius: 0 0 14px 14px;
+      box-shadow: 0 2px 8px rgba(236, 72, 153, 0.4);
     }
     .products-grid {
       display: grid;
@@ -5695,7 +5737,7 @@ function generateMobileHTML(serverURL) {
       background-repeat: no-repeat;
       cursor: pointer;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      box-shadow: 0 2px 8px rgba(236, 72, 153, 0.4), 0 1px 3px rgba(219, 39, 119, 0.3);
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -5710,12 +5752,12 @@ function generateMobileHTML(serverURL) {
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(0, 0, 0, 0.8);
+      background: linear-gradient(135deg, rgba(236, 72, 153, 0.85) 0%, rgba(219, 39, 119, 0.8) 50%, rgba(236, 72, 153, 0.85) 100%);
       z-index: 1;
     }
     .product-card:hover {
       border-color: rgba(255, 255, 255, 0.4);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      box-shadow: 0 4px 16px rgba(236, 72, 153, 0.5), 0 2px 8px rgba(219, 39, 119, 0.4);
       transform: translateY(-2px);
     }
     .product-card:active {
@@ -6651,11 +6693,6 @@ function generateMobileHTML(serverURL) {
 </head>
 <body>
   <div class="container">
-    <div class="header">
-      <h1>📱 MAKARA Mobil Sipariş</h1>
-      <p>Hızlı ve Kolay Sipariş Alma</p>
-    </div>
-    
     <!-- PIN Giriş Ekranı - Kurumsal ve Profesyonel -->
     <div id="pinSection" class="pin-section">
       <img src="${serverURL}/assets/login.png" alt="Login" class="login-image" onerror="this.style.display='none';">
@@ -6693,10 +6730,6 @@ function generateMobileHTML(serverURL) {
         </svg>
         <span>Çıkış Yap</span>
       </button>
-      
-      <div class="staff-info" id="staffInfo" style="display: none;">
-        <p>Garson: <span id="staffName"></span></p>
-      </div>
       
       <!-- Masa Tipi Seçim Ekranı -->
       <div id="tableTypeSelection" style="display: block; position: fixed; inset: 0; background: white; z-index: 1000; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px;">
@@ -6759,7 +6792,7 @@ function generateMobileHTML(serverURL) {
       </div>
       
       <div id="orderSection" style="display: none;">
-        <!-- En Üst: Kategoriler ve Arama -->
+        <!-- En Üst: Geri Dön Butonu, Kategoriler ve Arama -->
         <div style="position: sticky; top: 0; z-index: 100; background: white; padding: 15px 0; margin: -15px -15px 15px -15px; padding-left: 15px; padding-right: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-radius: 0 0 20px 20px;">
           <!-- Geri Dön Butonu -->
           <button class="back-btn" onclick="goBackToTables()" style="position: relative; top: 0; left: 0; margin-bottom: 12px; width: 100%; max-width: none; animation: none;">
@@ -6771,7 +6804,10 @@ function generateMobileHTML(serverURL) {
           
           <!-- Kategoriler -->
           <div style="margin-bottom: 12px;">
-            <div class="category-tabs" id="categoryTabs" style="gap: 10px; padding-bottom: 0;"></div>
+            <div class="category-tabs" id="categoryTabs">
+              <div class="category-tabs-row" id="categoryTabsRow1"></div>
+              <div class="category-tabs-row" id="categoryTabsRow2"></div>
+            </div>
           </div>
           
           <!-- Arama Çubuğu -->
@@ -7104,9 +7140,15 @@ function generateMobileHTML(serverURL) {
         currentStaff = savedStaff;
         document.getElementById('pinSection').style.display = 'none';
         document.getElementById('mainSection').style.display = 'block';
-        document.getElementById('staffName').textContent = currentStaff.name + ' ' + currentStaff.surname;
-        // İlk girişte staff-info'yu gizle, sadece çıkış yap butonu görünsün
-        document.getElementById('staffInfo').style.display = 'none';
+        // staffName ve staffInfo elementleri kaldırıldı, null kontrolü yap
+        const staffNameEl = document.getElementById('staffName');
+        if (staffNameEl) {
+          staffNameEl.textContent = currentStaff.name + ' ' + currentStaff.surname;
+        }
+        const staffInfoEl = document.getElementById('staffInfo');
+        if (staffInfoEl) {
+          staffInfoEl.style.display = 'none';
+        }
         document.getElementById('tableTypeSelection').style.display = 'flex';
         // Sipariş gönder modalını gizle
         document.getElementById('cart').style.display = 'none';
@@ -7150,14 +7192,20 @@ function generateMobileHTML(serverURL) {
           setTimeout(() => {
             document.getElementById('splashScreen').style.display = 'none';
             document.getElementById('mainSection').style.display = 'block';
-            document.getElementById('staffName').textContent = currentStaff.name + ' ' + currentStaff.surname;
-        // İlk girişte staff-info'yu gizle, sadece çıkış yap butonu görünsün
-        document.getElementById('staffInfo').style.display = 'none';
-        document.getElementById('tableTypeSelection').style.display = 'flex';
-        // Sipariş gönder modalını gizle
-        document.getElementById('cart').style.display = 'none';
-        loadData();
-        initWebSocket();
+            // staffName ve staffInfo elementleri kaldırıldı, null kontrolü yap
+            const staffNameEl = document.getElementById('staffName');
+            if (staffNameEl) {
+              staffNameEl.textContent = currentStaff.name + ' ' + currentStaff.surname;
+            }
+            const staffInfoEl = document.getElementById('staffInfo');
+            if (staffInfoEl) {
+              staffInfoEl.style.display = 'none';
+            }
+            document.getElementById('tableTypeSelection').style.display = 'flex';
+            // Sipariş gönder modalını gizle
+            document.getElementById('cart').style.display = 'none';
+            loadData();
+            initWebSocket();
           }, 2000);
         } else {
           errorDiv.textContent = result.error || 'Şifre hatalı';
@@ -7283,8 +7331,15 @@ function generateMobileHTML(serverURL) {
       currentTableType = type;
       document.getElementById('tableTypeSelection').style.display = 'none';
       document.getElementById('tableSelection').style.display = 'block';
-      document.getElementById('staffInfo').style.display = 'block';
-      document.getElementById('mainLogoutBtn').style.display = 'flex';
+      // staffInfo elementi kaldırıldı, null kontrolü yap
+      const staffInfoEl = document.getElementById('staffInfo');
+      if (staffInfoEl) {
+        staffInfoEl.style.display = 'block';
+      }
+      const mainLogoutBtn = document.getElementById('mainLogoutBtn');
+      if (mainLogoutBtn) {
+        mainLogoutBtn.style.display = 'flex';
+      }
       // Sipariş gönder modalını göster
       document.getElementById('cart').style.display = 'block';
       renderTables();
@@ -7294,8 +7349,15 @@ function generateMobileHTML(serverURL) {
     function goBackToTypeSelection() {
       document.getElementById('tableSelection').style.display = 'none';
       document.getElementById('tableTypeSelection').style.display = 'flex';
-      document.getElementById('staffInfo').style.display = 'none';
-      document.getElementById('mainLogoutBtn').style.display = 'none';
+      // staffInfo elementi kaldırıldı, null kontrolü yap
+      const staffInfoEl = document.getElementById('staffInfo');
+      if (staffInfoEl) {
+        staffInfoEl.style.display = 'none';
+      }
+      const mainLogoutBtn = document.getElementById('mainLogoutBtn');
+      if (mainLogoutBtn) {
+        mainLogoutBtn.style.display = 'none';
+      }
       // Sipariş gönder modalını gizle
       document.getElementById('cart').style.display = 'none';
       selectedTable = null;
@@ -7690,8 +7752,23 @@ function generateMobileHTML(serverURL) {
     }
     
     function renderCategories() {
-      const tabs = document.getElementById('categoryTabs');
-      tabs.innerHTML = categories.map(cat => 
+      const row1 = document.getElementById('categoryTabsRow1');
+      const row2 = document.getElementById('categoryTabsRow2');
+      if (!row1 || !row2) return;
+      
+      row1.innerHTML = '';
+      row2.innerHTML = '';
+      
+      // Kategorileri 2 satıra böl
+      const midPoint = Math.ceil(categories.length / 2);
+      const firstRow = categories.slice(0, midPoint);
+      const secondRow = categories.slice(midPoint);
+      
+      row1.innerHTML = firstRow.map(cat => 
+        '<button class="category-tab ' + (selectedCategoryId === cat.id ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')">' + cat.name + '</button>'
+      ).join('');
+      
+      row2.innerHTML = secondRow.map(cat => 
         '<button class="category-tab ' + (selectedCategoryId === cat.id ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')">' + cat.name + '</button>'
       ).join('');
     }
@@ -7851,7 +7928,7 @@ function generateMobileHTML(serverURL) {
         const cardStyle = isOutOfStock ? backgroundStyle + ' opacity: 0.6; cursor: not-allowed; pointer-events: none;' : backgroundStyle;
         
         // Kilit ikonu (sadece stok 0 olduğunda)
-        const lockIcon = isOutOfStock ? '<div style="position: absolute; top: 8px; left: 8px; background: rgba(0, 0, 0, 0.7); color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; z-index: 10; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);"><svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg></div>' : '';
+        const lockIcon = isOutOfStock ? '<div style="position: absolute; top: 8px; left: 8px; background: linear-gradient(135deg, rgba(252, 231, 243, 0.95) 0%, rgba(253, 242, 248, 0.9) 100%); color: #ec4899; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; z-index: 10; box-shadow: 0 2px 8px rgba(236, 72, 153, 0.25), 0 0 0 1px rgba(236, 72, 153, 0.1) inset;"><svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg></div>' : '';
         
         // Stok uyarı badge'i (0 ise "Kalmadı", 1-5 arası ise "X adet kaldı")
         let stockBadge = '';
