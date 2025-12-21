@@ -1655,28 +1655,27 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity, 
       // Açıklama var, işleme devam et - fiş yazdır
       cancelReason = cancelReason.trim();
       
-      // İptal fişi yazdır (sadece açıklama varsa)
-      try {
-        const now = new Date();
-        const cancelDate = now.toLocaleDateString('tr-TR');
-        const cancelTime = getFormattedTime(now);
+      // İptal fişi yazdır (sadece açıklama varsa) - arka planda
+      const now = new Date();
+      const cancelDate = now.toLocaleDateString('tr-TR');
+      const cancelTime = getFormattedTime(now);
 
-        const cancelReceiptData = {
-          tableName: order.table_name,
-          tableType: order.table_type,
-          productName: item.product_name,
-          quantity: quantityToCancel,
-          price: item.price,
-          cancelDate: cancelDate,
-          cancelTime: cancelTime,
-          categoryName: categoryName
-        };
+      const cancelReceiptData = {
+        tableName: order.table_name,
+        tableType: order.table_type,
+        productName: item.product_name,
+        quantity: quantityToCancel,
+        price: item.price,
+        cancelDate: cancelDate,
+        cancelTime: cancelTime,
+        categoryName: categoryName
+      };
 
-        await printCancelReceipt(assignment.printerName, assignment.printerType, cancelReceiptData);
-      } catch (error) {
+      // Yazıcıya gönderme işlemini arka planda yap (await kullanmadan)
+      printCancelReceipt(assignment.printerName, assignment.printerType, cancelReceiptData).catch(error => {
         console.error('İptal fişi yazdırma hatası:', error);
-        // Yazdırma hatası olsa bile iptal işlemini devam ettir
-      }
+        // Yazdırma hatası olsa bile iptal işlemi zaten tamamlandı
+      });
 
   // İptal edilecek tutarı hesapla (ikram değilse)
   const cancelAmount = item.isGift ? 0 : (item.price * quantityToCancel);
@@ -1702,46 +1701,46 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity, 
 
   saveDatabase();
 
-  // Firebase'e iptal kaydı ekle
+  // Firebase'e iptal kaydı ekle - arka planda
   if (firestore && firebaseCollection && firebaseAddDoc && firebaseServerTimestamp) {
-    try {
-      const now = new Date();
-      const cancelDate = now.toLocaleDateString('tr-TR');
-      const cancelTime = getFormattedTime(now);
-      
-      // Siparişi oluşturan garson bilgisini bul
-      const orderStaffName = order.staff_name || item.staff_name || null;
-      
-      // İptal eden personel bilgisi
-      const cancelStaff = staffId ? (db.staff || []).find(s => s.id === staffId) : null;
-      const cancelStaffName = cancelStaff ? `${cancelStaff.name} ${cancelStaff.surname}` : null;
-      const cancelStaffIsManager = cancelStaff ? (cancelStaff.is_manager || false) : false;
-      
-      const cancelRef = firebaseCollection(firestore, 'cancels');
-      await firebaseAddDoc(cancelRef, {
-        item_id: itemId,
-        order_id: order.id,
-        table_id: order.table_id,
-        table_name: order.table_name,
-        table_type: order.table_type,
-        product_id: item.product_id,
-        product_name: item.product_name,
-        quantity: quantityToCancel,
-        price: item.price,
-        cancel_reason: cancelReason,
-        cancel_date: cancelDate,
-        cancel_time: cancelTime,
-        staff_id: staffId || null,
-        staff_name: cancelStaffName,
-        staff_is_manager: cancelStaffIsManager,
-        order_staff_name: orderStaffName, // Siparişi oluşturan garson
-        source: 'desktop', // 'desktop' veya 'mobile'
-        created_at: firebaseServerTimestamp()
-      });
+    const now = new Date();
+    const cancelDate = now.toLocaleDateString('tr-TR');
+    const cancelTime = getFormattedTime(now);
+    
+    // Siparişi oluşturan garson bilgisini bul
+    const orderStaffName = order.staff_name || item.staff_name || null;
+    
+    // İptal eden personel bilgisi
+    const cancelStaff = staffId ? (db.staff || []).find(s => s.id === staffId) : null;
+    const cancelStaffName = cancelStaff ? `${cancelStaff.name} ${cancelStaff.surname}` : null;
+    const cancelStaffIsManager = cancelStaff ? (cancelStaff.is_manager || false) : false;
+    
+    const cancelRef = firebaseCollection(firestore, 'cancels');
+    // Firebase kaydetme işlemini arka planda yap (await kullanmadan)
+    firebaseAddDoc(cancelRef, {
+      item_id: itemId,
+      order_id: order.id,
+      table_id: order.table_id,
+      table_name: order.table_name,
+      table_type: order.table_type,
+      product_id: item.product_id,
+      product_name: item.product_name,
+      quantity: quantityToCancel,
+      price: item.price,
+      cancel_reason: cancelReason,
+      cancel_date: cancelDate,
+      cancel_time: cancelTime,
+      staff_id: staffId || null,
+      staff_name: cancelStaffName,
+      staff_is_manager: cancelStaffIsManager,
+      order_staff_name: orderStaffName, // Siparişi oluşturan garson
+      source: 'desktop', // 'desktop' veya 'mobile'
+      created_at: firebaseServerTimestamp()
+    }).then(() => {
       console.log('✅ İptal kaydı Firebase\'e başarıyla kaydedildi');
-    } catch (error) {
+    }).catch(error => {
       console.error('❌ Firebase\'e iptal kaydı kaydedilemedi:', error);
-    }
+    });
   }
 
   // Electron renderer process'e güncelleme gönder
@@ -2079,6 +2078,66 @@ ipcMain.handle('transfer-table-order', async (event, sourceTableId, targetTableI
   };
 });
 
+// Tüm masayı iptal et - hiçbir kayıt tutmadan, sanki hiç açılmamış gibi
+ipcMain.handle('cancel-entire-table-order', async (event, orderId) => {
+  const order = db.tableOrders.find(o => o.id === orderId);
+  if (!order) {
+    return { success: false, error: 'Sipariş bulunamadı' };
+  }
+
+  if (order.status !== 'pending') {
+    return { success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' };
+  }
+
+  const tableId = order.table_id;
+
+  // Tüm sipariş item'larını bul ve sil
+  const orderItems = db.tableOrderItems.filter(oi => oi.order_id === orderId);
+  
+  // Stok iadesi yapma - hiçbir şey değişmeyecek
+  // Fiş yazdırma - hiçbir şey yazdırılmayacak
+  // Firebase kaydı - hiçbir kayıt tutulmayacak
+  
+  // Sadece siparişi ve item'ları sil
+  const orderIndex = db.tableOrders.findIndex(o => o.id === orderId);
+  if (orderIndex !== -1) {
+    db.tableOrders.splice(orderIndex, 1);
+  }
+
+  // Tüm item'ları sil
+  orderItems.forEach(item => {
+    const itemIndex = db.tableOrderItems.findIndex(oi => oi.id === item.id);
+    if (itemIndex !== -1) {
+      db.tableOrderItems.splice(itemIndex, 1);
+    }
+  });
+
+  saveDatabase();
+
+  // Yeni Firebase'e masayı boş olarak kaydet (makaramasalar)
+  syncSingleTableToFirebase(tableId).catch(err => {
+    console.error('Masa Firebase kaydetme hatası:', err);
+  });
+
+  // Electron renderer process'e güncelleme gönder
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('table-order-updated', { 
+      orderId: orderId,
+      tableId: tableId
+    });
+  }
+
+  // Mobil personel arayüzüne gerçek zamanlı güncelleme gönder (masa artık boş)
+  if (io) {
+    io.emit('table-update', {
+      tableId: tableId,
+      hasOrder: false
+    });
+  }
+
+  return { success: true };
+});
+
 ipcMain.handle('complete-table-order', async (event, orderId, paymentMethod = 'Nakit') => {
   const order = db.tableOrders.find(o => o.id === orderId);
   if (!order) {
@@ -2206,6 +2265,22 @@ ipcMain.handle('complete-table-order', async (event, orderId, paymentMethod = 'N
     console.error('Masa Firebase kaydetme hatası:', err);
   });
 
+  // Electron renderer process'e güncelleme gönder
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('table-order-updated', { 
+      orderId: order.id,
+      tableId: order.table_id
+    });
+  }
+
+  // Mobil personel arayüzüne gerçek zamanlı güncelleme gönder (masa artık boş)
+  if (io) {
+    io.emit('table-update', {
+      tableId: order.table_id,
+      hasOrder: false
+    });
+  }
+
   return { success: true, saleId };
 });
 
@@ -2230,11 +2305,27 @@ ipcMain.handle('update-table-order-amount', async (event, orderId, paidAmount) =
     syncSingleTableToFirebase(order.table_id).catch(err => {
       console.error('Masa Firebase kaydetme hatası:', err);
     });
+    
+    // Mobil personel arayüzüne gerçek zamanlı güncelleme gönder (masa artık boş)
+    if (io) {
+      io.emit('table-update', {
+        tableId: order.table_id,
+        hasOrder: false
+      });
+    }
   } else {
     // Yeni Firebase'e masayı güncelle (makaramasalar)
     syncSingleTableToFirebase(order.table_id).catch(err => {
       console.error('Masa Firebase kaydetme hatası:', err);
     });
+    
+    // Mobil personel arayüzüne gerçek zamanlı güncelleme gönder (masa hala dolu)
+    if (io) {
+      io.emit('table-update', {
+        tableId: order.table_id,
+        hasOrder: true
+      });
+    }
   }
 
   saveDatabase();
@@ -2585,16 +2676,27 @@ ipcMain.handle('create-product', (event, productData) => {
     console.error('Firebase ürün kaydetme hatası:', err);
   });
   
-  // Eğer görsel varsa ve temp görsel ise (path'te temp_ varsa), görsel kaydını güncelle
-  if (image && image.includes('r2.dev') && image.includes('temp_')) {
-    updateTempImageRecordInFirebase(image, newProduct.id, newProduct.name, newProduct.category_id, newProduct.price).catch(err => {
-      console.error('Firebase temp görsel kaydı güncelleme hatası:', err);
-    });
-  } else if (image && (image.includes('r2.dev') || image.includes('r2.cloudflarestorage.com'))) {
-    // Normal görsel ise de kaydı güncelle/oluştur
-    updateImageRecordInFirebase(newProduct.id, image, newProduct.name, newProduct.category_id, newProduct.price).catch(err => {
-      console.error('Firebase görsel kaydı güncelleme hatası:', err);
-    });
+  // Eğer görsel varsa Firebase'e kaydet
+  if (image) {
+    // URL kontrolü (http veya https ile başlayan URL'ler)
+    const isUrl = image.startsWith('http://') || image.startsWith('https://');
+    
+    if (isUrl && image.includes('r2.dev') && image.includes('temp_')) {
+      // Temp görsel ise
+      updateTempImageRecordInFirebase(image, newProduct.id, newProduct.name, newProduct.category_id, newProduct.price).catch(err => {
+        console.error('Firebase temp görsel kaydı güncelleme hatası:', err);
+      });
+    } else if (isUrl) {
+      // Normal URL ise (R2 veya başka bir URL)
+      updateImageRecordInFirebase(newProduct.id, image, newProduct.name, newProduct.category_id, newProduct.price).catch(err => {
+        console.error('Firebase görsel kaydı güncelleme hatası:', err);
+      });
+    } else if (image.includes('r2.dev') || image.includes('r2.cloudflarestorage.com')) {
+      // R2 URL'i ama http/https ile başlamıyorsa (eski format)
+      updateImageRecordInFirebase(newProduct.id, image, newProduct.name, newProduct.category_id, newProduct.price).catch(err => {
+        console.error('Firebase görsel kaydı güncelleme hatası:', err);
+      });
+    }
   }
   
   return { success: true, product: newProduct };
@@ -2631,14 +2733,18 @@ ipcMain.handle('update-product', async (event, productData) => {
     console.error('Firebase ürün güncelleme hatası:', err);
   });
   
-  // Eğer görsel varsa ve R2'de ise, images koleksiyonunu güncelle
-  if (image && (image.includes('r2.dev') || image.includes('r2.cloudflarestorage.com'))) {
-    // Temp görsel ise (path'te temp_ varsa) özel işlem yap
-    if (image.includes('temp_')) {
+  // Eğer görsel varsa Firebase'e kaydet
+  if (image) {
+    // URL kontrolü (http veya https ile başlayan URL'ler)
+    const isUrl = image.startsWith('http://') || image.startsWith('https://');
+    
+    if (isUrl && image.includes('temp_')) {
+      // Temp görsel ise
       updateTempImageRecordInFirebase(image, id, name, category_id, parseFloat(price)).catch(err => {
         console.error('Firebase temp görsel kaydı güncelleme hatası:', err);
       });
-    } else {
+    } else if (isUrl || image.includes('r2.dev') || image.includes('r2.cloudflarestorage.com')) {
+      // Normal URL ise (R2 veya başka bir URL)
       updateImageRecordInFirebase(id, image, name, category_id, parseFloat(price)).catch(err => {
         console.error('Firebase görsel kaydı güncelleme hatası:', err);
       });
@@ -2736,6 +2842,143 @@ ipcMain.handle('toggle-product-stock-tracking', async (event, productId, trackSt
   }
   
   return { success: true, product: db.products[productIndex] };
+});
+
+// Mevcut tüm ürünler için Firebase'de image kaydı oluştur
+ipcMain.handle('create-image-records-for-all-products', async (event) => {
+  if (!firestore || !firebaseCollection || !firebaseGetDocs || !firebaseAddDoc || !firebaseServerTimestamp) {
+    return { success: false, error: 'Firebase başlatılamadı' };
+  }
+  
+  try {
+    console.log('🔄 Tüm ürünler için Firebase image kayıtları oluşturuluyor...');
+    
+    let createdCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
+    
+    // Mevcut images koleksiyonunu çek
+    const imagesRef = firebaseCollection(firestore, 'images');
+    const imagesSnapshot = await firebaseGetDocs(imagesRef);
+    
+    // Mevcut product_id'leri topla
+    const existingProductIds = new Set();
+    imagesSnapshot.forEach((doc) => {
+      const imageData = doc.data();
+      if (imageData.product_id) {
+        existingProductIds.add(imageData.product_id);
+      }
+    });
+    
+    // Tüm ürünleri işle
+    for (const product of db.products) {
+      // Eğer bu ürün için zaten image kaydı varsa atla
+      if (existingProductIds.has(product.id)) {
+        skippedCount++;
+        continue;
+      }
+      
+      // Eğer ürünün görseli yoksa atla
+      if (!product.image) {
+        skippedCount++;
+        continue;
+      }
+      
+      try {
+        // URL'den path'i çıkar
+        let filePath = '';
+        try {
+          if (product.image.includes('/images/')) {
+            const urlParts = product.image.split('/images/');
+            if (urlParts.length > 1) {
+              filePath = `images/${urlParts[1]}`;
+            }
+          } else {
+            const urlModule = require('url');
+            try {
+              const urlObj = new urlModule.URL(product.image);
+              filePath = urlObj.pathname.substring(1) || product.image;
+            } catch (urlError) {
+              filePath = product.image;
+            }
+          }
+        } catch (error) {
+          filePath = product.image;
+        }
+        
+        // Firebase'e kaydet
+        await firebaseAddDoc(imagesRef, {
+          product_id: product.id,
+          category_id: product.category_id || null,
+          product_name: product.name || null,
+          product_price: product.price || null,
+          url: product.image,
+          path: filePath || product.image,
+          uploaded_at: firebaseServerTimestamp(),
+          created_at: new Date().toISOString()
+        });
+        
+        createdCount++;
+        console.log(`✅ Image kaydı oluşturuldu: ${product.name} (ID: ${product.id})`);
+      } catch (error) {
+        errorCount++;
+        console.error(`❌ Image kaydı oluşturulamadı (${product.name}):`, error.message);
+      }
+    }
+    
+    console.log(`✅ Image kayıtları oluşturma tamamlandı: ${createdCount} oluşturuldu, ${skippedCount} atlandı, ${errorCount} hata`);
+    
+    return { 
+      success: true, 
+      created: createdCount, 
+      skipped: skippedCount, 
+      errors: errorCount 
+    };
+  } catch (error) {
+    console.error('❌ Image kayıtları oluşturma hatası:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Firebase'den images koleksiyonunu çek
+ipcMain.handle('get-firebase-images', async (event) => {
+  if (!firestore || !firebaseCollection || !firebaseGetDocs) {
+    return { success: false, error: 'Firebase başlatılamadı', images: [] };
+  }
+  
+  try {
+    const imagesRef = firebaseCollection(firestore, 'images');
+    const snapshot = await firebaseGetDocs(imagesRef);
+    
+    const images = [];
+    snapshot.forEach((doc) => {
+      const imageData = doc.data();
+      images.push({
+        id: doc.id,
+        product_id: imageData.product_id || null,
+        category_id: imageData.category_id || null,
+        product_name: imageData.product_name || null,
+        product_price: imageData.product_price || null,
+        url: imageData.url || '',
+        path: imageData.path || '',
+        uploaded_at: imageData.uploaded_at ? imageData.uploaded_at.toDate().toISOString() : null,
+        created_at: imageData.created_at || null
+      });
+    });
+    
+    // URL'e göre sırala
+    images.sort((a, b) => {
+      if (a.product_name && b.product_name) {
+        return a.product_name.localeCompare(b.product_name);
+      }
+      return (a.url || '').localeCompare(b.url || '');
+    });
+    
+    return { success: true, images };
+  } catch (error) {
+    console.error('❌ Firebase images çekme hatası:', error);
+    return { success: false, error: error.message, images: [] };
+  }
 });
 
 // Ürün stokunu getir (Firebase'den)
@@ -3041,30 +3284,39 @@ async function updateImageRecordInFirebase(productId, imageUrl, productName, cat
       // Kayıt yoksa yeni kayıt ekle
       // URL'den path'i çıkar
       let filePath = '';
-      if (imageUrl.includes('/images/')) {
-        const urlParts = imageUrl.split('/images/');
-        if (urlParts.length > 1) {
-          filePath = `images/${urlParts[1]}`;
+      try {
+        if (imageUrl.includes('/images/')) {
+          const urlParts = imageUrl.split('/images/');
+          if (urlParts.length > 1) {
+            filePath = `images/${urlParts[1]}`;
+          }
+        } else {
+          const urlModule = require('url');
+          try {
+            const urlObj = new urlModule.URL(imageUrl);
+            filePath = urlObj.pathname.substring(1) || imageUrl;
+          } catch (urlError) {
+            // URL parse edilemezse, URL'in kendisini path olarak kullan
+            filePath = imageUrl;
+          }
         }
-      } else {
-        const urlModule = require('url');
-        const urlObj = new urlModule.URL(imageUrl);
-        filePath = urlObj.pathname.substring(1);
+      } catch (error) {
+        // Hata durumunda URL'in kendisini path olarak kullan
+        filePath = imageUrl;
       }
       
-      if (filePath) {
-        await firebaseAddDoc(imagesRef, {
-          product_id: productId,
-          category_id: categoryId,
-          product_name: productName,
-          product_price: productPrice,
-          url: imageUrl,
-          path: filePath,
-          uploaded_at: firebaseServerTimestamp(),
-          created_at: new Date().toISOString()
-        });
-        console.log(`✅ Görsel kaydı Firebase'e eklendi - Ürün: ${productName}`);
-      }
+      // Path boş değilse kaydet
+      await firebaseAddDoc(imagesRef, {
+        product_id: productId,
+        category_id: categoryId,
+        product_name: productName,
+        product_price: productPrice,
+        url: imageUrl,
+        path: filePath || imageUrl,
+        uploaded_at: firebaseServerTimestamp(),
+        created_at: new Date().toISOString()
+      });
+      console.log(`✅ Görsel kaydı Firebase'e eklendi - Ürün: ${productName}`);
     }
   } catch (firebaseError) {
     console.warn('⚠️ Firebase görsel kaydı güncelleme hatası (devam ediliyor):', firebaseError.message);
@@ -3106,30 +3358,38 @@ async function updateTempImageRecordInFirebase(imageUrl, productId, productName,
     } else {
       // Temp görsel kaydı bulunamadıysa yeni kayıt oluştur
       let filePath = '';
-      if (imageUrl.includes('/images/')) {
-        const urlParts = imageUrl.split('/images/');
-        if (urlParts.length > 1) {
-          filePath = `images/${urlParts[1]}`;
+      try {
+        if (imageUrl.includes('/images/')) {
+          const urlParts = imageUrl.split('/images/');
+          if (urlParts.length > 1) {
+            filePath = `images/${urlParts[1]}`;
+          }
+        } else {
+          const urlModule = require('url');
+          try {
+            const urlObj = new urlModule.URL(imageUrl);
+            filePath = urlObj.pathname.substring(1) || imageUrl;
+          } catch (urlError) {
+            // URL parse edilemezse, URL'in kendisini path olarak kullan
+            filePath = imageUrl;
+          }
         }
-      } else {
-        const urlModule = require('url');
-        const urlObj = new urlModule.URL(imageUrl);
-        filePath = urlObj.pathname.substring(1);
+      } catch (error) {
+        // Hata durumunda URL'in kendisini path olarak kullan
+        filePath = imageUrl;
       }
       
-      if (filePath) {
-        await firebaseAddDoc(imagesRef, {
-          product_id: productId,
-          category_id: categoryId,
-          product_name: productName,
-          product_price: productPrice,
-          url: imageUrl,
-          path: filePath,
-          uploaded_at: firebaseServerTimestamp(),
-          created_at: new Date().toISOString()
-        });
-        console.log(`✅ Görsel kaydı Firebase'e eklendi - Ürün: ${productName} (ID: ${productId})`);
-      }
+      await firebaseAddDoc(imagesRef, {
+        product_id: productId,
+        category_id: categoryId,
+        product_name: productName,
+        product_price: productPrice,
+        url: imageUrl,
+        path: filePath || imageUrl,
+        uploaded_at: firebaseServerTimestamp(),
+        created_at: new Date().toISOString()
+      });
+      console.log(`✅ Görsel kaydı Firebase'e eklendi - Ürün: ${productName} (ID: ${productId})`);
     }
   } catch (firebaseError) {
     console.warn('⚠️ Firebase temp görsel kaydı güncelleme hatası (devam ediliyor):', firebaseError.message);
@@ -3931,8 +4191,8 @@ function generateProductionReceiptHTML(items, receiptData) {
     
     return `
       <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #ccc;">
-        <div style="display: flex; justify-content: space-between; font-weight: 900; font-style: italic; margin-bottom: 4px; font-family: 'Montserrat', sans-serif;">
-          <span>${item.name}</span>
+        <div style="display: flex; justify-content: space-between; font-weight: 900; font-style: italic; margin-bottom: 4px; font-family: 'Montserrat', sans-serif; color: #000 !important;">
+          <span style="color: #000 !important;">${item.name}</span>
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 10px; color: #000; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">
           <span>${item.quantity} adet</span>
@@ -4143,9 +4403,9 @@ function generateReceiptHTML(receiptData) {
     
     return `
       <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #ccc;">
-        <div style="display: flex; justify-content: space-between; font-weight: 900; font-style: italic; margin-bottom: 4px; font-family: 'Montserrat', sans-serif;">
-          <span>${item.name}</span>
-          <span>₺${itemTotal.toFixed(2)}</span>
+        <div style="display: flex; justify-content: space-between; font-weight: 900; font-style: italic; margin-bottom: 4px; font-family: 'Montserrat', sans-serif; color: #000 !important;">
+          <span style="color: #000 !important;">${item.name}</span>
+          <span style="color: #000 !important;">₺${itemTotal.toFixed(2)}</span>
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 10px; color: #000; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">
           <span>${item.quantity} adet × ₺${item.price.toFixed(2)}</span>
@@ -5901,9 +6161,8 @@ function generateMobileHTML(serverURL) {
     .category-tabs {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 10px;
       padding-bottom: 8px;
-      max-height: 90px;
       width: 100%;
       overflow-x: auto;
       overflow-y: hidden;
@@ -5927,17 +6186,18 @@ function generateMobileHTML(serverURL) {
     }
     .category-tabs-row {
       display: flex;
-      gap: 8px;
+      gap: 10px;
       flex-shrink: 0;
       width: max-content;
       min-width: 100%;
+      align-items: stretch;
     }
     .category-tab {
-      padding: 10px 16px;
+      padding: 16px 20px;
       border: 2px solid #e5e7eb;
       border-radius: 14px;
       background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 600;
       white-space: nowrap;
       cursor: pointer;
@@ -5947,6 +6207,10 @@ function generateMobileHTML(serverURL) {
       text-align: center;
       flex-shrink: 0;
       min-width: fit-content;
+      min-height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       position: relative;
       overflow: hidden;
     }
@@ -7084,16 +7348,18 @@ function generateMobileHTML(serverURL) {
       </div>
       
       <div id="orderSection" style="display: none;">
-        <!-- En Üst: Geri Dön Butonu, Kategoriler ve Arama -->
-        <div style="position: sticky; top: 0; z-index: 100; background: white; padding: 15px 0; margin: -15px -15px 15px -15px; padding-left: 15px; padding-right: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-radius: 0 0 20px 20px;">
-          <!-- Geri Dön Butonu -->
-          <button class="back-btn" onclick="goBackToTables()" style="position: relative; top: 0; left: 0; margin-bottom: 12px; width: 100%; max-width: none; animation: none;">
+        <!-- En Üst: Geri Dön Butonu -->
+        <div style="position: sticky; top: 0; z-index: 100; background: white; padding: 8px 15px 15px 15px; margin: -15px -15px 0 -15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-radius: 0 0 20px 20px;">
+          <button class="back-btn" onclick="goBackToTables()" style="position: relative; top: 0; left: 0; margin-bottom: 0; width: 100%; max-width: none; animation: none;">
             <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
             </svg>
             <span>Masalara Dön</span>
           </button>
-          
+        </div>
+        
+        <!-- Kategoriler ve Arama -->
+        <div style="position: sticky; top: 70px; z-index: 99; background: white; padding: 15px 0; margin: 0 -15px 15px -15px; padding-left: 15px; padding-right: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-radius: 0 0 20px 20px;">
           <!-- Kategoriler -->
           <div style="margin-bottom: 12px;">
             <div class="category-tabs" id="categoryTabs">
@@ -7248,6 +7514,35 @@ function generateMobileHTML(serverURL) {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
           </svg>
         </button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Türk Kahvesi Seçenek Modal -->
+  <div id="turkishCoffeeModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px);" onclick="if(event.target === this) hideTurkishCoffeeModal()">
+    <div style="background: white; border-radius: 24px; width: 100%; max-width: 420px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 25px 70px rgba(0,0,0,0.4); animation: slideUp 0.3s ease;">
+      <div style="background: linear-gradient(135deg, #92400e 0%, #78350f 100%); color: white; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="margin: 0; font-size: 22px; font-weight: 900;">Türk Kahvesi Seçimi</h2>
+          <button onclick="hideTurkishCoffeeModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 36px; height: 36px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; transition: all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.3)';" onmouseout="this.style.background='rgba(255,255,255,0.2)';">×</button>
+        </div>
+      </div>
+      <div style="padding: 24px;">
+        <p style="margin: 0 0 20px 0; font-size: 15px; color: #6b7280; font-weight: 600; text-align: center;">Lütfen Türk Kahvesi tercihinizi seçin:</p>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <button onclick="selectTurkishCoffeeOption('Sade')" class="turkish-coffee-option" style="padding: 18px 24px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 17px; font-weight: 700; color: #1f2937; cursor: pointer; transition: all 0.3s; text-align: center; display: flex; align-items: center; justify-content: center; gap: 12px;" onmouseover="this.style.background='linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)'; this.style.borderColor='#92400e'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 20px rgba(146, 64, 14, 0.15)';" onmouseout="this.style.background='linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'; this.style.borderColor='#e5e7eb'; this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            <span style="font-size: 24px;">☕</span>
+            <span>Sade</span>
+          </button>
+          <button onclick="selectTurkishCoffeeOption('Orta')" class="turkish-coffee-option" style="padding: 18px 24px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 17px; font-weight: 700; color: #1f2937; cursor: pointer; transition: all 0.3s; text-align: center; display: flex; align-items: center; justify-content: center; gap: 12px;" onmouseover="this.style.background='linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)'; this.style.borderColor='#92400e'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 20px rgba(146, 64, 14, 0.15)';" onmouseout="this.style.background='linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'; this.style.borderColor='#e5e7eb'; this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            <span style="font-size: 24px;">☕</span>
+            <span>Orta</span>
+          </button>
+          <button onclick="selectTurkishCoffeeOption('Şekerli')" class="turkish-coffee-option" style="padding: 18px 24px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 17px; font-weight: 700; color: #1f2937; cursor: pointer; transition: all 0.3s; text-align: center; display: flex; align-items: center; justify-content: center; gap: 12px;" onmouseover="this.style.background='linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)'; this.style.borderColor='#92400e'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 20px rgba(146, 64, 14, 0.15)';" onmouseout="this.style.background='linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'; this.style.borderColor='#e5e7eb'; this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            <span style="font-size: 24px;">☕</span>
+            <span>Şekerli</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -7523,36 +7818,36 @@ function generateMobileHTML(serverURL) {
         socket.on('connect', () => console.log('WebSocket bağlandı'));
         socket.on('table-update', async (data) => {
           console.log('📡 Masa güncellemesi alındı:', data);
-          // Masa verilerini API'den yeniden yükle (güncel durumu almak için)
-          try {
-            const tablesRes = await fetch(API_URL + '/tables');
-            if (tablesRes.ok) {
-              tables = await tablesRes.json();
-              renderTables();
-            } else {
-              // API hatası durumunda sadece mevcut veriyi güncelle
-              if (tables && tables.length > 0) {
-                const tableIndex = tables.findIndex(t => t.id === data.tableId);
-                if (tableIndex !== -1) {
-                  tables[tableIndex].hasOrder = data.hasOrder;
-                  renderTables();
-                }
+          // Önce anında UI'ı güncelle (optimistic update)
+          if (tables && tables.length > 0) {
+            const tableIndex = tables.findIndex(t => t.id === data.tableId);
+            if (tableIndex !== -1) {
+              tables[tableIndex].hasOrder = data.hasOrder;
+              renderTables(); // Anında render et
+            }
+          }
+          
+          // Arka planda API'den güncel veriyi yükle
+          fetch(API_URL + '/tables')
+            .then(tablesRes => {
+              if (tablesRes.ok) {
+                return tablesRes.json();
               }
-            }
-            // Eğer seçili masa varsa siparişleri yenile
-            if (selectedTable && selectedTable.id === data.tableId) {
-              await loadExistingOrders(selectedTable.id);
-            }
-          } catch (error) {
-            console.error('Masa güncelleme hatası:', error);
-            // Hata durumunda sadece mevcut veriyi güncelle
-            if (tables && tables.length > 0) {
-              const tableIndex = tables.findIndex(t => t.id === data.tableId);
-              if (tableIndex !== -1) {
-                tables[tableIndex].hasOrder = data.hasOrder;
+              return null;
+            })
+            .then(updatedTables => {
+              if (updatedTables) {
+                tables = updatedTables;
                 renderTables();
               }
-            }
+            })
+            .catch(error => {
+              console.error('Masa güncelleme hatası:', error);
+            });
+          
+          // Eğer seçili masa varsa siparişleri arka planda yenile
+          if (selectedTable && selectedTable.id === data.tableId) {
+            loadExistingOrders(selectedTable.id).catch(err => console.error('Sipariş yenileme hatası:', err));
           }
         });
         socket.on('new-order', async (data) => {
@@ -7773,6 +8068,11 @@ function generateMobileHTML(serverURL) {
       renderTables();
       document.getElementById('tableSelection').style.display = 'none';
       document.getElementById('orderSection').style.display = 'block';
+      // Çıkış Yap butonunu gizle
+      const mainLogoutBtn = document.getElementById('mainLogoutBtn');
+      if (mainLogoutBtn) {
+        mainLogoutBtn.style.display = 'none';
+      }
       // Cart her zaman görünür, sadece içeriği kapalı başlar
       const cartEl = document.getElementById('cart');
       if (cartEl) {
@@ -7860,16 +8160,27 @@ function generateMobileHTML(serverURL) {
     
     function goBackToTables() {
       selectedTable = null;
-      document.getElementById('tableSelection').style.display = 'block';
-      document.getElementById('tableTypeSelection').style.display = 'none';
+      document.getElementById('tableSelection').style.display = 'none';
+      document.getElementById('tableTypeSelection').style.display = 'flex';
       document.getElementById('orderSection').style.display = 'none';
       const cartEl = document.getElementById('cart');
       if (cartEl) {
         cartEl.style.display = 'none';
         cartEl.classList.remove('open');
       }
-      document.getElementById('searchInput').value = '';
-      renderTables();
+      const searchInputEl = document.getElementById('searchInput');
+      if (searchInputEl) {
+        searchInputEl.value = '';
+      }
+      // staffInfo elementi kaldırıldı, null kontrolü yap
+      const staffInfoEl = document.getElementById('staffInfo');
+      if (staffInfoEl) {
+        staffInfoEl.style.display = 'none';
+      }
+      const mainLogoutBtn = document.getElementById('mainLogoutBtn');
+      if (mainLogoutBtn) {
+        mainLogoutBtn.style.display = 'none';
+      }
     }
     
     // Masa Aktar Modal İşlemleri
@@ -8051,18 +8362,135 @@ function generateMobileHTML(serverURL) {
       row1.innerHTML = '';
       row2.innerHTML = '';
       
-      // Kategorileri 2 satıra böl
-      const midPoint = Math.ceil(categories.length / 2);
-      const firstRow = categories.slice(0, midPoint);
-      const secondRow = categories.slice(midPoint);
+      // Üst satır kategorileri (belirli sırayla)
+      const topRowCategoryNames = [
+        'Makaralar',
+        'Fransız Pastalar',
+        'Kruvasanlar',
+        'Sütlü Tatlılar ve Pastalar',
+        'Waffle'
+      ];
       
-      row1.innerHTML = firstRow.map(cat => 
-        '<button class="category-tab ' + (selectedCategoryId === cat.id ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')">' + cat.name + '</button>'
-      ).join('');
+      // Alt satır kategorileri (belirli sırayla)
+      const bottomRowCategoryNames = [
+        'Sıcak İçecekler',
+        'Soğuk İçecekler',
+        'Frozenlar',
+        'Milk Shakeler',
+        'Milkshakeler',
+        'Ekstra Çikolata'
+      ];
       
-      row2.innerHTML = secondRow.map(cat => 
-        '<button class="category-tab ' + (selectedCategoryId === cat.id ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')">' + cat.name + '</button>'
-      ).join('');
+      // Kategorileri isimlerine göre bul ve sırala (case-insensitive)
+      const topRowCategories = [];
+      const bottomRowCategories = [];
+      let otherCategories = [];
+      
+      // Milk Shakeler/Milkshakeler kategorisini önce bul (farklı yazımlar için)
+      const milkShakeCategory = categories.find(cat => {
+        const catNameLower = cat.name.toLowerCase().trim();
+        return catNameLower === 'milk shakeler' || catNameLower === 'milkshakeler' || (catNameLower.includes('milk') && catNameLower.includes('shake'));
+      });
+      
+      topRowCategoryNames.forEach(categoryName => {
+        const category = categories.find(cat => {
+          const catNameLower = cat.name.toLowerCase().trim();
+          const categoryNameLower = categoryName.toLowerCase().trim();
+          return catNameLower === categoryNameLower;
+        });
+        if (category) {
+          topRowCategories.push(category);
+        }
+      });
+      
+      bottomRowCategoryNames.forEach(categoryName => {
+        const category = categories.find(cat => {
+          const catNameLower = cat.name.toLowerCase().trim();
+          const categoryNameLower = categoryName.toLowerCase().trim();
+          return catNameLower === categoryNameLower;
+        });
+        if (category) {
+          bottomRowCategories.push(category);
+        }
+      });
+      
+      // Milk Shakeler'i alt satıra ekle (eğer orada yoksa)
+      if (milkShakeCategory) {
+        const alreadyInBottomRow = bottomRowCategories.find(cat => {
+          const catNameLower = cat.name.toLowerCase().trim();
+          return catNameLower === 'milk shakeler' || catNameLower === 'milkshakeler' || (catNameLower.includes('milk') && catNameLower.includes('shake'));
+        });
+        if (!alreadyInBottomRow) {
+          bottomRowCategories.push(milkShakeCategory);
+        }
+      }
+      
+      // Belirtilen kategorilerde olmayan diğer kategorileri ekle (case-insensitive)
+      // Milk Shakeler'i kesinlikle ekleme
+      const allSpecifiedNamesLower = [...topRowCategoryNames, ...bottomRowCategoryNames].map(name => name.toLowerCase().trim());
+      categories.forEach(cat => {
+        const catNameLower = cat.name.toLowerCase().trim();
+        // Milk Shakeler/Milkshakeler'i otherCategories'e ekleme
+        const isMilkShake = catNameLower === 'milk shakeler' || catNameLower === 'milkshakeler' || (catNameLower.includes('milk') && catNameLower.includes('shake'));
+        const isInTopRow = topRowCategories.some(tc => tc.id === cat.id);
+        const isInBottomRow = bottomRowCategories.some(bc => bc.id === cat.id);
+        
+        if (!allSpecifiedNamesLower.includes(catNameLower) && !isMilkShake && !isInTopRow && !isInBottomRow) {
+          otherCategories.push(cat);
+        }
+      });
+      
+      // Üst satıra diğer kategorileri de ekle (eğer yer varsa)
+      // Milk Shakeler'i üst satırdan kesinlikle çıkar
+      const firstRow = [...topRowCategories, ...otherCategories].filter(cat => {
+        const catNameLower = cat.name.toLowerCase().trim();
+        return catNameLower !== 'milk shakeler' && catNameLower !== 'milkshakeler' && !(catNameLower.includes('milk') && catNameLower.includes('shake'));
+      });
+      const secondRow = bottomRowCategories;
+      
+      // Soft pastel renk paleti (çeşitli renkler - flu tonlar)
+      const softColors = [
+        { bg: '#fef3c7', border: '#fde68a', text: '#92400e', hover: '#fef08a' }, // Soft Amber
+        { bg: '#fce7f3', border: '#fbcfe8', text: '#9f1239', hover: '#f9a8d4' }, // Soft Pink
+        { bg: '#e0e7ff', border: '#c7d2fe', text: '#3730a3', hover: '#a5b4fc' }, // Soft Indigo
+        { bg: '#d1fae5', border: '#a7f3d0', text: '#065f46', hover: '#6ee7b7' }, // Soft Emerald
+        { bg: '#e0f2fe', border: '#bae6fd', text: '#0c4a6e', hover: '#7dd3fc' }, // Soft Sky
+        { bg: '#f3e8ff', border: '#e9d5ff', text: '#6b21a8', hover: '#d8b4fe' }, // Soft Purple
+        { bg: '#fef2f2', border: '#fecaca', text: '#991b1b', hover: '#fca5a5' }, // Soft Rose
+        { bg: '#ecfdf5', border: '#d1fae5', text: '#065f46', hover: '#a7f3d0' }, // Soft Green
+        { bg: '#fef9c3', border: '#fef08a', text: '#854d0e', hover: '#fde047' }, // Soft Lime
+        { bg: '#f0f9ff', border: '#dbeafe', text: '#1e40af', hover: '#bfdbfe' }, // Soft Blue
+        { bg: '#fdf4ff', border: '#fae8ff', text: '#86198f', hover: '#f5d0fe' }, // Soft Fuchsia
+        { bg: '#fff7ed', border: '#fed7aa', text: '#9a3412', hover: '#fdba74' }, // Soft Orange
+        { bg: '#f0fdfa', border: '#ccfbf1', text: '#134e4a', hover: '#99f6e4' }, // Soft Teal
+        { bg: '#f5f3ff', border: '#e9d5ff', text: '#5b21b6', hover: '#ddd6fe' }, // Soft Violet
+        { bg: '#fefce8', border: '#fef08a', text: '#713f12', hover: '#fde047' }, // Soft Yellow
+        { bg: '#f0fdf4', border: '#dcfce7', text: '#166534', hover: '#bbf7d0' }, // Soft Mint
+        { bg: '#fef7ff', border: '#f3e8ff', text: '#7c2d12', hover: '#e9d5ff' }, // Soft Lavender
+        { bg: '#fff1f2', border: '#ffe4e6', text: '#881337', hover: '#fecdd3' }, // Soft Coral
+      ];
+      
+      // Kategori için renk seç (kategori ID'sine göre tutarlı renk)
+      const getCategoryColor = (categoryId) => {
+        const index = categoryId % softColors.length;
+        return softColors[index];
+      };
+      
+      row1.innerHTML = firstRow.map((cat, index) => {
+        const colors = getCategoryColor(cat.id);
+        const isActive = selectedCategoryId === cat.id;
+        const activeBg = colors.hover;
+        const activeBorder = colors.border;
+        return '<button class="category-tab ' + (isActive ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')" style="background: ' + (isActive ? activeBg : colors.bg) + '; border-color: ' + (isActive ? activeBorder : colors.border) + '; color: ' + colors.text + '; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-weight: ' + (isActive ? '700' : '600') + ';" onmouseover="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.hover + '\\'; this.style.transform=\\'translateY(-2px)\\'; }" onmouseout="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.bg + '\\'; this.style.transform=\\'translateY(0)\\'; }">' + cat.name + '</button>';
+      }).join('');
+      
+      row2.innerHTML = secondRow.map((cat, index) => {
+        const colors = getCategoryColor(cat.id);
+        const isActive = selectedCategoryId === cat.id;
+        const activeBg = colors.hover;
+        const activeBorder = colors.border;
+        return '<button class="category-tab ' + (isActive ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')" style="background: ' + (isActive ? activeBg : colors.bg) + '; border-color: ' + (isActive ? activeBorder : colors.border) + '; color: ' + colors.text + '; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-weight: ' + (isActive ? '700' : '600') + ';" onmouseover="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.hover + '\\'; this.style.transform=\\'translateY(-2px)\\'; }" onmouseout="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.bg + '\\'; this.style.transform=\\'translateY(0)\\'; }">' + cat.name + '</button>';
+      }).join('');
     }
     
     function selectCategory(categoryId) {
@@ -8216,7 +8644,9 @@ function generateMobileHTML(serverURL) {
         const stock = trackStock && prod.stock !== undefined ? (prod.stock || 0) : null;
         const isOutOfStock = trackStock && stock !== null && stock === 0;
         const isLowStock = trackStock && stock !== null && stock > 0 && stock <= 5;
-        const onClickHandler = isOutOfStock ? '' : 'onclick="addToCart(' + prod.id + ', \\'' + prod.name.replace(/'/g, "\\'") + '\\', ' + prod.price + ')"';
+        // Türk Kahvesi için özel modal açma
+        const isTurkishCoffee = prod.name.toLowerCase().includes('türk kahvesi') || prod.name.toLowerCase().includes('turk kahvesi');
+        const onClickHandler = isOutOfStock ? '' : (isTurkishCoffee ? 'onclick="showTurkishCoffeeModal(' + prod.id + ', \\'' + prod.name.replace(/'/g, "\\'") + '\\', ' + prod.price + ')"' : 'onclick="addToCart(' + prod.id + ', \\'' + prod.name.replace(/'/g, "\\'") + '\\', ' + prod.price + ')"');
         const cardStyle = isOutOfStock ? backgroundStyle + ' opacity: 0.6; cursor: not-allowed; pointer-events: none;' : backgroundStyle;
         
         // Kilit ikonu (sadece stok 0 olduğunda)
@@ -8275,6 +8705,66 @@ function generateMobileHTML(serverURL) {
       }
     }
     
+    // Türk Kahvesi Modal Fonksiyonları
+    let pendingTurkishCoffeeProduct = null;
+    
+    function showTurkishCoffeeModal(productId, name, price) {
+      pendingTurkishCoffeeProduct = { id: productId, name: name, price: price };
+      document.getElementById('turkishCoffeeModal').style.display = 'flex';
+    }
+    
+    function hideTurkishCoffeeModal() {
+      document.getElementById('turkishCoffeeModal').style.display = 'none';
+      pendingTurkishCoffeeProduct = null;
+    }
+    
+    function selectTurkishCoffeeOption(option) {
+      if (!pendingTurkishCoffeeProduct) {
+        hideTurkishCoffeeModal();
+        return;
+      }
+      
+      // Stok kontrolü
+      const product = products.find(p => p.id === pendingTurkishCoffeeProduct.id);
+      if (product) {
+        const trackStock = product.trackStock === true;
+        const stock = trackStock && product.stock !== undefined ? (product.stock || 0) : null;
+        const isOutOfStock = trackStock && stock !== null && stock === 0;
+        
+        if (isOutOfStock) {
+          showToast('error', 'Stok Yok', pendingTurkishCoffeeProduct.name + ' için stok kalmadı');
+          hideTurkishCoffeeModal();
+          return;
+        }
+      }
+      
+      // Ürün ismini seçeneğe göre güncelle: "Sade Türk Kahvesi", "Orta Türk Kahvesi", "Şekerli Türk Kahvesi"
+      const productName = option + ' Türk Kahvesi';
+      
+      const existing = cart.find(item => item.id === pendingTurkishCoffeeProduct.id && item.name === productName);
+      if (existing) {
+        existing.quantity++;
+      } else {
+        cart.push({ 
+          id: pendingTurkishCoffeeProduct.id, 
+          name: productName, 
+          price: pendingTurkishCoffeeProduct.price, 
+          quantity: 1 
+        });
+      }
+      
+      updateCart();
+      hideTurkishCoffeeModal();
+      
+      // Arama input'unu temizle ve ürünleri yeniden render et
+      const searchInputEl = document.getElementById('searchInput');
+      if (searchInputEl) {
+        searchInputEl.value = '';
+        searchQuery = '';
+        renderProducts();
+      }
+    }
+    
     function addToCart(productId, name, price) {
       // Stok kontrolü
       const product = products.find(p => p.id === productId);
@@ -8293,6 +8783,15 @@ function generateMobileHTML(serverURL) {
       if (existing) existing.quantity++;
       else cart.push({ id: productId, name, price, quantity: 1 });
       updateCart();
+      
+      // Arama input'unu temizle ve ürünleri yeniden render et
+      const searchInputEl = document.getElementById('searchInput');
+      if (searchInputEl) {
+        searchInputEl.value = '';
+        searchQuery = '';
+        renderProducts();
+      }
+      
       // Sepeti otomatik açma - kullanıcı manuel olarak açacak
     }
     
@@ -8609,7 +9108,13 @@ function generateMobileHTML(serverURL) {
     function showCancelReasonModal() {
       document.getElementById('cancelReasonModal').style.display = 'flex';
       document.getElementById('cancelReasonInput').value = '';
-      document.getElementById('cancelReasonInput').focus();
+      // Focus'u geciktirerek donma sorununu çöz
+      setTimeout(() => {
+        const input = document.getElementById('cancelReasonInput');
+        if (input) {
+          input.focus();
+        }
+      }, 100);
     }
     
     function hideCancelReasonModal() {
@@ -8630,67 +9135,70 @@ function generateMobileHTML(serverURL) {
         return;
       }
       
-      const confirmBtn = document.getElementById('confirmCancelReasonBtn');
-      const confirmBtnText = document.getElementById('confirmCancelReasonBtnText');
-      const confirmBtnSpinner = document.getElementById('confirmCancelReasonBtnSpinner');
+      // Modalı hemen kapat ve UI'ı anında güncelle
+      hideCancelReasonModal();
       
-      if (confirmBtn) {
-        confirmBtn.disabled = true;
-        if (confirmBtnText) confirmBtnText.textContent = 'Kaydediliyor...';
-        if (confirmBtnSpinner) confirmBtnSpinner.style.display = 'block';
+      // Ürünü anında UI'dan kaldır (optimistic update)
+      const cancelBtn = document.getElementById('cancelBtn_' + pendingCancelItemId);
+      if (cancelBtn) {
+        const orderItem = cancelBtn.closest('.order-item');
+        if (orderItem) {
+          orderItem.style.opacity = '0.5';
+          orderItem.style.transition = 'opacity 0.3s';
+          setTimeout(() => {
+            orderItem.style.display = 'none';
+          }, 300);
+        }
       }
       
-      try {
-        const response = await fetch(API_URL + '/cancel-table-order-item', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            itemId: pendingCancelItemId,
-            cancelQuantity: pendingCancelQuantity,
-            staffId: currentStaff ? currentStaff.id : null,
-            cancelReason: cancelReason
-          })
-        });
-        
-        const result = await response.json();
-        
+      // Arka planda kaydet (await kullanmadan)
+      fetch(API_URL + '/cancel-table-order-item', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          itemId: pendingCancelItemId,
+          cancelQuantity: pendingCancelQuantity,
+          staffId: currentStaff ? currentStaff.id : null,
+          cancelReason: cancelReason
+        })
+      })
+      .then(response => response.json())
+      .then(result => {
         if (result.success) {
-          showToast('success', 'Başarılı', 'Ürün başarıyla iptal edildi');
-          hideCancelReasonModal();
-          
-          // Siparişleri yenile
+          // Siparişleri arka planda yenile
           if (selectedTable) {
-            await loadExistingOrders(selectedTable.id);
-          }
-          
-          // Buton durumunu resetle
-          if (confirmBtn) {
-            confirmBtn.disabled = false;
-            if (confirmBtnText) confirmBtnText.textContent = 'Tamamla';
-            if (confirmBtnSpinner) confirmBtnSpinner.style.display = 'none';
+            loadExistingOrders(selectedTable.id).catch(err => console.error('Sipariş yenileme hatası:', err));
           }
         } else {
-          showToast('error', 'Hata', result.error || 'İptal açıklaması kaydedilemedi');
-          if (confirmBtn) {
-            confirmBtn.disabled = false;
-            if (confirmBtnText) confirmBtnText.textContent = 'Tamamla';
-            if (confirmBtnSpinner) confirmBtnSpinner.style.display = 'none';
+          // Hata durumunda UI'ı geri yükle
+          if (cancelBtn) {
+            const orderItem = cancelBtn.closest('.order-item');
+            if (orderItem) {
+              orderItem.style.display = '';
+              orderItem.style.opacity = '1';
+            }
+          }
+          showToast('error', 'Hata', result.error || 'Ürün iptal edilemedi');
+        }
+      })
+      .catch(error => {
+        console.error('İptal işlemi hatası:', error);
+        // Hata durumunda UI'ı geri yükle
+        if (cancelBtn) {
+          const orderItem = cancelBtn.closest('.order-item');
+          if (orderItem) {
+            orderItem.style.display = '';
+            orderItem.style.opacity = '1';
           }
         }
-      } catch (error) {
-        console.error('İptal açıklaması kaydetme hatası:', error);
-        showToast('error', 'Hata', 'İptal açıklaması kaydedilirken bir hata oluştu');
-        if (confirmBtn) {
-          confirmBtn.disabled = false;
-          if (confirmBtnText) confirmBtnText.textContent = 'Tamamla';
-          if (confirmBtnSpinner) confirmBtnSpinner.style.display = 'none';
-        }
-      } finally {
-        pendingCancelItemId = null;
-        pendingCancelQuantity = null;
-      }
+        showToast('error', 'Hata', 'İptal işlemi sırasında bir hata oluştu');
+      });
+      
+      // Pending değişkenlerini temizle
+      pendingCancelItemId = null;
+      pendingCancelQuantity = null;
     }
     
     // Yayın Mesajı Fonksiyonları
@@ -9394,28 +9902,27 @@ function startAPIServer() {
       // Açıklama var, işleme devam et - fiş yazdır
       cancelReason = cancelReason.trim();
       
-      // İptal fişi yazdır (sadece açıklama varsa)
-      try {
-        const now = new Date();
-        const cancelDate = now.toLocaleDateString('tr-TR');
-        const cancelTime = getFormattedTime(now);
+      // İptal fişi yazdır (sadece açıklama varsa) - arka planda
+      const now = new Date();
+      const cancelDate = now.toLocaleDateString('tr-TR');
+      const cancelTime = getFormattedTime(now);
 
-        const cancelReceiptData = {
-          tableName: order.table_name,
-          tableType: order.table_type,
-          productName: item.product_name,
-          quantity: quantityToCancel,
-          price: item.price,
-          cancelDate: cancelDate,
-          cancelTime: cancelTime,
-          categoryName: categoryName
-        };
+      const cancelReceiptData = {
+        tableName: order.table_name,
+        tableType: order.table_type,
+        productName: item.product_name,
+        quantity: quantityToCancel,
+        price: item.price,
+        cancelDate: cancelDate,
+        cancelTime: cancelTime,
+        categoryName: categoryName
+      };
 
-        await printCancelReceipt(assignment.printerName, assignment.printerType, cancelReceiptData);
-      } catch (error) {
+      // Yazıcıya gönderme işlemini arka planda yap (await kullanmadan)
+      printCancelReceipt(assignment.printerName, assignment.printerType, cancelReceiptData).catch(error => {
         console.error('İptal fişi yazdırma hatası:', error);
-        // Yazdırma hatası olsa bile iptal işlemini devam ettir
-      }
+        // Yazdırma hatası olsa bile iptal işlemi zaten tamamlandı
+      });
 
       // İptal edilecek tutarı hesapla (ikram değilse)
       const cancelAmount = item.isGift ? 0 : (item.price * quantityToCancel);
@@ -9450,46 +9957,46 @@ function startAPIServer() {
 
       saveDatabase();
 
-      // Firebase'e iptal kaydı ekle
+      // Firebase'e iptal kaydı ekle - arka planda
       if (firestore && firebaseCollection && firebaseAddDoc && firebaseServerTimestamp) {
-        try {
-          const now = new Date();
-          const cancelDate = now.toLocaleDateString('tr-TR');
-          const cancelTime = getFormattedTime(now);
-          
-          // Siparişi oluşturan garson bilgisini bul
-          const orderStaffName = order.staff_name || item.staff_name || null;
-          
-          // İptal eden personel bilgisi
-          const cancelStaff = staffId ? (db.staff || []).find(s => s.id === staffId) : null;
-          const cancelStaffName = cancelStaff ? `${cancelStaff.name} ${cancelStaff.surname}` : null;
-          const cancelStaffIsManager = cancelStaff ? (cancelStaff.is_manager || false) : false;
-          
-          const cancelRef = firebaseCollection(firestore, 'cancels');
-          await firebaseAddDoc(cancelRef, {
-            item_id: itemId,
-            order_id: order.id,
-            table_id: order.table_id,
-            table_name: order.table_name,
-            table_type: order.table_type,
-            product_id: item.product_id,
-            product_name: item.product_name,
-            quantity: quantityToCancel,
-            price: item.price,
-            cancel_reason: cancelReason,
-            cancel_date: cancelDate,
-            cancel_time: cancelTime,
-            staff_id: staffId || null,
-            staff_name: cancelStaffName,
-            staff_is_manager: cancelStaffIsManager,
-            order_staff_name: orderStaffName, // Siparişi oluşturan garson
-            source: 'mobile', // 'desktop' veya 'mobile'
-            created_at: firebaseServerTimestamp()
-          });
+        const now = new Date();
+        const cancelDate = now.toLocaleDateString('tr-TR');
+        const cancelTime = getFormattedTime(now);
+        
+        // Siparişi oluşturan garson bilgisini bul
+        const orderStaffName = order.staff_name || item.staff_name || null;
+        
+        // İptal eden personel bilgisi
+        const cancelStaff = staffId ? (db.staff || []).find(s => s.id === staffId) : null;
+        const cancelStaffName = cancelStaff ? `${cancelStaff.name} ${cancelStaff.surname}` : null;
+        const cancelStaffIsManager = cancelStaff ? (cancelStaff.is_manager || false) : false;
+        
+        const cancelRef = firebaseCollection(firestore, 'cancels');
+        // Firebase kaydetme işlemini arka planda yap (await kullanmadan)
+        firebaseAddDoc(cancelRef, {
+          item_id: itemId,
+          order_id: order.id,
+          table_id: order.table_id,
+          table_name: order.table_name,
+          table_type: order.table_type,
+          product_id: item.product_id,
+          product_name: item.product_name,
+          quantity: quantityToCancel,
+          price: item.price,
+          cancel_reason: cancelReason,
+          cancel_date: cancelDate,
+          cancel_time: cancelTime,
+          staff_id: staffId || null,
+          staff_name: cancelStaffName,
+          staff_is_manager: cancelStaffIsManager,
+          order_staff_name: orderStaffName, // Siparişi oluşturan garson
+          source: 'mobile', // 'desktop' veya 'mobile'
+          created_at: firebaseServerTimestamp()
+        }).then(() => {
           console.log('✅ İptal kaydı Firebase\'e başarıyla kaydedildi');
-        } catch (error) {
+        }).catch(error => {
           console.error('❌ Firebase\'e iptal kaydı kaydedilemedi:', error);
-        }
+        });
       }
 
       // Mobil personel arayüzüne gerçek zamanlı güncelleme gönder

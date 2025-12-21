@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 
-const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPayment, onRequestAdisyon, onAddItems, onItemCancelled }) => {
+const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPayment, onRequestAdisyon, onAddItems, onItemCancelled, onCancelEntireTable }) => {
   const [sessionDuration, setSessionDuration] = useState('');
   const [selectedItemDetail, setSelectedItemDetail] = useState(null);
   const [cancellingItemId, setCancellingItemId] = useState(null);
@@ -12,6 +12,8 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
   const [cancelReason, setCancelReason] = useState('');
   const [pendingCancelItemId, setPendingCancelItemId] = useState(null);
   const [pendingCancelQuantity, setPendingCancelQuantity] = useState(null);
+  const [showCancelEntireTableModal, setShowCancelEntireTableModal] = useState(false);
+  const [cancellingEntireTable, setCancellingEntireTable] = useState(false);
 
   if (!order) return null;
 
@@ -250,64 +252,81 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
-      <div className="bg-white backdrop-blur-xl border border-purple-200 rounded-3xl p-8 max-w-5xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-3xl font-bold gradient-text">Masa Sipariş Detayları</h2>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 transition-colors p-2 hover:bg-gray-100 rounded-lg"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
+      <div className="bg-white border border-gray-200 rounded-xl p-8 max-w-7xl w-full mx-6 shadow-[0_20px_60px_-12px_rgba(0,0,0,0.25)] max-h-[95vh] overflow-y-auto">
+        {/* Header Section - Corporate Design */}
+        <div className="mb-8 pb-6 border-b border-gray-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="w-12 h-12 bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg flex items-center justify-center shadow-sm">
+                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
+                  Sipariş Detayları
+                </h2>
+                <p className="text-sm text-gray-500 mt-0.5">Masa: {order.table_name} • {order.table_type === 'inside' ? 'İç Masa' : 'Dış Masa'}</p>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-10 h-10 bg-gray-50 hover:bg-gray-100 border border-gray-200 hover:border-gray-300 text-gray-500 hover:text-gray-700 transition-all duration-200 p-2 rounded-lg flex items-center justify-center"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <div className="space-y-6">
-          {/* Masa Bilgileri */}
-          <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-2xl p-6 border border-purple-200">
-            <div className="grid grid-cols-3 gap-4">
+          {/* Masa Bilgileri - Corporate Card */}
+          <div className="bg-gray-50/50 rounded-lg p-5 border border-gray-200">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-5">
               <div>
-                <p className="text-sm text-gray-500 mb-1">Masa</p>
-                <p className="text-xl font-bold text-gray-800">{order.table_name}</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Masa</p>
+                <p className="text-base font-bold text-gray-900">{order.table_name}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-500 mb-1">Masa Tipi</p>
-                <p className="text-xl font-bold text-gray-800">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Tip</p>
+                <p className="text-base font-bold text-gray-900">
                   {order.table_type === 'inside' ? 'İç Masa' : 'Dış Masa'}
                 </p>
               </div>
               <div>
-                <p className="text-sm text-gray-500 mb-1">Sipariş Tarihi</p>
-                <p className="text-lg font-semibold text-gray-800">{order.order_date}</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Tarih</p>
+                <p className="text-sm font-semibold text-gray-800">{order.order_date}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-500 mb-1">Sipariş Saati</p>
-                <p className="text-lg font-semibold text-gray-800">{order.order_time}</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Saat</p>
+                <p className="text-sm font-semibold text-gray-800">{order.order_time}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-500 mb-1">Oturum Süresi</p>
-                <p className="text-lg font-semibold text-blue-600">{sessionDuration}</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Süre</p>
+                <p className="text-sm font-bold text-gray-900">{sessionDuration}</p>
               </div>
               {order.staff_name && (
                 <div>
-                  <p className="text-sm text-gray-500 mb-1">Sipariş Alan Garson</p>
-                  <p className="text-lg font-semibold text-purple-600 flex items-center space-x-2">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                    <span>{order.staff_name}</span>
-                  </p>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Garson</p>
+                  <p className="text-sm font-semibold text-gray-800">{order.staff_name}</p>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Ürünler */}
+          {/* Ürünler - Corporate Grid Layout */}
           <div>
-            <h3 className="text-xl font-bold mb-4 gradient-text">Ürünler</h3>
-            <div className="space-y-3">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
+              <div className="flex items-center space-x-2">
+                <h3 className="text-lg font-bold text-gray-900">Sipariş Ürünleri</h3>
+                <span className="px-2.5 py-0.5 bg-gray-100 text-gray-600 text-xs font-semibold rounded-full">
+                  {groupedItems.length}
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[450px] overflow-y-auto pr-2">
               {groupedItems.map((item) => {
                 const isGift = item.isGift || false;
                 const isPaid = item.is_paid || false;
@@ -321,214 +340,202 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                 return (
                 <div
                   key={`${item.product_id}_${item.isGift || false}`}
-                  className={`flex items-center justify-between p-4 rounded-xl border-2 transition-all ${
+                  className={`bg-white rounded-lg border p-4 transition-all shadow-sm hover:shadow-md ${
                     isPaid
-                      ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-300'
+                      ? 'bg-green-50/50 border-green-200'
                       : isGift
-                      ? 'bg-gradient-to-r from-yellow-50 to-amber-50 border-yellow-300 opacity-75'
-                      : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                      ? 'bg-amber-50/50 border-amber-200'
+                      : 'border-gray-200 hover:border-gray-300'
                   }`}
                 >
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-2 mb-1">
-                      {isPaid && (
-                        <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
-                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                        </div>
-                      )}
-                      {paidQuantity > 0 && !isPaid && (
-                        <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center flex-shrink-0">
-                          <span className="text-white text-xs font-bold">{paidQuantity}/{item.quantity}</span>
-                        </div>
-                      )}
-                      <p className={`font-semibold ${
-                        isPaid ? 'text-green-700 line-through' : isGift ? 'text-gray-500 line-through' : 'text-gray-800'
-                      }`}>
-                        {item.product_name}
-                      </p>
-                      {isGift && (
-                        <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded">
-                          İKRAM
-                        </span>
-                      )}
-                    </div>
-                    {paidQuantity > 0 && paymentMethod && (
-                      <p className={`text-xs mt-1 ${
-                        isPaid ? 'text-green-600' : 'text-blue-600'
-                      }`}>
-                        ✅ {paidQuantity} adet {paymentMethod} ile ödendi
-                        {!isPaid && ` (Kalan: ${remainingQuantity} adet)`}
-                      </p>
-                    )}
-                    <p className="text-sm text-gray-500">
-                      {item.quantity} adet × {isGift ? (
-                        <>
-                          <span className="line-through text-gray-400">₺{item.price.toFixed(2)}</span>
-                          <span className="text-green-600 font-semibold ml-1">₺0.00</span>
-                        </>
-                      ) : (
-                        `₺${item.price.toFixed(2)}`
-                      )}
-                      {paidQuantity > 0 && !isPaid && (
-                        <span className="ml-2 text-blue-600 font-semibold text-xs">
-                          (Ödenen: {paidQuantity} adet)
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex items-center space-x-4">
-                  <div className="text-right">
-                    {isGift ? (
-                      <div>
-                        <p className="text-xs text-gray-400 line-through">₺{originalTotal.toFixed(2)}</p>
-                        <p className="font-bold text-lg text-green-600">₺0.00</p>
-                      </div>
-                    ) : isPaid ? (
-                      <p className="font-bold text-lg text-green-600 line-through">
-                        ₺{displayTotal.toFixed(2)}
-                      </p>
-                    ) : paidQuantity > 0 ? (
-                      <div>
-                        <p className="text-xs text-gray-400 line-through">₺{displayTotal.toFixed(2)}</p>
-                        <p className="font-bold text-lg text-blue-600">
-                          ₺{paidTotal.toFixed(2)} / ₺{displayTotal.toFixed(2)}
-                        </p>
-                      </div>
-                    ) : (
-                      <p className="font-bold text-lg text-purple-600">
-                        ₺{displayTotal.toFixed(2)}
-                      </p>
-                    )}
-                    </div>
-                    <button
-                      onClick={() => setSelectedItemDetail(item)}
-                      className="p-2 hover:bg-purple-100 rounded-lg transition-colors text-purple-600 hover:text-purple-700"
-                      title="Sipariş Detayı"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                    {order.status === 'pending' && (
-                      <button
-                        onClick={() => handleCancelItem(item)}
-                        disabled={cancellingItemId === item.id}
-                        className="p-2 hover:bg-red-100 rounded-lg transition-colors text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="Ürünü İptal Et"
-                      >
-                        {cancellingItemId === item.id ? (
-                          <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                          </svg>
-                        ) : (
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0 pr-3">
+                      <div className="flex items-center space-x-2.5 mb-3">
+                        {isPaid && (
+                          <div className="w-6 h-6 rounded-full bg-green-600 flex items-center justify-center flex-shrink-0 shadow-sm">
+                            <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
                         )}
-                      </button>
-                    )}
+                        {paidQuantity > 0 && !isPaid && (
+                          <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0 shadow-sm">
+                            <span className="text-white text-xs font-bold">{paidQuantity}/{item.quantity}</span>
+                          </div>
+                        )}
+                        <p className={`text-base font-semibold leading-snug text-gray-900 ${
+                          isPaid ? 'line-through text-green-700' : isGift ? 'line-through text-gray-500' : ''
+                        }`}>
+                          {item.product_name}
+                        </p>
+                        {isGift && (
+                          <span className="text-[10px] font-bold text-white bg-amber-600 px-2 py-0.5 rounded uppercase tracking-wide">
+                            İKRAM
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-baseline space-x-2 mb-2">
+                        <p className="text-lg font-bold text-gray-900">
+                          {item.quantity}
+                        </p>
+                        <p className="text-sm text-gray-500 font-medium">adet</p>
+                        <p className="text-sm text-gray-400">×</p>
+                        {isGift ? (
+                          <>
+                            <span className="line-through text-gray-400 text-sm font-medium">₺{item.price.toFixed(2)}</span>
+                            <span className="text-green-700 font-bold text-base ml-1">₺0.00</span>
+                          </>
+                        ) : (
+                          <p className="text-base font-semibold text-gray-800">₺{item.price.toFixed(2)}</p>
+                        )}
+                      </div>
+                      {paidQuantity > 0 && paymentMethod && (
+                        <p className={`text-xs font-medium mt-1.5 px-2 py-1 rounded ${
+                          isPaid ? 'text-green-800 bg-green-100' : 'text-blue-800 bg-blue-100'
+                        }`}>
+                          {paidQuantity} adet {paymentMethod} ile ödendi
+                          {!isPaid && ` • ${remainingQuantity} adet kaldı`}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-col items-end space-y-3 flex-shrink-0">
+                      <div className="text-right">
+                        {isGift ? (
+                          <p className="font-bold text-lg text-green-700">₺0.00</p>
+                        ) : isPaid ? (
+                          <p className="font-bold text-lg text-green-700 line-through">₺{displayTotal.toFixed(2)}</p>
+                        ) : paidQuantity > 0 ? (
+                          <div>
+                            <p className="font-bold text-lg text-blue-700">₺{paidTotal.toFixed(2)}</p>
+                            <p className="text-xs text-gray-400 line-through font-medium">₺{displayTotal.toFixed(2)}</p>
+                          </div>
+                        ) : (
+                          <p className="font-bold text-lg text-gray-900">₺{displayTotal.toFixed(2)}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-1.5">
+                        <button
+                          onClick={() => setSelectedItemDetail(item)}
+                          className="w-8 h-8 bg-gray-50 hover:bg-gray-100 border border-gray-200 hover:border-gray-300 rounded-lg text-gray-600 hover:text-gray-800 transition-all p-1.5 flex items-center justify-center"
+                          title="Detay"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+                        {order.status === 'pending' && (
+                          <button
+                            onClick={() => handleCancelItem(item)}
+                            disabled={cancellingItemId === item.id}
+                            className="w-8 h-8 bg-red-50 hover:bg-red-100 border border-red-200 hover:border-red-300 rounded-lg text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all p-1.5 flex items-center justify-center"
+                            title="İptal"
+                          >
+                            {cancellingItemId === item.id ? (
+                              <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )})}
             </div>
           </div>
 
-          {/* Toplam ve Kısmi Ödeme Bilgileri */}
-          <div className="border-t border-purple-200 pt-6 space-y-4">
-            {/* Ödenen Kısmi Ödeme */}
+          {/* Toplam ve Kısmi Ödeme Bilgileri - Corporate */}
+          <div className="bg-gray-50/50 rounded-lg p-6 border border-gray-200 space-y-4">
             {paidAmount > 0.01 && (
-              <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
-                <p className="text-sm text-gray-600 mb-1">Ödenen Kısmi Ödeme</p>
-                <p className="text-xl font-bold text-green-600">
-                  ₺{paidAmount.toFixed(2)}
-                </p>
+              <div className="flex justify-between items-center bg-green-50/50 rounded-lg p-4 border border-green-200">
+                <span className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Ödenen Tutar</span>
+                <span className="text-lg font-bold text-green-700">₺{paidAmount.toFixed(2)}</span>
               </div>
             )}
-
-            {/* Toplam Tutar (Başlangıç) */}
-            <div className="flex justify-between items-center">
-              <span className="text-xl font-semibold text-gray-700">Toplam Tutar</span>
-              <span className={`text-3xl font-bold ${
-                paidAmount > 0.01 
-                  ? 'text-gray-400 line-through' 
-                  : 'bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent'
+            <div className="flex justify-between items-center py-2">
+              <span className="text-base font-semibold text-gray-700 uppercase tracking-wide">Toplam Tutar</span>
+              <span className={`text-2xl font-bold ${
+                paidAmount > 0.01 ? 'text-gray-400 line-through' : 'text-gray-900'
               }`}>
                 ₺{originalTotalAmount.toFixed(2)}
               </span>
             </div>
-
-            {/* Kalan Tutar */}
             {paidAmount > 0.01 && (
-              <div className="flex justify-between items-center pt-2 border-t border-purple-200">
-                <span className="text-xl font-semibold text-orange-600">Kalan Tutar</span>
-                <span className="text-3xl font-bold text-orange-600">
-                  ₺{remainingAmount.toFixed(2)}
-                </span>
+              <div className="flex justify-between items-center pt-3 border-t border-gray-300">
+                <span className="text-base font-semibold text-orange-700 uppercase tracking-wide">Kalan Tutar</span>
+                <span className="text-2xl font-bold text-orange-700">₺{remainingAmount.toFixed(2)}</span>
               </div>
             )}
           </div>
 
-          {/* Masayı Sonlandır ve Kısmi Ödeme Butonları */}
+          {/* Masayı Sonlandır ve Kısmi Ödeme Butonları - Corporate */}
           {order.status === 'pending' && (
-            <div className="flex items-center justify-center gap-4 pt-4 flex-wrap">
-              <button
-                onClick={onRequestAdisyon}
-                className="px-6 py-4 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-lg rounded-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95"
-              >
-                <div className="flex items-center space-x-2">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <button
+                  onClick={onRequestAdisyon}
+                  className="px-5 py-3.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-sm rounded-lg transition-all duration-200 flex items-center justify-center space-x-2 shadow-sm hover:shadow-md"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
-                  <span>Adisyon İste</span>
-                </div>
-              </button>
-              <button
-                onClick={onPartialPayment}
-                className="px-6 py-4 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold text-lg rounded-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95"
-              >
-                <div className="flex items-center space-x-2">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <span>Adisyon</span>
+                </button>
+                <button
+                  onClick={onPartialPayment}
+                  className="px-5 py-3.5 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-sm rounded-lg transition-all duration-200 flex items-center justify-center space-x-2 shadow-sm hover:shadow-md"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  <span>Kısmi Ödeme Al</span>
-                </div>
-              </button>
-              <button
-                onClick={onAddItems}
-                className="px-6 py-4 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white font-bold text-lg rounded-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95"
-              >
-                <div className="flex items-center space-x-2">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <span>Kısmi Ödeme</span>
+                </button>
+                <button
+                  onClick={onAddItems}
+                  className="px-5 py-3.5 bg-green-600 hover:bg-green-700 text-white font-semibold text-sm rounded-lg transition-all duration-200 flex items-center justify-center space-x-2 shadow-sm hover:shadow-md"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                   </svg>
                   <span>Sipariş Ekle</span>
-                </div>
-              </button>
-              <button
-                onClick={onCompleteTable}
-                className="px-6 py-4 bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white font-bold text-lg rounded-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 active:scale-95"
-              >
-                <div className="flex items-center space-x-2">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                </button>
+                <button
+                  onClick={onCompleteTable}
+                  className="px-5 py-3.5 bg-red-600 hover:bg-red-700 text-white font-semibold text-sm rounded-lg transition-all duration-200 flex items-center justify-center space-x-2 shadow-sm hover:shadow-md"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  <span>Masayı Sonlandır</span>
-                </div>
+                  <span>Sonlandır</span>
+                </button>
+              </div>
+              {/* Tüm Masayı İptal Et Butonu */}
+              <button
+                onClick={() => setShowCancelEntireTableModal(true)}
+                className="w-full px-5 py-3.5 bg-gray-800 hover:bg-gray-900 text-white font-semibold text-sm rounded-lg transition-all duration-200 flex items-center justify-center space-x-2 shadow-sm hover:shadow-md border border-gray-700"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                <span>Tüm Masayı İptal Et</span>
               </button>
             </div>
           )}
 
-          {/* Durum */}
+          {/* Durum - Corporate Badge */}
           {order.status !== 'pending' && (
-            <div className="flex items-center justify-center">
-              <span className={`px-4 py-2 rounded-full font-semibold ${
+            <div className="flex items-center justify-center pt-2">
+              <span className={`px-5 py-2.5 rounded-lg font-semibold text-sm uppercase tracking-wide border ${
                 order.status === 'completed'
-                  ? 'bg-green-100 text-green-800'
-                  : 'bg-red-100 text-red-800'
+                  ? 'bg-green-50 text-green-800 border-green-200'
+                  : 'bg-red-50 text-red-800 border-red-200'
               }`}>
-                {order.status === 'completed' ? 'Tamamlandı' : 'İptal Edildi'}
+                {order.status === 'completed' ? '✓ Tamamlandı' : '✗ İptal Edildi'}
               </span>
             </div>
           )}
@@ -850,6 +857,95 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
                     <span>Tamamla</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tüm Masayı İptal Et Onay Modal - Elite Corporate Design */}
+      {showCancelEntireTableModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] animate-fade-in" onClick={() => !cancellingEntireTable && setShowCancelEntireTableModal(false)}>
+          <div className="bg-white rounded-2xl p-10 max-w-lg w-full mx-6 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)] border border-gray-200" onClick={(e) => e.stopPropagation()}>
+            {/* Icon */}
+            <div className="flex items-center justify-center mb-8">
+              <div className="w-20 h-20 bg-gray-50 rounded-2xl flex items-center justify-center border-2 border-gray-200">
+                <svg className="w-10 h-10 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+            </div>
+            
+            {/* Content */}
+            <div className="text-center mb-8">
+              <h3 className="text-2xl font-bold text-gray-900 mb-3 tracking-tight">
+                Tüm Masayı İptal Et
+              </h3>
+              <p className="text-sm text-gray-600 leading-relaxed mb-6">
+                Bu işlem geri alınamaz. Sipariş, sanki hiç açılmamış gibi tamamen silinecektir.
+              </p>
+              
+              {/* Masa Bilgisi */}
+              <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">İptal Edilecek Masa</p>
+                <p className="text-lg font-bold text-gray-900">{order.table_name}</p>
+                <p className="text-xs text-gray-500 mt-1">{order.table_type === 'inside' ? 'İç Masa' : 'Dış Masa'}</p>
+              </div>
+            </div>
+
+            {/* Butonlar */}
+            <div className="flex items-center justify-center gap-3 pt-4 border-t border-gray-200">
+              <button
+                onClick={() => setShowCancelEntireTableModal(false)}
+                disabled={cancellingEntireTable}
+                className="px-8 py-3 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-sm rounded-lg transition-all duration-200 border-2 border-gray-300 hover:border-gray-400 disabled:opacity-50 disabled:cursor-not-allowed min-w-[120px]"
+              >
+                Vazgeç
+              </button>
+              <button
+                onClick={async () => {
+                  if (!window.electronAPI || !window.electronAPI.cancelEntireTableOrder) {
+                    alert('İptal işlemi şu anda kullanılamıyor');
+                    return;
+                  }
+
+                  setCancellingEntireTable(true);
+                  try {
+                    const result = await window.electronAPI.cancelEntireTableOrder(order.id);
+                    if (result.success) {
+                      setShowCancelEntireTableModal(false);
+                      if (onCancelEntireTable) {
+                        onCancelEntireTable();
+                      }
+                      onClose();
+                    } else {
+                      alert(result.error || 'Masayı iptal ederken bir hata oluştu');
+                      setCancellingEntireTable(false);
+                    }
+                  } catch (error) {
+                    console.error('Masayı iptal etme hatası:', error);
+                    alert('Masayı iptal ederken bir hata oluştu');
+                    setCancellingEntireTable(false);
+                  }
+                }}
+                disabled={cancellingEntireTable}
+                className="px-8 py-3 bg-gray-900 hover:bg-gray-800 text-white font-semibold text-sm rounded-lg transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 min-w-[140px]"
+              >
+                {cancellingEntireTable ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span>İptal Ediliyor...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    <span>İptal Et</span>
                   </>
                 )}
               </button>

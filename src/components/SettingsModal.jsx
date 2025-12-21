@@ -49,6 +49,10 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [isOptimizingImages, setIsOptimizingImages] = useState(false);
   const [lastOptimizeResult, setLastOptimizeResult] = useState(null);
+  const [showFirebaseImageModal, setShowFirebaseImageModal] = useState(false);
+  const [firebaseImages, setFirebaseImages] = useState([]);
+  const [isLoadingFirebaseImages, setIsLoadingFirebaseImages] = useState(false);
+  const [isCreatingImageRecords, setIsCreatingImageRecords] = useState(false);
   
 
   useEffect(() => {
@@ -1042,9 +1046,9 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                         <input
                           type="text"
                           value={productForm.image}
-                          readOnly
-                          className="flex-1 px-4 py-2 rounded-xl border-2 border-gray-200 bg-gray-50"
-                          placeholder="Görsel seçilmedi"
+                          onChange={(e) => setProductForm({ ...productForm, image: e.target.value })}
+                          className="flex-1 px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-purple-500 focus:outline-none"
+                          placeholder="Görsel URL'si girin veya dosya seçin"
                         />
                         <button
                           type="button"
@@ -1071,6 +1075,28 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                         >
                           📁 Dosya Seç
                         </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setIsLoadingFirebaseImages(true);
+                            setShowFirebaseImageModal(true);
+                            try {
+                              const result = await window.electronAPI.getFirebaseImages();
+                              if (result.success) {
+                                setFirebaseImages(result.images || []);
+                              } else {
+                                alert('Firebase görselleri yüklenemedi: ' + (result.error || 'Bilinmeyen hata'));
+                              }
+                            } catch (error) {
+                              alert('Firebase görselleri yükleme hatası: ' + error.message);
+                            } finally {
+                              setIsLoadingFirebaseImages(false);
+                            }
+                          }}
+                          className="px-6 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-xl font-medium hover:shadow-lg transform hover:scale-105 transition-all whitespace-nowrap"
+                        >
+                          🔥 Firebase'den Seç
+                        </button>
                         {productForm.image && (
                           <button
                             type="button"
@@ -1081,6 +1107,9 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                           </button>
                         )}
                       </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        💡 Görsel URL'si girebilir, dosya seçebilir veya Firebase'den seçebilirsiniz. URL girildiğinde otomatik olarak Firebase'e kaydedilir.
+                      </p>
                       {productForm.image && (
                         <div className="mt-2">
                           <img 
@@ -1114,6 +1143,45 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                     )}
                   </div>
                 </form>
+              </div>
+
+              {/* Firebase Image Records Button */}
+              <div className="mb-6">
+                <button
+                  onClick={async () => {
+                    if (!window.confirm(
+                      'Tüm mevcut ürünler için Firebase\'de image kayıtları oluşturulacak.\n\n' +
+                      'Bu işlem sadece görseli olan ve henüz Firebase\'de kaydı olmayan ürünler için çalışır.\n\n' +
+                      'Devam etmek istiyor musunuz?'
+                    )) {
+                      return;
+                    }
+                    
+                    try {
+                      setIsCreatingImageRecords(true);
+                      const result = await window.electronAPI.createImageRecordsForAllProducts();
+                      if (result.success) {
+                        alert(
+                          `✅ Image kayıtları oluşturuldu!\n\n` +
+                          `Oluşturulan: ${result.created}\n` +
+                          `Atlanan: ${result.skipped}\n` +
+                          `Hata: ${result.errors}`
+                        );
+                      } else {
+                        alert('Image kayıtları oluşturulamadı: ' + (result.error || 'Bilinmeyen hata'));
+                      }
+                    } catch (error) {
+                      console.error('Image kayıtları oluşturma hatası:', error);
+                      alert('Image kayıtları oluşturma hatası: ' + error.message);
+                    } finally {
+                      setIsCreatingImageRecords(false);
+                    }
+                  }}
+                  disabled={isCreatingImageRecords}
+                  className="w-full px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl font-semibold hover:shadow-lg transform hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isCreatingImageRecords ? '🔄 Oluşturuluyor...' : '🔥 Tüm Ürünler İçin Firebase Image Kayıtları Oluştur'}
+                </button>
               </div>
 
               {/* Product List */}
@@ -2023,6 +2091,99 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                   </svg>
                   <span>Sil</span>
                 </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Firebase Image Selection Modal */}
+      {showFirebaseImageModal && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-lg flex items-center justify-center z-[1000] animate-fade-in px-4">
+          <div className="bg-white rounded-3xl p-8 w-full max-w-4xl shadow-2xl transform animate-scale-in relative overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 via-indigo-500 to-blue-500"></div>
+            
+            <button
+              onClick={() => {
+                setShowFirebaseImageModal(false);
+                setFirebaseImages([]);
+              }}
+              className="absolute top-6 right-6 w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+            >
+              <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+                <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-800 mb-2">Firebase'den Görsel Seç</h3>
+              <p className="text-gray-600">Firebase'de kayıtlı görsellerden birini seçin</p>
+            </div>
+
+            <div className="flex-1 overflow-y-auto scrollbar-custom mb-6">
+              {isLoadingFirebaseImages ? (
+                <div className="text-center py-12">
+                  <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                  <p className="mt-4 text-gray-600">Görseller yükleniyor...</p>
+                </div>
+              ) : firebaseImages.length === 0 ? (
+                <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                  <svg className="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <p className="text-gray-500 font-medium">Firebase'de görsel bulunamadı</p>
+                  <p className="text-sm text-gray-400 mt-2">Firebase'de görsel eklemek için URL girebilirsiniz</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {firebaseImages.map((image) => (
+                    <div
+                      key={image.id}
+                      onClick={() => {
+                        setProductForm({ ...productForm, image: image.url });
+                        setShowFirebaseImageModal(false);
+                        setFirebaseImages([]);
+                      }}
+                      className="bg-white rounded-xl border-2 border-gray-200 hover:border-blue-500 cursor-pointer transition-all hover:shadow-lg overflow-hidden group"
+                    >
+                      <div className="aspect-square bg-gray-100 relative overflow-hidden">
+                        <img
+                          src={image.url}
+                          alt={image.product_name || 'Görsel'}
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.parentElement.innerHTML = '<div class="w-full h-full flex items-center justify-center text-gray-400">Görsel yüklenemedi</div>';
+                          }}
+                        />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all"></div>
+                      </div>
+                      <div className="p-3">
+                        {image.product_name && (
+                          <p className="text-sm font-semibold text-gray-800 truncate">{image.product_name}</p>
+                        )}
+                        <p className="text-xs text-gray-500 truncate mt-1">{image.url}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 pt-4 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setShowFirebaseImageModal(false);
+                  setFirebaseImages([]);
+                }}
+                className="flex-1 px-4 py-3 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 transition-all font-medium"
+              >
+                İptal
               </button>
             </div>
           </div>

@@ -187,7 +187,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
         </div>
         <div>
           <h1 className="text-lg font-bold text-pink-500">Makara Satış Sistemi</h1>
-          <p className="text-xs text-gray-500 font-medium">v2.3.7</p>
+          <p className="text-xs text-gray-500 font-medium">v2.3.9</p>
         </div>
         <div className="ml-4 pl-4 border-l border-gray-300">
           <DateTimeDisplay />
@@ -440,251 +440,330 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
         />
       )}
 
-      {/* Mobil Personel Modal */}
+      {/* Mobil Personel Modal - Elite Corporate Design */}
       {showMobileModal && createPortal(
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-lg flex items-center justify-center z-[1000] animate-fade-in px-4">
-          <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl transform animate-scale-in relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 via-cyan-500 to-blue-500"></div>
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[1000] animate-fade-in px-4 py-8">
+          <div className="bg-white rounded-3xl w-full max-w-7xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)] transform animate-scale-in relative overflow-hidden border border-gray-200 max-h-[90vh] flex flex-col">
+            {/* Premium Top Border */}
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-600 via-cyan-500 to-blue-600"></div>
             
+            {/* Close Button - Elite */}
             <button
               onClick={() => {
                 setShowMobileModal(false);
                 setQrCode(null);
                 setServerURL('');
               }}
-              className="absolute top-6 right-6 w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+              className="absolute top-6 right-6 w-10 h-10 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center transition-all duration-200 border border-gray-200 hover:border-gray-300 shadow-sm hover:shadow-md z-10"
             >
               <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
             
-            <div className="text-center mb-6">
-              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
-                <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                </svg>
+            {/* Header - Corporate */}
+            <div className="px-10 pt-10 pb-6 border-b border-gray-200">
+              <div className="flex items-center space-x-4 mb-4">
+                <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-cyan-500 rounded-2xl flex items-center justify-center shadow-lg border-2 border-white">
+                  <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-3xl font-bold text-gray-900 mb-1 tracking-tight">Mobil Personel Yönetimi</h3>
+                  <p className="text-sm text-gray-600 font-medium">Personel ekleyin, yönetin ve QR kod oluşturun</p>
+                </div>
               </div>
-              <h3 className="text-2xl font-bold text-gray-800 mb-2">Mobil Personel Yönetimi</h3>
-              <p className="text-sm text-gray-500">Personel ekleyin ve QR kod oluşturun</p>
             </div>
 
-            <div className="space-y-4 max-h-[60vh] overflow-y-auto">
-              {/* Personel Listesi */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-semibold text-gray-700">Personel Listesi</h4>
-                  <button
-                    onClick={() => setShowAddStaff(true)}
-                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg text-sm font-medium hover:shadow-lg transition-all"
-                  >
-                    + Personel Ekle
-                  </button>
-                </div>
-                
-                {staffList.length === 0 ? (
-                  <p className="text-center text-gray-500 py-4">Henüz personel eklenmemiş</p>
-                ) : (
-                  <div className="space-y-2">
-                    {staffList.map((staff) => (
-                      <div key={staff.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <div>
-                          <p className="font-medium text-gray-800">
-                            {staff.name} {staff.surname}
-                            {staff.is_manager && (
-                              <span className="ml-2 px-2 py-0.5 bg-gradient-to-r from-yellow-400 to-orange-500 text-white text-xs font-bold rounded-full">
-                                MÜDÜR
-                              </span>
-                            )}
-                          </p>
-                          <p className="text-xs text-gray-500">ID: {staff.id}</p>
+            {/* Content Area - Scrollable */}
+            <div className="flex-1 overflow-y-auto px-10 py-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Left Column - Personel Listesi */}
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h4 className="text-xl font-bold text-gray-900 mb-1">Personel Listesi</h4>
+                      <p className="text-sm text-gray-500">{staffList.length} personel</p>
+                    </div>
+                    <button
+                      onClick={() => setShowAddStaff(true)}
+                      className="px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-500 text-white rounded-xl text-sm font-semibold hover:shadow-lg transition-all duration-200 flex items-center space-x-2 shadow-md hover:shadow-xl"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      <span>Personel Ekle</span>
+                    </button>
+                  </div>
+                  
+                  {staffList.length === 0 ? (
+                    <div className="bg-gray-50 rounded-xl p-8 text-center border-2 border-dashed border-gray-300">
+                      <svg className="w-12 h-12 text-gray-400 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                      <p className="text-gray-600 font-medium mb-1">Henüz personel eklenmemiş</p>
+                      <p className="text-xs text-gray-500">Yeni personel eklemek için yukarıdaki butonu kullanın</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {staffList.map((staff) => (
+                        <div key={staff.id} className="bg-white border border-gray-200 rounded-xl p-3 hover:border-gray-300 hover:shadow-md transition-all duration-200">
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex items-center space-x-2.5 flex-1 min-w-0">
+                              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-400 rounded-lg flex items-center justify-center shadow-sm flex-shrink-0">
+                                <span className="text-white font-bold text-sm">
+                                  {staff.name.charAt(0)}{staff.surname.charAt(0)}
+                                </span>
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="font-bold text-gray-900 text-sm mb-0.5 truncate">
+                                  {staff.name} {staff.surname}
+                                </p>
+                                <p className="text-xs text-gray-500">ID: {staff.id}</p>
+                              </div>
+                            </div>
+                          </div>
+                          {staff.is_manager && (
+                            <div className="mb-2">
+                              <div className="inline-flex items-center space-x-1 px-2 py-0.5 bg-gradient-to-r from-amber-400 to-orange-500 text-white text-xs font-bold rounded-md shadow-sm">
+                                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                                <span>MÜDÜR</span>
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-1.5 mt-2">
+                            <button
+                              onClick={() => {
+                                setEditingStaff(staff);
+                                setNewPassword('');
+                              }}
+                              className="flex-1 px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-semibold transition-all duration-200 border border-blue-200 hover:border-blue-300 min-w-[80px]"
+                            >
+                              Şifre
+                            </button>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const result = await window.electronAPI.setStaffManager(staff.id, !staff.is_manager);
+                                  if (result.success) {
+                                    await loadStaff();
+                                    alert(staff.is_manager ? 'Müdürlük kaldırıldı' : 'Müdür olarak atandı');
+                                  } else {
+                                    alert('Hata: ' + (result.error || 'Bilinmeyen hata'));
+                                  }
+                                } catch (error) {
+                                  console.error('Müdür atama hatası:', error);
+                                  alert('Müdür atanamadı: ' + error.message);
+                                }
+                              }}
+                              className={`flex-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 min-w-[80px] ${
+                                staff.is_manager
+                                  ? 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 hover:border-red-300'
+                                  : 'bg-gradient-to-r from-amber-400 to-orange-500 text-white hover:from-amber-500 hover:to-orange-600 shadow-sm'
+                              }`}
+                            >
+                              {staff.is_manager ? 'Müdürlük Kaldır' : 'MÜDÜR'}
+                            </button>
+                            <button
+                              onClick={() => setDeleteConfirm(staff.id)}
+                              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-semibold transition-all duration-200 border border-red-200 hover:border-red-300"
+                            >
+                              Sil
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Right Column - Forms & QR Code */}
+                <div className="space-y-6">
+                  {/* Personel Ekleme Formu */}
+                  {showAddStaff && (
+                    <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-2xl p-6 space-y-4 border-2 border-blue-200 shadow-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-lg font-bold text-gray-900">Yeni Personel Ekle</h4>
+                        <button
+                          onClick={() => {
+                            setShowAddStaff(false);
+                            setNewStaff({ name: '', surname: '', password: '' });
+                          }}
+                          className="text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-1.5">İsim</label>
+                          <input
+                            type="text"
+                            placeholder="Personel ismi"
+                            value={newStaff.name}
+                            onChange={(e) => setNewStaff({ ...newStaff, name: e.target.value })}
+                            className="w-full px-4 py-3 rounded-xl border-2 border-gray-300 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-1.5">Soyisim</label>
+                          <input
+                            type="text"
+                            placeholder="Personel soyismi"
+                            value={newStaff.surname}
+                            onChange={(e) => setNewStaff({ ...newStaff, surname: e.target.value })}
+                            className="w-full px-4 py-3 rounded-xl border-2 border-gray-300 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-1.5">Şifre</label>
+                          <input
+                            type="password"
+                            placeholder="Minimum 4 karakter"
+                            value={newStaff.password}
+                            onChange={(e) => setNewStaff({ ...newStaff, password: e.target.value })}
+                            className="w-full px-4 py-3 rounded-xl border-2 border-gray-300 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all bg-white"
+                          />
+                        </div>
+                        <div className="flex space-x-3 pt-2">
+                          <button
+                            onClick={handleAddStaff}
+                            className="flex-1 px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 shadow-md"
+                          >
+                            Ekle
+                          </button>
                           <button
                             onClick={() => {
-                              setEditingStaff(staff);
-                              setNewPassword('');
+                              setShowAddStaff(false);
+                              setNewStaff({ name: '', surname: '', password: '' });
                             }}
-                            className="px-3 py-1 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600 transition-all"
+                            className="px-6 py-3 bg-white text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-all duration-200 border-2 border-gray-300"
                           >
-                            Şifre Değiştir
-                          </button>
-                          <button
-                            onClick={async () => {
-                              try {
-                                const result = await window.electronAPI.setStaffManager(staff.id, !staff.is_manager);
-                                if (result.success) {
-                                  await loadStaff();
-                                  alert(staff.is_manager ? 'Müdürlük kaldırıldı' : 'Müdür olarak atandı');
-                                } else {
-                                  alert('Hata: ' + (result.error || 'Bilinmeyen hata'));
-                                }
-                              } catch (error) {
-                                console.error('Müdür atama hatası:', error);
-                                alert('Müdür atanamadı: ' + error.message);
-                              }
-                            }}
-                            className={`px-3 py-1 rounded-lg text-sm transition-all ${
-                              staff.is_manager
-                                ? 'bg-red-500 text-white hover:bg-red-600'
-                                : 'bg-gradient-to-r from-yellow-400 to-orange-500 text-white hover:from-yellow-500 hover:to-orange-600'
-                            }`}
-                          >
-                            {staff.is_manager ? 'Müdürlüğü Kaldır' : 'MÜDÜR SEÇ'}
-                          </button>
-                          <button
-                            onClick={() => setDeleteConfirm(staff.id)}
-                            className="px-3 py-1 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600 transition-all"
-                          >
-                            Sil
+                            İptal
                           </button>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                    </div>
+                  )}
 
-              {/* Personel Ekleme Formu */}
-              {showAddStaff && (
-                <div className="bg-blue-50 rounded-xl p-4 space-y-3">
-                  <h4 className="font-semibold text-gray-700 mb-2">Yeni Personel Ekle</h4>
-                  <input
-                    type="text"
-                    placeholder="İsim"
-                    value={newStaff.name}
-                    onChange={(e) => setNewStaff({ ...newStaff, name: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-blue-500 focus:outline-none"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Soyisim"
-                    value={newStaff.surname}
-                    onChange={(e) => setNewStaff({ ...newStaff, surname: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-blue-500 focus:outline-none"
-                  />
-                  <input
-                    type="password"
-                    placeholder="Şifre"
-                    value={newStaff.password}
-                    onChange={(e) => setNewStaff({ ...newStaff, password: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-blue-500 focus:outline-none"
-                  />
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={handleAddStaff}
-                      className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg font-medium hover:shadow-lg transition-all"
-                    >
-                      Ekle
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowAddStaff(false);
-                        setNewStaff({ name: '', surname: '', password: '' });
-                      }}
-                      className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-400 transition-all"
-                    >
-                      İptal
-                    </button>
+                  {/* Şifre Değiştirme Form */}
+                  {editingStaff && (
+                    <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-2xl p-6 space-y-4 border-2 border-blue-200 shadow-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-lg font-bold text-gray-900">Şifre Değiştir</h4>
+                        <button
+                          onClick={() => {
+                            setEditingStaff(null);
+                            setNewPassword('');
+                          }}
+                          className="text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600 mb-3">
+                          <span className="font-bold text-gray-900">{editingStaff.name} {editingStaff.surname}</span> için yeni şifre belirleyin
+                        </p>
+                        <input
+                          type="password"
+                          placeholder="Yeni şifre (min. 4 karakter)"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          className="w-full px-4 py-3 border-2 border-blue-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') {
+                              handleUpdatePassword();
+                            }
+                          }}
+                        />
+                      </div>
+                      <div className="flex items-center gap-3 pt-2">
+                        <button
+                          onClick={handleUpdatePassword}
+                          className="flex-1 px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 shadow-md"
+                        >
+                          Kaydet
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingStaff(null);
+                            setNewPassword('');
+                          }}
+                          className="px-6 py-3 bg-white text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-all duration-200 border-2 border-gray-300"
+                        >
+                          İptal
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* QR Kod Section */}
+                  <div className="bg-white border-2 border-gray-200 rounded-2xl p-6 shadow-lg">
+                    <h4 className="text-lg font-bold text-gray-900 mb-4">QR Kod Bağlantısı</h4>
+                    {qrCode ? (
+                      <div className="space-y-4">
+                        <div className="flex justify-center">
+                          <div className="bg-white p-4 rounded-2xl border-4 border-blue-200 shadow-xl">
+                            <img src={qrCode} alt="QR Code" className="w-56 h-56" />
+                          </div>
+                        </div>
+                        <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl p-4 border-2 border-blue-200">
+                          <p className="text-xs font-semibold text-gray-600 mb-2 text-center uppercase tracking-wide">Veya bu adresi tarayıcıya yazın:</p>
+                          <p className="text-xs font-mono text-blue-700 text-center break-all bg-white p-2 rounded-lg border border-blue-200">{serverURL}</p>
+                        </div>
+                        <div className="flex items-start space-x-2 bg-amber-50 border-2 border-amber-200 rounded-xl p-3">
+                          <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                          </svg>
+                          <p className="text-xs text-amber-800 font-medium">
+                            Aynı WiFi ağına bağlı olduğunuzdan emin olun
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-12">
+                        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600 mx-auto mb-4"></div>
+                        <p className="text-sm text-gray-600 font-medium">QR kod oluşturuluyor...</p>
+                      </div>
+                    )}
                   </div>
                 </div>
-              )}
-
-              {/* Şifre Değiştirme Modal */}
-              {editingStaff && (
-                <div className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl p-6 space-y-4 border border-blue-200 mt-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-semibold text-gray-700">Şifre Değiştir</h4>
-                    <button
-                      onClick={() => {
-                        setEditingStaff(null);
-                        setNewPassword('');
-                      }}
-                      className="text-gray-500 hover:text-gray-700 transition-colors"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 mb-2">
-                      <span className="font-semibold">{editingStaff.name} {editingStaff.surname}</span> için yeni şifre
-                    </p>
-                    <input
-                      type="password"
-                      placeholder="Yeni şifre (min. 4 karakter)"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      onKeyPress={(e) => {
-                        if (e.key === 'Enter') {
-                          handleUpdatePassword();
-                        }
-                      }}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleUpdatePassword}
-                      className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg font-medium hover:shadow-lg transition-all"
-                    >
-                      Kaydet
-                    </button>
-                    <button
-                      onClick={() => {
-                        setEditingStaff(null);
-                        setNewPassword('');
-                      }}
-                      className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition-all"
-                    >
-                      İptal
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* QR Kod */}
-              <div className="border-t border-gray-200 pt-4">
-                <h4 className="font-semibold text-gray-700 mb-3">QR Kod</h4>
-                {qrCode ? (
-                  <>
-                    <div className="flex justify-center mb-3">
-                      <img src={qrCode} alt="QR Code" className="w-48 h-48 border-4 border-blue-200 rounded-xl" />
-                    </div>
-                    <div className="bg-blue-50 rounded-xl p-3">
-                      <p className="text-xs text-gray-600 mb-1 text-center">Veya bu adresi tarayıcıya yazın:</p>
-                      <p className="text-xs font-mono text-blue-600 text-center break-all">{serverURL}</p>
-                    </div>
-                    <p className="text-xs text-gray-500 text-center mt-2">
-                      📱 Aynı WiFi ağına bağlı olduğunuzdan emin olun
-                    </p>
-                  </>
-                ) : (
-                  <div className="text-center py-4">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
-                    <p className="mt-2 text-sm text-gray-600">QR kod oluşturuluyor...</p>
-                  </div>
-                )}
               </div>
             </div>
 
-            {/* Silme Onay Modal */}
+            {/* Silme Onay Modal - Elite */}
             {deleteConfirm && (
-              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[2000]">
-                <div className="bg-white rounded-xl p-6 max-w-sm w-full mx-4">
-                  <h4 className="font-bold text-gray-800 mb-2">Personeli Sil</h4>
-                  <p className="text-sm text-gray-600 mb-4">Bu personeli silmek istediğinize emin misiniz?</p>
-                  <div className="flex space-x-2">
+              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[2000]">
+                <div className="bg-white rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl border border-gray-200">
+                  <div className="flex items-center justify-center mb-6">
+                    <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center border-2 border-red-200">
+                      <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                    </div>
+                  </div>
+                  <div className="text-center mb-6">
+                    <h4 className="text-xl font-bold text-gray-900 mb-2">Personeli Sil</h4>
+                    <p className="text-sm text-gray-600 leading-relaxed">Bu personeli silmek istediğinize emin misiniz? Bu işlem geri alınamaz.</p>
+                  </div>
+                  <div className="flex items-center justify-center gap-3 pt-4 border-t border-gray-200">
                     <button
                       onClick={() => setDeleteConfirm(null)}
-                      className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-400 transition-all"
+                      className="px-8 py-3 bg-white hover:bg-gray-50 text-gray-700 font-semibold text-sm rounded-xl transition-all duration-200 border-2 border-gray-300 hover:border-gray-400 min-w-[120px]"
                     >
                       İptal
                     </button>
                     <button
                       onClick={() => handleDeleteStaff(deleteConfirm)}
-                      className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-all"
+                      className="px-8 py-3 bg-red-600 hover:bg-red-700 text-white font-semibold text-sm rounded-xl transition-all duration-200 shadow-md hover:shadow-lg min-w-[120px]"
                     >
                       Sil
                     </button>

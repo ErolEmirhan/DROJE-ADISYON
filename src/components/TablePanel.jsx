@@ -599,6 +599,13 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
           }}
           onRequestAdisyon={handleRequestAdisyon}
           onAddItems={handleAddItems}
+          onCancelEntireTable={() => {
+            // Tüm masa iptal edildiğinde modalı kapat ve siparişleri yenile
+            setShowModal(false);
+            setSelectedOrder(null);
+            setOrderItems([]);
+            loadTableOrders(); // Siparişleri yenile
+          }}
         />
       )}
 

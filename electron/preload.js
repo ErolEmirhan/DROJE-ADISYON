@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cancelTableOrderItem: (itemId, cancelQuantity, cancelReason) => ipcRenderer.invoke('cancel-table-order-item', itemId, cancelQuantity, cancelReason),
   cancelTableOrderItemsBulk: (itemsToCancel, cancelReason) => ipcRenderer.invoke('cancel-table-order-items-bulk', itemsToCancel, cancelReason),
   previewCancelReceipt: (itemId, cancelQuantity) => ipcRenderer.invoke('preview-cancel-receipt', itemId, cancelQuantity),
+  cancelEntireTableOrder: (orderId) => ipcRenderer.invoke('cancel-entire-table-order', orderId),
   completeTableOrder: (orderId, paymentMethod) => ipcRenderer.invoke('complete-table-order', orderId, paymentMethod),
   transferTableOrder: (sourceTableId, targetTableId) => ipcRenderer.invoke('transfer-table-order', sourceTableId, targetTableId),
   // Settings API
@@ -29,6 +30,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateProduct: (productData) => ipcRenderer.invoke('update-product', productData),
   deleteProduct: (productId) => ipcRenderer.invoke('delete-product', productId),
   selectImageFile: (productId) => ipcRenderer.invoke('select-image-file', productId),
+  createImageRecordsForAllProducts: () => ipcRenderer.invoke('create-image-records-for-all-products'),
+  getFirebaseImages: () => ipcRenderer.invoke('get-firebase-images'),
   // Stock Management API
   adjustProductStock: (productId, adjustment) => ipcRenderer.invoke('adjust-product-stock', productId, adjustment),
   getProductStock: (productId) => ipcRenderer.invoke('get-product-stock', productId),
