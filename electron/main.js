@@ -268,13 +268,32 @@ function initDatabase(tenantId = null) {
       if (!db.printerAssignments) db.printerAssignments = [];
     } catch (error) {
       console.error('Veritabanı yüklenemedi, yeni oluşturuluyor:', error);
-      initDefaultData();
+      initEmptyData();
     }
   } else {
-    initDefaultData();
+    // Yeni tenant için temiz database oluştur (örnek veriler olmadan)
+    initEmptyData();
   }
 }
 
+// Temiz database oluştur (örnek veriler olmadan)
+function initEmptyData() {
+  db.categories = [];
+  db.products = [];
+  db.sales = [];
+  db.saleItems = [];
+  db.tableOrders = [];
+  db.tableOrderItems = [];
+  db.printerAssignments = [];
+  db.settings = {
+    adminPin: '1234',
+    cashierPrinter: null
+  };
+  
+  saveDatabase();
+}
+
+// Örnek verilerle database oluştur (eski fonksiyon, geriye dönük uyumluluk için)
 function initDefaultData() {
   // Örnek kategoriler
   db.categories = [
@@ -327,8 +346,10 @@ function initDefaultData() {
   db.saleItems = [];
   db.tableOrders = [];
   db.tableOrderItems = [];
+  db.printerAssignments = [];
   db.settings = {
-    adminPin: '1234'
+    adminPin: '1234',
+    cashierPrinter: null
   };
   
   saveDatabase();
@@ -6188,13 +6209,19 @@ async function printCancelReceipt(printerName, printerType, cancelData) {
 }
 
 function generateMobileHTML(serverURL) {
-  // Tenant'ın tema rengini ve masa sayılarını al
-  // Şimdilik her zaman turuncu kullan
+  // Tenant'ın tema rengini ve masa sayılarını al (masaüstü uygulamadaki mantıkla aynı)
   const tenantInfo = tenantManager.getCurrentTenantInfo();
-  const themeColor = '#f97316'; // tenantInfo?.themeColor || '#f97316';
-  const insideTablesCount = tenantInfo?.insideTables || 20;
-  const outsideTablesCount = tenantInfo?.outsideTables || 20;
-  const packageTablesCount = tenantInfo?.packageTables || 5;
+  const themeColor = tenantInfo?.themeColor || '#f97316';
+  // 0 değeri geçerli olduğu için null/undefined kontrolü yapıyoruz
+  const insideTablesCount = tenantInfo?.insideTables !== undefined && tenantInfo?.insideTables !== null 
+    ? tenantInfo.insideTables 
+    : 20;
+  const outsideTablesCount = tenantInfo?.outsideTables !== undefined && tenantInfo?.outsideTables !== null 
+    ? tenantInfo.outsideTables 
+    : 20;
+  const packageTablesCount = tenantInfo?.packageTables !== undefined && tenantInfo?.packageTables !== null 
+    ? tenantInfo.packageTables 
+    : 5;
   
   // Tema renklerini hesapla (basit versiyon)
   const hexToRgb = (hex) => {
@@ -9909,11 +9936,18 @@ function startAPIServer() {
   });
 
   appExpress.get('/api/tables', (req, res) => {
-    // Tenant'tan masa sayılarını al
+    // Tenant'tan masa sayılarını al (masaüstü uygulamadaki mantıkla aynı)
     const tenantInfo = tenantManager.getCurrentTenantInfo();
-    const insideTablesCount = tenantInfo?.insideTables || 20;
-    const outsideTablesCount = tenantInfo?.outsideTables || 20;
-    const packageTablesCount = tenantInfo?.packageTables || 5;
+    // 0 değeri geçerli olduğu için null/undefined kontrolü yapıyoruz
+    const insideTablesCount = tenantInfo?.insideTables !== undefined && tenantInfo?.insideTables !== null 
+      ? tenantInfo.insideTables 
+      : 20;
+    const outsideTablesCount = tenantInfo?.outsideTables !== undefined && tenantInfo?.outsideTables !== null 
+      ? tenantInfo.outsideTables 
+      : 20;
+    const packageTablesCount = tenantInfo?.packageTables !== undefined && tenantInfo?.packageTables !== null 
+      ? tenantInfo.packageTables 
+      : 5;
     
     const tables = [];
     for (let i = 1; i <= insideTablesCount; i++) {

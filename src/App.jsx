@@ -78,8 +78,7 @@ function App() {
   const businessName = tenantInfo?.businessName || 'MAKARA';
   
   // Tema rengini al (fallback: turuncu)
-  // Şimdilik her zaman turuncu kullan
-  const themeColor = '#f97316'; // tenantInfo?.themeColor || '#f97316';
+  const themeColor = tenantInfo?.themeColor || '#f97316';
   
   // Tema renklerini hesapla
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);

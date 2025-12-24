@@ -12,6 +12,7 @@ const LauncherClient = ({ onLogin }) => {
   const [updateDownloadProgress, setUpdateDownloadProgress] = useState(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
 
   // Animated particles for background
   useEffect(() => {
@@ -67,6 +68,12 @@ const LauncherClient = ({ onLogin }) => {
         setIsCheckingUpdate(false);
         setIsDownloading(false);
       });
+
+      // Güncelleme yoksa kontrolü bitir
+      window.electronAPI.onUpdateNotAvailable((info) => {
+        setIsCheckingUpdate(false);
+        setUpdateInfo(null);
+      });
     }
   }, []);
 
@@ -92,9 +99,21 @@ const LauncherClient = ({ onLogin }) => {
     e.preventDefault();
     setError('');
 
+    // Güncelleme kontrolü yapılıyorsa bekle
+    if (isCheckingUpdate) {
+      setError('Güncelleme kontrol ediliyor, lütfen bekleyin...');
+      return;
+    }
+
     // Güncelleme varsa ve indirilmemişse giriş yapılamaz
     if (updateInfo && !updateInfo.downloaded) {
       setError('Lütfen önce güncellemeyi indirin');
+      return;
+    }
+
+    // Güncelleme indirildiyse giriş yapılamaz (yeniden başlatılmalı)
+    if (updateInfo && updateInfo.downloaded) {
+      setError('Güncelleme indirildi. Lütfen "Yeniden Başlat ve Güncelle" butonuna tıklayın');
       return;
     }
 
@@ -104,6 +123,7 @@ const LauncherClient = ({ onLogin }) => {
     }
 
     setIsLoading(true);
+    setLoadingProgress(0); // Progress'i sıfırla
 
     try {
       const trimmedTenantId = tenantId.trim();
@@ -129,7 +149,20 @@ const LauncherClient = ({ onLogin }) => {
       }
       
       // Loading ekranını daha uzun göster (oyun tarzı splash screen için)
+      // Progress bar animasyonu
+      const progressInterval = setInterval(() => {
+        setLoadingProgress(prev => {
+          if (prev >= 100) {
+            clearInterval(progressInterval);
+            return 100;
+          }
+          return prev + 2;
+        });
+      }, 90); // 4.5 saniyede 100% olacak şekilde
+      
       await new Promise(resolve => setTimeout(resolve, 4500));
+      clearInterval(progressInterval);
+      setLoadingProgress(100);
       
       // Enter fullscreen mode if electronAPI is available
       if (window.electronAPI && window.electronAPI.enterFullscreen) {
@@ -440,7 +473,7 @@ const LauncherClient = ({ onLogin }) => {
               <button
                 type="submit"
                 className={`login-button ${isLoading ? 'loading' : ''}`}
-                disabled={isLoading || !tenantId.trim() || (updateInfo && !updateInfo.downloaded)}
+                disabled={isLoading || !tenantId.trim() || isCheckingUpdate || (updateInfo && !updateInfo.downloaded) || (updateInfo && updateInfo.downloaded)}
               >
                 <div className="button-content">
                   {isLoading ? (
@@ -489,144 +522,129 @@ const LauncherClient = ({ onLogin }) => {
         </div>
       </div>
 
-      {/* Premium Gaming-Style Loading Overlay */}
+      {/* Premium Corporate Loading Overlay */}
       {isLoading && (
-        <div className="loading-overlay">
-          {/* Animated Background Grid */}
-          <div className="loading-grid"></div>
+        <div className="loading-overlay-corporate">
+          {/* Subtle Background Gradient */}
+          <div className="corporate-bg-gradient"></div>
           
-          {/* Floating Particles */}
-          <div className="loading-particles">
-            {Array.from({ length: 30 }).map((_, i) => (
-              <div key={i} className="loading-particle" style={{
-                left: `${Math.random() * 100}%`,
-                top: `${Math.random() * 100}%`,
-                animationDelay: `${Math.random() * 3}s`,
-                animationDuration: `${3 + Math.random() * 2}s`
-              }}></div>
-            ))}
-          </div>
-
-          {/* Geometric Shapes */}
-          <div className="loading-shapes">
-            <div className="loading-shape shape-triangle"></div>
-            <div className="loading-shape shape-circle"></div>
-            <div className="loading-shape shape-square"></div>
-            <div className="loading-shape shape-hexagon"></div>
-          </div>
+          {/* Minimal Grid Pattern */}
+          <div className="corporate-grid"></div>
 
           {/* Main Content */}
-          <div className="loading-content">
-            {/* Modern Professional Logo Animation */}
-            <div className="loading-logo-modern">
-              <div className="logo-modern-container">
-                {/* Outer Ring */}
-                <div className="logo-ring logo-ring-outer">
-                  <svg className="ring-svg" viewBox="0 0 200 200">
-                    <circle cx="100" cy="100" r="90" fill="none" stroke="url(#ringGradient)" strokeWidth="3" strokeDasharray="565" strokeDashoffset="565">
-                      <animate attributeName="stroke-dashoffset" values="565;0;565" dur="3s" repeatCount="indefinite" />
-                    </circle>
-                    <defs>
-                      <linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="#6366f1" />
-                        <stop offset="50%" stopColor="#8b5cf6" />
-                        <stop offset="100%" stopColor="#a78bfa" />
-                      </linearGradient>
-                    </defs>
-                  </svg>
-                </div>
-                
-                {/* Middle Ring */}
-                <div className="logo-ring logo-ring-middle">
-                  <svg className="ring-svg" viewBox="0 0 200 200">
-                    <circle cx="100" cy="100" r="70" fill="none" stroke="url(#ringGradient2)" strokeWidth="2.5" strokeDasharray="440" strokeDashoffset="440">
-                      <animate attributeName="stroke-dashoffset" values="440;0;440" dur="2.5s" repeatCount="indefinite" />
-                    </circle>
-                    <defs>
-                      <linearGradient id="ringGradient2" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="#8b5cf6" />
-                        <stop offset="100%" stopColor="#a78bfa" />
-                      </linearGradient>
-                    </defs>
-                  </svg>
-                </div>
-                
-                {/* Inner Core */}
-                <div className="logo-core">
-                  <div className="logo-core-inner">
-                    <div className="logo-letter">D</div>
-                  </div>
-                  <div className="logo-core-glow"></div>
-                  <div className="logo-core-pulse"></div>
-                </div>
-                
-                {/* Orbiting Particles */}
-                <div className="logo-orbit orbit-1">
-                  <div className="orbit-particle"></div>
-                </div>
-                <div className="logo-orbit orbit-2">
-                  <div className="orbit-particle"></div>
-                </div>
-                <div className="logo-orbit orbit-3">
-                  <div className="orbit-particle"></div>
-                </div>
+          <div className="loading-content-corporate">
+            {/* Elegant Logo Animation */}
+            <div className="corporate-logo-container">
+              <div className="logo-ring-elegant">
+                <svg className="ring-svg-elegant" viewBox="0 0 200 200">
+                  <circle 
+                    cx="100" 
+                    cy="100" 
+                    r="85" 
+                    fill="none" 
+                    stroke="url(#elegantGradient)" 
+                    strokeWidth="2" 
+                    strokeDasharray="534" 
+                    strokeDashoffset="534"
+                    className="ring-circle"
+                  />
+                  <defs>
+                    <linearGradient id="elegantGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#6366f1" />
+                      <stop offset="100%" stopColor="#8b5cf6" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+              </div>
+              <div className="logo-center-elegant">
+                <div className="logo-letter-elegant">D</div>
+                <div className="logo-glow-subtle"></div>
               </div>
             </div>
 
-            {/* Welcome Text with Glitch Effect */}
-            <div className="loading-welcome-container">
-              <h2 className="loading-welcome">
-                <span className="welcome-text" data-text="Hoşgeldiniz">Hoşgeldiniz</span>
-                <span className="welcome-glitch"></span>
-              </h2>
-            </div>
-
-            {/* Business Name with Typewriter Effect */}
-            <div className="loading-business-container">
-              <p className="loading-business-name">
-                <span className="business-name-text">{loadingBusinessName || 'Yükleniyor...'}</span>
-                <span className="business-name-cursor">|</span>
+            {/* Welcome Section */}
+            <div className="corporate-welcome">
+              <div className="welcome-status-badge">
+                <div className="status-dot-elegant"></div>
+                <span className="status-text-elegant">Initializing System</span>
+              </div>
+              <h1 className="welcome-title-corporate">
+                <span className="welcome-line-1">Welcome to</span>
+                <span className="welcome-line-2">{loadingBusinessName || 'DROJE POS'}</span>
+              </h1>
+              <p className="welcome-subtitle-corporate">
+                Enterprise Point of Sale System
               </p>
             </div>
 
-            {/* Advanced Progress Bar */}
-            <div className="loading-progress-container">
-              <div className="loading-progress-wrapper">
-                <div className="loading-progress-bar">
-                  <div className="progress-fill"></div>
-                  <div className="progress-shine"></div>
-                  <div className="progress-glow"></div>
-                </div>
-                <div className="progress-percentage">0%</div>
+            {/* Progress Section */}
+            <div className="corporate-progress-section">
+              <div className="progress-header-corporate">
+                <span className="progress-label-corporate">Loading</span>
+                <span className="progress-percentage-corporate">{loadingProgress}%</span>
               </div>
-              <div className="progress-particles">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="progress-particle"></div>
+              <div className="progress-bar-corporate">
+                <div className="progress-track-corporate">
+                  <div 
+                    className="progress-fill-corporate" 
+                    style={{ width: `${loadingProgress}%` }}
+                  ></div>
+                </div>
+              </div>
+              <div className="progress-steps">
+                {['Connect', 'Authenticate', 'Load Data', 'Ready'].map((step, i) => (
+                  <div 
+                    key={i} 
+                    className={`progress-step ${loadingProgress > (i + 1) * 25 ? 'completed' : ''}`}
+                  >
+                    <div className="step-indicator"></div>
+                    <span className="step-label">{step}</span>
+                  </div>
                 ))}
               </div>
             </div>
 
-            {/* Loading Status Text */}
-            <div className="loading-status">
-              <span className="status-dot"></span>
-              <span className="status-text">Sistem başlatılıyor...</span>
-            </div>
-
-            {/* Sound Wave Visualization */}
-            <div className="loading-soundwave">
-              {Array.from({ length: 20 }).map((_, i) => (
-                <div key={i} className="soundwave-bar" style={{
-                  animationDelay: `${i * 0.1}s`
-                }}></div>
-              ))}
+            {/* System Status */}
+            <div className="corporate-status-grid">
+              <div className="status-item-corporate">
+                <div className="status-icon-corporate">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+                <div className="status-text-corporate">
+                  <span className="status-name-corporate">Database</span>
+                  <span className="status-value-corporate">Connected</span>
+                </div>
+              </div>
+              <div className="status-item-corporate">
+                <div className="status-icon-corporate">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5"/>
+                    <path d="M12 6V12L16 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  </svg>
+                </div>
+                <div className="status-text-corporate">
+                  <span className="status-name-corporate">Services</span>
+                  <span className="status-value-corporate">Initializing</span>
+                </div>
+              </div>
+              <div className="status-item-corporate">
+                <div className="status-icon-corporate">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" strokeWidth="1.5"/>
+                    <path d="M12 8V12L15 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  </svg>
+                </div>
+                <div className="status-text-corporate">
+                  <span className="status-name-corporate">Security</span>
+                  <span className="status-value-corporate">Active</span>
+                </div>
+              </div>
             </div>
           </div>
-
-          {/* Corner Decorations */}
-          <div className="loading-corner corner-top-left"></div>
-          <div className="loading-corner corner-top-right"></div>
-          <div className="loading-corner corner-bottom-left"></div>
-          <div className="loading-corner corner-bottom-right"></div>
         </div>
       )}
 
