@@ -1,6 +1,6 @@
 {
   "name": "droje-pos",
-  "version": "2.4.0",
+  "version": "2.4.5",
   "description": "Modern POS Uygulaması - Multi-tenant Restaurant Management System",
   "main": "electron/main.js",
   "scripts": {
@@ -90,6 +90,10 @@
       "artifactName": "DROJE-POS-Setup-${version}.${ext}",
       "differentialPackage": true
     },
-    "publish": null
+    "publish": {
+      "provider": "github",
+      "owner": "ErolEmirhan",
+      "repo": "DROJE-ADISYON"
+    }
   }
 }

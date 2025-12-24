@@ -3713,8 +3713,8 @@ ipcMain.handle('select-image-file', async (event, productId = null) => {
 });
 
 // Auto Updater Configuration
-autoUpdater.autoDownload = true; // Otomatik indirme aktif
-autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.autoDownload = false; // Otomatik indirme kapalı - kullanıcı manuel indirecek
+autoUpdater.autoInstallOnAppQuit = false; // Otomatik kurulum kapalı
 
 // Log dosyası oluştur
 const logPath = path.join(app.getPath('userData'), 'update-log.txt');
@@ -3735,7 +3735,7 @@ if (app.isPackaged) {
   const feedURL = {
     provider: 'github',
     owner: 'ErolEmirhan',
-    repo: 'Makara-APP'
+    repo: 'DROJE-ADISYON'
   };
   autoUpdater.setFeedURL(feedURL);
   writeLog(`Auto-updater yapılandırıldı: ${feedURL.owner}/${feedURL.repo}`);
@@ -3751,13 +3751,19 @@ autoUpdater.on('checking-for-update', () => {
 });
 
 autoUpdater.on('update-available', (info) => {
-  const msg = `Yeni güncelleme mevcut: ${info.version} - Otomatik indirme başlatılıyor...`;
+  const msg = `Yeni güncelleme mevcut: ${info.version} - Kullanıcıdan indirme onayı bekleniyor...`;
   writeLog(msg);
-  console.log('📥 Yeni güncelleme bulundu, otomatik indirme başlatılıyor...');
+  console.log('📥 Yeni güncelleme bulundu:', info.version);
+  // Tüm pencerelere bildir (launcher dahil)
   if (mainWindow) {
     mainWindow.webContents.send('update-available', info);
   }
-  // Otomatik indirme zaten aktif (autoDownload = true), burada sadece bilgilendirme yapıyoruz
+  // Tüm BrowserWindow'lara gönder (launcher için)
+  BrowserWindow.getAllWindows().forEach(win => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('update-available', info);
+    }
+  });
 });
 
 autoUpdater.on('update-not-available', (info) => {
@@ -3765,6 +3771,12 @@ autoUpdater.on('update-not-available', (info) => {
   const msg = `Güncelleme yok - Mevcut versiyon: ${currentVersion}, En son sürüm: ${info.version || currentVersion}`;
   writeLog(msg);
   console.log('✅ En güncel versiyonu kullanıyorsunuz:', currentVersion);
+  // Tüm pencerelere bildir (launcher dahil)
+  BrowserWindow.getAllWindows().forEach(win => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('update-not-available', info);
+    }
+  });
 });
 
 autoUpdater.on('error', (err) => {
@@ -3776,28 +3788,34 @@ autoUpdater.on('error', (err) => {
 });
 
 autoUpdater.on('download-progress', (progressObj) => {
+  // Tüm pencerelere bildir (launcher dahil)
   if (mainWindow) {
     mainWindow.webContents.send('update-download-progress', progressObj);
   }
+  // Tüm BrowserWindow'lara gönder (launcher için)
+  BrowserWindow.getAllWindows().forEach(win => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('update-download-progress', progressObj);
+    }
+  });
 });
 
 autoUpdater.on('update-downloaded', (info) => {
-  const msg = `Güncelleme indirildi: ${info.version} - Otomatik yükleme ve yeniden başlatma yapılıyor...`;
+  const msg = `Güncelleme indirildi: ${info.version} - Kullanıcıdan kurulum onayı bekleniyor...`;
   writeLog(msg);
-  console.log('✅ Güncelleme indirildi, otomatik yükleme başlatılıyor...');
+  console.log('✅ Güncelleme indirildi:', info.version);
   
-  // Kullanıcıya bilgi ver (opsiyonel - kısa bir süre gösterilebilir)
+  // Tüm pencerelere bildir (launcher dahil)
   if (mainWindow) {
     mainWindow.webContents.send('update-downloaded', info);
   }
-  
-  // 2 saniye bekle (kullanıcıya bilgi vermek için), sonra otomatik yükle ve yeniden başlat
-  setTimeout(() => {
-    writeLog('Uygulama kapatılıyor, güncelleme yükleniyor ve yeniden başlatılıyor...');
-    // isSilent: true = Windows dialog'unu gösterme
-    // isForceRunAfter: true = Yüklemeden sonra otomatik çalıştır
-    autoUpdater.quitAndInstall(true, true);
-  }, 2000); // 2 saniye bekle, kullanıcı bilgilendirilsin
+  // Tüm BrowserWindow'lara gönder (launcher için)
+  BrowserWindow.getAllWindows().forEach(win => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('update-downloaded', info);
+    }
+  });
+  // Otomatik kurulum yapılmıyor - kullanıcı manuel olarak kurulum yapacak
 });
 
 // IPC Handlers for update

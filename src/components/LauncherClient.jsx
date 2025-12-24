@@ -8,6 +8,10 @@ const LauncherClient = ({ onLogin }) => {
   const [error, setError] = useState('');
   const [particles, setParticles] = useState([]);
   const [loadingBusinessName, setLoadingBusinessName] = useState('');
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateDownloadProgress, setUpdateDownloadProgress] = useState(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // Animated particles for background
   useEffect(() => {
@@ -31,9 +35,68 @@ const LauncherClient = ({ onLogin }) => {
     }
   }, []);
 
+  // Güncelleme kontrolü ve event listener'ları
+  useEffect(() => {
+    if (window.electronAPI) {
+      // Güncelleme kontrolü yap
+      setIsCheckingUpdate(true);
+      window.electronAPI.checkForUpdates().then(() => {
+        setIsCheckingUpdate(false);
+      }).catch(() => {
+        setIsCheckingUpdate(false);
+      });
+
+      // Güncelleme event listener'ları
+      window.electronAPI.onUpdateAvailable((info) => {
+        setUpdateInfo({ ...info, downloaded: false });
+        setIsCheckingUpdate(false);
+      });
+
+      window.electronAPI.onUpdateDownloaded((info) => {
+        setUpdateInfo({ ...info, downloaded: true });
+        setIsDownloading(false);
+      });
+
+      window.electronAPI.onUpdateProgress((progress) => {
+        setUpdateDownloadProgress(progress);
+        setIsDownloading(true);
+      });
+
+      window.electronAPI.onUpdateError((error) => {
+        console.error('Güncelleme hatası:', error);
+        setIsCheckingUpdate(false);
+        setIsDownloading(false);
+      });
+    }
+  }, []);
+
+  const handleDownloadUpdate = async () => {
+    if (window.electronAPI && !isDownloading) {
+      setIsDownloading(true);
+      try {
+        await window.electronAPI.downloadUpdate();
+      } catch (error) {
+        console.error('Güncelleme indirme hatası:', error);
+        setIsDownloading(false);
+      }
+    }
+  };
+
+  const handleInstallUpdate = () => {
+    if (window.electronAPI && updateInfo?.downloaded) {
+      window.electronAPI.installUpdate();
+    }
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
+
+    // Güncelleme varsa ve indirilmemişse giriş yapılamaz
+    if (updateInfo && !updateInfo.downloaded) {
+      setError('Lütfen önce güncellemeyi indirin');
+      return;
+    }
 
     if (!tenantId.trim()) {
       setError('Lütfen Tenant-ID giriniz');
@@ -119,9 +182,93 @@ const LauncherClient = ({ onLogin }) => {
 
       {/* Main Content */}
       <div className="launcher-container">
-        {/* Left Side - Premium Branding */}
+        {/* Left Side - Premium Branding veya Güncelleme */}
         <div className="launcher-left">
-          <div className="brand-section">
+          {updateInfo ? (
+            <div className="update-section">
+              <div className="update-container">
+                <div className="update-icon-wrapper">
+                  <div className="update-icon-glow"></div>
+                  <svg className="update-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="url(#updateIconGradient)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M2 17L12 22L22 17" stroke="url(#updateIconGradient)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M2 12L12 17L22 12" stroke="url(#updateIconGradient)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <defs>
+                      <linearGradient id="updateIconGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#6366f1" />
+                        <stop offset="100%" stopColor="#8b5cf6" />
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                </div>
+                <h2 className="update-title">Yeni Güncelleme Mevcut</h2>
+                <p className="update-subtitle">
+                  Versiyon <span className="update-version">{updateInfo.version}</span> indirilmeye hazır
+                </p>
+
+                {updateDownloadProgress && !updateInfo.downloaded && (
+                  <div className="update-progress-container">
+                    <div className="update-progress-bar">
+                      <div 
+                        className="update-progress-fill"
+                        style={{ width: `${updateDownloadProgress.percent}%` }}
+                      ></div>
+                    </div>
+                    <div className="update-progress-info">
+                      <span>{Math.round(updateDownloadProgress.percent)}%</span>
+                      <span>{Math.round(updateDownloadProgress.transferred / 1024 / 1024)} MB / {Math.round(updateDownloadProgress.total / 1024 / 1024)} MB</span>
+                    </div>
+                  </div>
+                )}
+
+                {updateInfo.downloaded ? (
+                  <div className="update-actions">
+                    <div className="update-success-message">
+                      <svg className="update-success-icon" viewBox="0 0 24 24" fill="none">
+                        <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      <p>Güncelleme başarıyla indirildi!</p>
+                    </div>
+                    <button 
+                      onClick={handleInstallUpdate}
+                      className="update-install-button"
+                    >
+                      <span>Yeniden Başlat ve Güncelle</span>
+                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M10 3L3 10H7V17H13V10H17L10 3Z" fill="currentColor"/>
+                      </svg>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="update-actions">
+                    <button 
+                      onClick={handleDownloadUpdate}
+                      disabled={isDownloading}
+                      className="update-download-button"
+                    >
+                      {isDownloading ? (
+                        <>
+                          <span className="update-spinner"></span>
+                          <span>İndiriliyor...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>İndir</span>
+                          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                            <path d="M10 3V13M10 13L6 9M10 13L14 9M3 16H17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </>
+                      )}
+                    </button>
+                    <p className="update-note">
+                      Güncellemeyi indirmeden giriş yapamazsınız
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="brand-section">
             <div className="logo-container">
               <div className="logo-glow"></div>
               <div className="logo-orb"></div>
@@ -226,6 +373,7 @@ const LauncherClient = ({ onLogin }) => {
               </div>
             </div>
           </div>
+        )}
         </div>
 
         {/* Right Side - Premium Login Form */}
@@ -292,7 +440,7 @@ const LauncherClient = ({ onLogin }) => {
               <button
                 type="submit"
                 className={`login-button ${isLoading ? 'loading' : ''}`}
-                disabled={isLoading || !tenantId.trim()}
+                disabled={isLoading || !tenantId.trim() || (updateInfo && !updateInfo.downloaded)}
               >
                 <div className="button-content">
                   {isLoading ? (
