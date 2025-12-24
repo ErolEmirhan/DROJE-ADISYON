@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { getThemeColors } from '../utils/themeUtils';
 
-const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, onSaveToTable, totalAmount, selectedTable, orderNote, onOrderNoteChange, onToggleGift, onRequestAdisyon }) => {
+const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, onSaveToTable, totalAmount, selectedTable, orderNote, onOrderNoteChange, onToggleGift, onRequestAdisyon, themeColor = '#f97316' }) => {
+  // Tema renklerini hesapla
+  const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [noteText, setNoteText] = useState(orderNote || '');
   const textareaRef = useRef(null);
@@ -22,13 +25,13 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center space-x-3">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center shadow-lg">
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg" style={{ backgroundImage: theme.gradient.main }}>
             <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
           </div>
           <div>
-            <h2 className="text-2xl font-bold gradient-text">Sepet</h2>
+            <h2 className="text-2xl font-bold bg-clip-text text-transparent" style={{ backgroundImage: theme.gradient.main }}>Sepet</h2>
             <p className="text-sm text-gray-500">{cart.length > 0 ? `${cart.length} ürün` : 'Ürün seçin'}</p>
           </div>
         </div>
@@ -155,7 +158,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
         )}
       </div>
 
-      <div className="border-t border-purple-200 pt-6 space-y-4">
+      <div className="border-t pt-6 space-y-4" style={{ borderColor: theme.primary200 }}>
         {cart.length > 0 && (
           <div className="flex justify-between items-center pb-4">
             <span className="text-sm text-gray-500">Sepeti temizle</span>
@@ -175,7 +178,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
         
         <div className="flex justify-between items-center text-lg font-bold text-gray-900">
           <span>TOPLAM</span>
-          <span className="text-3xl bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+          <span className="text-3xl bg-clip-text text-transparent" style={{ backgroundImage: theme.gradient.main }}>
             ₺{totalAmount.toFixed(2)}
           </span>
         </div>
@@ -274,7 +277,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
             </button>
             
             <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-orange-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg" style={{ backgroundImage: theme.gradient.main }}>
                 <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                 </svg>
@@ -325,7 +328,8 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                     }
                     setShowNoteModal(false);
                   }}
-                  className="flex-1 px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all transform hover:scale-105"
+                  className="flex-1 px-6 py-3 text-white rounded-xl font-semibold hover:shadow-lg transition-all transform hover:scale-105"
+                  style={{ backgroundImage: theme.gradient.main }}
                 >
                   Kaydet
                 </button>

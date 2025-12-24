@@ -6,31 +6,40 @@
   <meta name="theme-color" content="#dc2626">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="MAKARA">
+  <meta name="apple-mobile-web-app-title" content="Yaka's Grill">
   <link rel="manifest" href="/manifest.json">
-  <link rel="icon" type="image/png" href="/patron.png">
-  <link rel="apple-touch-icon" href="/patron.png">
-  <title>MAKARA - Admin Dashboard</title>
+  <link rel="icon" type="image/png" href="patron.png">
+  <link rel="apple-touch-icon" href="patron.png">
+  <title id="pageTitle">Yaka's Grill - Admin Dashboard</title>
   
   <!-- Firebase SDK (Compat Version) -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
   
   <script>
-    // Firebase yapılandırması
-    const firebaseConfig = {
-      apiKey: "AIzaSyCdf-c13e0wCafRYHXhIls1epJgD1RjPUA",
-      authDomain: "makara-16344.firebaseapp.com",
-      projectId: "makara-16344",
-      storageBucket: "makara-16344.firebasestorage.app",
-      messagingSenderId: "216769654742",
-      appId: "1:216769654742:web:16792742d4613f4269be77",
-      measurementId: "G-K4XZHP11MM"
+    // Tenant Config Firebase (tüm tenant'ların bilgilerini tutar)
+    const tenantConfigFirebase = {
+      apiKey: "AIzaSyBC6VxvlV3VxDnucAGxPOarYmar1PAItQM",
+      authDomain: "adminself-d2c2b.firebaseapp.com",
+      projectId: "adminself-d2c2b",
+      storageBucket: "adminself-d2c2b.firebasestorage.app",
+      messagingSenderId: "814547626980",
+      appId: "1:814547626980:web:0a2e8fad7aa1ccdea675f1",
+      measurementId: "G-GCRJCCL4K0"
     };
 
-    // Ana Firebase (satışlar, ürünler, kategoriler için)
+    // Tenant bilgileri (dinamik olarak yüklenecek)
+    let currentTenantInfo = null;
+    let businessName = 'Yaka\'s Grill'; // Varsayılan
+    let firebaseConfig = null;
+    let tablesFirebaseConfig = null;
+    let insideTablesCount = 20; // Varsayılan
+    let outsideTablesCount = 20; // Varsayılan
+    let packageTablesCount = 5; // Varsayılan
+    let themeColor = '#f97316'; // Varsayılan turuncu
+    
+    // Global değişkenler (Firebase ve PIN için)
     let app, db;
-    // Masalar için ayrı Firebase (makaramasalar)
     let tablesApp, tablesDb;
     let isAuthenticated = false;
     let realtimeUnsubscribe = null;
@@ -43,48 +52,586 @@
     let tablesUnsubscribe = null; // Masalar için real-time listener
     let activeTablesUnsubscribe = null; // Aktif masa sayısı için real-time listener
     let allStaticTables = {}; // Tüm masaları sakla (iç, dış, paket)
+    
+    // PIN girişi (tenant'a göre dinamik olarak yüklenecek)
+    let adminPin = '1234'; // Varsayılan
 
-    try {
-      // Ana Firebase zaten başlatılmış mı kontrol et
-      try {
-        app = firebase.app();
-      } catch (e) {
-        app = firebase.initializeApp(firebaseConfig);
-      }
-      db = firebase.firestore();
-      console.log('✅ Ana Firebase başarıyla başlatıldı');
-      
-      // Masalar için ayrı Firebase başlat (makaramasalar)
-      const tablesFirebaseConfig = {
-        apiKey: "AIzaSyDu_NUrgas4wZ_wdfAYE-DgxqTpb7vKxyo",
-        authDomain: "makaramasalar.firebaseapp.com",
-        projectId: "makaramasalar",
-        storageBucket: "makaramasalar.firebasestorage.app",
-        messagingSenderId: "840151572206",
-        appId: "1:840151572206:web:0afaf93deea636309e5dff",
-        measurementId: "G-2S0J3566ZY"
-      };
-      
-      try {
-        tablesApp = firebase.initializeApp(tablesFirebaseConfig, 'tables');
-        tablesDb = firebase.firestore(tablesApp);
-        console.log('✅ Masalar Firebase başarıyla başlatıldı (makaramasalar)');
-      } catch (tablesError) {
-        console.error('❌ Masalar Firebase başlatma hatası:', tablesError);
-      }
-      
-      document.getElementById('errorMessage')?.remove();
-    } catch (error) {
-      console.error('❌ Firebase başlatma hatası:', error);
-      const errorDiv = document.createElement('div');
-      errorDiv.id = 'errorMessage';
-      errorDiv.style.cssText = 'background: #ff4444; color: white; padding: 20px; text-align: center; margin: 20px; border-radius: 10px;';
-      errorDiv.innerHTML = '<h3>❌ Firebase SDK Yüklenemedi</h3><p>Lütfen sayfayı yenileyin veya internet bağlantınızı kontrol edin.</p>';
-      document.body.insertBefore(errorDiv, document.body.firstChild);
+    // Hex'i RGB'ye çevir (global utility function)
+    function hexToRgb(hex) {
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+      } : null;
     }
 
-    // PIN girişi
-    const adminPin = '1234';
+    // Tenant bilgilerini Firebase'den yükle
+    async function loadTenantInfo() {
+      try {
+        // Tenant config Firebase'i başlat
+        let tenantConfigApp;
+        try {
+          tenantConfigApp = firebase.app('tenant-config');
+        } catch (e) {
+          tenantConfigApp = firebase.initializeApp(tenantConfigFirebase, 'tenant-config');
+        }
+        const tenantDb = firebase.firestore(tenantConfigApp);
+
+        // URL'den veya localStorage'dan tenant ID'yi al
+        const urlParams = new URLSearchParams(window.location.search);
+        let tenantId = urlParams.get('tenantId') || localStorage.getItem('admin_tenant_id');
+        
+        console.log('🔍 Tenant ID kaynakları:', {
+          url: urlParams.get('tenantId'),
+          localStorage: localStorage.getItem('admin_tenant_id'),
+          electron: 'kontrol ediliyor...'
+        });
+        
+        // Eğer tenant ID yoksa, Electron IPC üzerinden almayı dene
+        if (!tenantId && window.electronAPI && window.electronAPI.getTenantInfo) {
+          try {
+            const tenantInfo = await window.electronAPI.getTenantInfo();
+            console.log('📡 Electron\'dan gelen tenantInfo:', tenantInfo);
+            if (tenantInfo && tenantInfo.tenantId) {
+              tenantId = tenantInfo.tenantId;
+              console.log('✅ Tenant ID Electron\'dan alındı:', tenantId);
+            } else {
+              console.warn('⚠️ Electron tenantInfo\'da tenantId yok');
+            }
+          } catch (e) {
+            console.warn('❌ Tenant ID Electron\'dan alınamadı:', e);
+          }
+        }
+
+        console.log('🔍 Tenant ID aranıyor:', tenantId || '(yok)');
+
+        // Tenant bilgilerini Firestore'dan al
+        const tenantsRef = tenantDb.collection('tenants');
+        let tenantDoc = null;
+        let tenantData = null;
+
+        // Eğer tenant ID varsa, önce document ID'ye göre dene
+        if (tenantId) {
+          try {
+            tenantDoc = await tenantsRef.doc(tenantId).get();
+            if (tenantDoc.exists) {
+              tenantData = tenantDoc.data();
+              console.log('✅ Tenant document ID ile bulundu:', tenantId);
+            }
+          } catch (e) {
+            console.log('⚠️ Document ID ile bulunamadı:', e);
+          }
+
+          // Eğer document ID ile bulunamadıysa, tenantId alanına göre sorgula
+          if (!tenantData) {
+            const querySnapshot = await tenantsRef.where('tenantId', '==', tenantId).get();
+            if (!querySnapshot.empty) {
+              tenantDoc = querySnapshot.docs[0];
+              tenantData = tenantDoc.data();
+              console.log('✅ Tenant alan sorgusu ile bulundu:', tenantId);
+            }
+          }
+        }
+
+        // Eğer hala bulunamadıysa, tüm tenant'ları listele ve ilkini kullan
+        if (!tenantData) {
+          console.log('⚠️ Tenant bulunamadı, tüm tenant\'lar listeleniyor...');
+          const allTenantsSnapshot = await tenantsRef.get();
+          if (!allTenantsSnapshot.empty) {
+            console.log('📋 Mevcut tenant\'lar:');
+            allTenantsSnapshot.docs.forEach((doc, index) => {
+              const data = doc.data();
+              console.log(`  ${index + 1}. Document ID: ${doc.id}, tenantId: ${data.tenantId || 'N/A'}, businessName: ${data.businessName || data.name || 'N/A'}`);
+            });
+            
+            // İlk tenant'ı kullan (veya businessName'e göre "Yaka" içereni bul)
+            let selectedDoc = null;
+            for (const doc of allTenantsSnapshot.docs) {
+              const data = doc.data();
+              const businessName = (data.businessName || data.name || '').toLowerCase();
+              if (businessName.includes('yaka') || businessName.includes('grill')) {
+                selectedDoc = doc;
+                console.log('✅ "Yaka" içeren tenant bulundu:', doc.id);
+                break;
+              }
+            }
+            
+            // Eğer "Yaka" içeren bulunamadıysa, ilk tenant'ı kullan
+            if (!selectedDoc && allTenantsSnapshot.docs.length > 0) {
+              selectedDoc = allTenantsSnapshot.docs[0];
+              console.log('⚠️ "Yaka" içeren tenant bulunamadı, ilk tenant kullanılıyor:', selectedDoc.id);
+            }
+            
+            if (selectedDoc) {
+              tenantDoc = selectedDoc;
+              tenantData = selectedDoc.data();
+              console.log('✅ Tenant seçildi:', selectedDoc.id, '-', tenantData.businessName || tenantData.name || 'N/A');
+            }
+          } else {
+            console.warn('⚠️ Hiç tenant bulunamadı!');
+          }
+        }
+
+        if (tenantData) {
+          currentTenantInfo = tenantData;
+          businessName = tenantData.businessName || tenantData.name || 'Yaka\'s Grill';
+          
+          // Masa sayılarını al
+          // 0 değeri geçerli olduğu için null/undefined kontrolü yapıyoruz
+          insideTablesCount = tenantData.insideTables !== undefined && tenantData.insideTables !== null 
+            ? tenantData.insideTables 
+            : (tenantData.inside_tables !== undefined && tenantData.inside_tables !== null ? tenantData.inside_tables : 20);
+          outsideTablesCount = tenantData.outsideTables !== undefined && tenantData.outsideTables !== null 
+            ? tenantData.outsideTables 
+            : (tenantData.outside_tables !== undefined && tenantData.outside_tables !== null ? tenantData.outside_tables : 20);
+          packageTablesCount = tenantData.packageTables !== undefined && tenantData.packageTables !== null 
+            ? tenantData.packageTables 
+            : (tenantData.package_tables !== undefined && tenantData.package_tables !== null ? tenantData.package_tables : 5);
+          
+          // Sayısal değerlere dönüştür
+          insideTablesCount = typeof insideTablesCount === 'number' ? insideTablesCount : (parseInt(insideTablesCount) || 20);
+          outsideTablesCount = typeof outsideTablesCount === 'number' ? outsideTablesCount : (parseInt(outsideTablesCount) || 20);
+          packageTablesCount = typeof packageTablesCount === 'number' ? packageTablesCount : (parseInt(packageTablesCount) || 5);
+          
+          // Tema rengini al
+          themeColor = tenantData.themeColor || '#f97316';
+          
+          console.log('📋 Tenant verileri:', {
+            businessName: businessName,
+            hasFirebaseApi1: !!tenantData.firebaseApi1,
+            hasFirebaseApi2: !!tenantData.firebaseApi2,
+            hasMainFirebaseConfig: !!tenantData.mainFirebaseConfig,
+            hasTablesFirebaseConfig: !!tenantData.tablesFirebaseConfig,
+            insideTablesCount: insideTablesCount,
+            outsideTablesCount: outsideTablesCount,
+            packageTablesCount: packageTablesCount
+          });
+          
+          // Firebase config'leri parse et - ÖNCE firebaseApi1 ve firebaseApi2'yi kontrol et
+          if (tenantData.firebaseApi1) {
+            try {
+              firebaseConfig = typeof tenantData.firebaseApi1 === 'string' 
+                ? JSON.parse(tenantData.firebaseApi1) 
+                : tenantData.firebaseApi1;
+              console.log('✅ firebaseApi1 yüklendi:', firebaseConfig.projectId || 'N/A');
+            } catch (e) {
+              console.error('❌ firebaseApi1 parse hatası:', e);
+            }
+          } else if (tenantData.mainFirebaseConfig) {
+            try {
+              firebaseConfig = typeof tenantData.mainFirebaseConfig === 'string' 
+                ? JSON.parse(tenantData.mainFirebaseConfig) 
+                : tenantData.mainFirebaseConfig;
+              console.log('✅ mainFirebaseConfig yüklendi:', firebaseConfig.projectId || 'N/A');
+            } catch (e) {
+              console.error('❌ mainFirebaseConfig parse hatası:', e);
+            }
+          }
+
+          if (tenantData.firebaseApi2) {
+            try {
+              tablesFirebaseConfig = typeof tenantData.firebaseApi2 === 'string' 
+                ? JSON.parse(tenantData.firebaseApi2) 
+                : tenantData.firebaseApi2;
+              console.log('✅ firebaseApi2 yüklendi:', tablesFirebaseConfig.projectId || 'N/A');
+            } catch (e) {
+              console.error('❌ firebaseApi2 parse hatası:', e);
+            }
+          } else if (tenantData.tablesFirebaseConfig) {
+            try {
+              tablesFirebaseConfig = typeof tenantData.tablesFirebaseConfig === 'string' 
+                ? JSON.parse(tenantData.tablesFirebaseConfig) 
+                : tenantData.tablesFirebaseConfig;
+              console.log('✅ tablesFirebaseConfig yüklendi:', tablesFirebaseConfig.projectId || 'N/A');
+            } catch (e) {
+              console.error('❌ tablesFirebaseConfig parse hatası:', e);
+            }
+          }
+
+          // Admin PIN'i güncelle
+          if (tenantData.adminPin) {
+            adminPin = tenantData.adminPin;
+            console.log('✅ Admin PIN güncellendi');
+          }
+
+          // UI'ı güncelle
+          updateUIWithTenantInfo();
+          
+          console.log('✅ Tenant bilgileri yüklendi:', businessName);
+          console.log('📦 Final firebaseConfig:', firebaseConfig ? (firebaseConfig.projectId || 'N/A') : 'NULL');
+          console.log('📦 Final tablesFirebaseConfig:', tablesFirebaseConfig ? (tablesFirebaseConfig.projectId || 'N/A') : 'NULL');
+        } else {
+          console.warn('⚠️ Tenant bulunamadı (ID:', tenantId, '), varsayılan değerler kullanılıyor');
+          console.warn('⚠️ Tüm tenant\'ları listeleme...');
+          // Tüm tenant'ları listele (debug için)
+          tenantsRef.get().then(snapshot => {
+            console.log('📋 Mevcut tenant\'lar:', snapshot.docs.map(doc => ({
+              id: doc.id,
+              data: doc.data()
+            })));
+          }).catch(e => console.error('❌ Tenant listesi alınamadı:', e));
+          
+          // Varsayılan Firebase config (Yaka's Grill için)
+          firebaseConfig = {
+            apiKey: "AIzaSyCdf-c13e0wCafRYHXhIls1epJgD1RjPUA",
+            authDomain: "makara-16344.firebaseapp.com",
+            projectId: "makara-16344",
+            storageBucket: "makara-16344.firebasestorage.app",
+            messagingSenderId: "216769654742",
+            appId: "1:216769654742:web:16792742d4613f4269be77",
+            measurementId: "G-K4XZHP11MM"
+          };
+        }
+      } catch (error) {
+        console.error('❌ Tenant bilgisi yüklenemedi:', error);
+        // Varsayılan değerler
+        businessName = 'Yaka\'s Grill';
+        firebaseConfig = {
+          apiKey: "AIzaSyCdf-c13e0wCafRYHXhIls1epJgD1RjPUA",
+          authDomain: "makara-16344.firebaseapp.com",
+          projectId: "makara-16344",
+          storageBucket: "makara-16344.firebasestorage.app",
+          messagingSenderId: "216769654742",
+          appId: "1:216769654742:web:16792742d4613f4269be77",
+          measurementId: "G-K4XZHP11MM"
+        };
+      }
+    }
+
+    // UI'ı tenant bilgilerine göre güncelle
+    function updateUIWithTenantInfo() {
+      // Title güncelle
+      document.title = `${businessName} - Admin Dashboard`;
+      
+      // Meta tag'leri güncelle
+      const appleTitleMeta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+      if (appleTitleMeta) {
+        appleTitleMeta.setAttribute('content', businessName);
+      }
+
+      // Navbar title güncelle
+      const navbarTitle = document.getElementById('navbarBusinessName') || document.querySelector('.navbar-title');
+      if (navbarTitle) {
+        navbarTitle.textContent = `${businessName} Admin Dashboard`;
+      }
+
+      // Splash screen title güncelle
+      const splashTitle = document.getElementById('splashBusinessName') || document.querySelector('.splash-main-text');
+      if (splashTitle) {
+        splashTitle.textContent = businessName;
+      }
+
+      // Admin PIN'i güncelle (eğer tenant'ta varsa)
+      if (currentTenantInfo && currentTenantInfo.adminPin) {
+        adminPin = currentTenantInfo.adminPin;
+      }
+
+      // Tema rengini güncelle (eğer tenant'ta varsa)
+      if (currentTenantInfo && currentTenantInfo.themeColor) {
+        themeColor = currentTenantInfo.themeColor;
+        const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+        if (themeColorMeta) {
+          themeColorMeta.setAttribute('content', themeColor);
+        }
+        // CSS değişkenini güncelle
+        document.documentElement.style.setProperty('--primary', themeColor);
+        // Tema renklerini dinamik olarak uygula
+        applyThemeColors(themeColor);
+      } else {
+        // Varsayılan tema rengini uygula
+        applyThemeColors(themeColor);
+      }
+    }
+
+    // Tema renklerini dinamik olarak uygula
+    function applyThemeColors(primaryColor) {
+      // hexToRgb artık global scope'ta tanımlı
+
+      // Parlaklığı ayarla
+      const adjustBrightness = (hex, percent) => {
+        const rgb = hexToRgb(hex);
+        if (!rgb) return hex;
+        const r = Math.max(0, Math.min(255, rgb.r + (rgb.r * percent / 100)));
+        const g = Math.max(0, Math.min(255, rgb.g + (rgb.g * percent / 100)));
+        const b = Math.max(0, Math.min(255, rgb.b + (rgb.b * percent / 100)));
+        return `#${Math.round(r).toString(16).padStart(2, '0')}${Math.round(g).toString(16).padStart(2, '0')}${Math.round(b).toString(16).padStart(2, '0')}`;
+      };
+
+      const primary = primaryColor;
+      const primaryLight = adjustBrightness(primary, 15);
+      const primaryDark = adjustBrightness(primary, -20);
+      const primaryDarker = adjustBrightness(primary, -30);
+      const rgb = hexToRgb(primary);
+
+      // CSS değişkenlerini güncelle
+      const root = document.documentElement;
+      root.style.setProperty('--theme-primary', primary);
+      root.style.setProperty('--theme-primary-light', primaryLight);
+      root.style.setProperty('--theme-primary-dark', primaryDark);
+      root.style.setProperty('--theme-primary-darker', primaryDarker);
+      if (rgb) {
+        root.style.setProperty('--theme-rgb', `${rgb.r}, ${rgb.g}, ${rgb.b}`);
+      }
+
+      // Dinamik stil ekle veya güncelle
+      let styleElement = document.getElementById('dynamic-theme-styles');
+      if (!styleElement) {
+        styleElement = document.createElement('style');
+        styleElement.id = 'dynamic-theme-styles';
+        document.head.appendChild(styleElement);
+      }
+
+      styleElement.textContent = `
+        /* Pembe/Purple renkleri tema rengiyle değiştir */
+        .stat-card-purple,
+        .stat-card-pink {
+          border-color: ${primary} !important;
+        }
+        .stat-card-purple:hover,
+        .stat-card-pink:hover {
+          border-color: ${primaryDark} !important;
+          box-shadow: 0 8px 24px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.2), 0 0 0 1px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1) !important;
+        }
+        .stat-card-purple .stat-content h3,
+        .stat-card-pink .stat-content h3 {
+          color: ${primaryDark} !important;
+        }
+        .stat-card-purple .stat-value,
+        .stat-card-pink .stat-value {
+          color: ${primary} !important;
+        }
+        .staff-stat-card.purple {
+          border-color: ${primary} !important;
+        }
+        .staff-stat-card.purple .stat-value {
+          color: ${primary} !important;
+        }
+        .tab-button.active {
+          border-bottom: 2px solid ${primary} !important;
+          border-color: ${primary} !important;
+          color: ${primaryDark} !important;
+        }
+        .tab-button.active:hover {
+          border-color: ${primaryDark} !important;
+          background: linear-gradient(135deg, ${primary} 0%, ${primaryDark} 100%) !important;
+        }
+        .refresh-btn {
+          border-color: ${primary} !important;
+          color: ${primary} !important;
+        }
+        .refresh-btn:hover {
+          border-color: ${primaryDark} !important;
+          background: rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.05) !important;
+          box-shadow: 0 4px 16px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.25) !important;
+        }
+        .logout-btn {
+          border-color: ${primary} !important;
+          background: linear-gradient(135deg, ${primary} 0%, ${primaryDark} 100%) !important;
+        }
+        .logout-btn:hover {
+          border-color: ${primaryDark} !important;
+          background: linear-gradient(135deg, ${primaryDark} 0%, ${primaryDarker} 100%) !important;
+          box-shadow: 0 4px 16px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.35) !important;
+        }
+        .table-card.inside-empty {
+          background: rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1) !important;
+          border-color: rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3) !important;
+        }
+        .table-card.inside-empty .table-status {
+          color: ${primary} !important;
+        }
+        .cancel-item {
+          border-left: 4px solid ${primary} !important;
+        }
+        .cancel-item-header {
+          border-color: ${primary} !important;
+        }
+        .cancel-item-header strong {
+          color: ${primaryDark} !important;
+        }
+        .cancel-reason {
+          background: linear-gradient(135deg, ${primary} 0%, ${primaryDark} 100%) !important;
+        }
+        .date-filter-btn.active {
+          border-bottom: 2px solid ${primary} !important;
+          border-color: ${primary} !important;
+          color: ${primaryDark} !important;
+        }
+        .date-filter-btn.active:hover {
+          background: linear-gradient(90deg, ${primary} 0%, ${primaryDark} 100%) !important;
+        }
+        .analysis-text-content {
+          border-left: 4px solid ${primary} !important;
+        }
+        .analysis-card:hover {
+          border-color: ${primary} !important;
+          box-shadow: 0 4px 12px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1) !important;
+        }
+        .admin-splash-screen::before {
+          background: radial-gradient(circle, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.03) 0%, transparent 70%) !important;
+        }
+        .admin-splash-screen::after {
+          background: radial-gradient(circle, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.02) 0%, transparent 70%) !important;
+        }
+        .tab-btn.active {
+          border-color: ${primary} !important;
+          background: linear-gradient(135deg, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1) 0%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.05) 100%) !important;
+          color: ${primaryDark} !important;
+          box-shadow: 0 8px 24px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.2), 0 0 0 1px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1) !important;
+        }
+        .tab-btn.active .tab-btn-text {
+          color: ${primaryDark} !important;
+        }
+        .tab-btn.active .tab-btn-indicator {
+          background: linear-gradient(90deg, ${primary} 0%, ${primaryDark} 100%) !important;
+        }
+        .analyze-btn {
+          border-color: ${primary} !important;
+          box-shadow: 0 2px 8px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.15) !important;
+        }
+        .analyze-btn:hover {
+          border-color: ${primaryDark} !important;
+          background: linear-gradient(135deg, ${primary} 0%, ${primaryDark} 100%) !important;
+          color: #ffffff !important;
+        }
+        .payment-progress-fill {
+          background: linear-gradient(90deg, #6366f1, ${primary}) !important;
+        }
+      `;
+    }
+
+    // Sayfa yüklendiğinde tenant bilgilerini yükle
+    document.addEventListener('DOMContentLoaded', async () => {
+      await loadTenantInfo();
+      initializeFirebase();
+    });
+
+    // Firebase yapılandırması (dinamik olarak yüklenecek)
+    function initializeFirebase() {
+      console.log('🔧 initializeFirebase çağrıldı');
+      console.log('📦 firebaseConfig durumu:', firebaseConfig ? '✅ Yüklü (' + (firebaseConfig.projectId || 'N/A') + ')' : '❌ NULL');
+      console.log('📦 tablesFirebaseConfig durumu:', tablesFirebaseConfig ? '✅ Yüklü (' + (tablesFirebaseConfig.projectId || 'N/A') + ')' : '❌ NULL');
+      
+      // Eğer firebaseConfig yüklenmediyse varsayılan kullan
+      if (!firebaseConfig) {
+        console.warn('⚠️ firebaseConfig yüklenmedi, varsayılan değerler kullanılıyor');
+        firebaseConfig = {
+          apiKey: "AIzaSyCdf-c13e0wCafRYHXhIls1epJgD1RjPUA",
+          authDomain: "makara-16344.firebaseapp.com",
+          projectId: "makara-16344",
+          storageBucket: "makara-16344.firebasestorage.app",
+          messagingSenderId: "216769654742",
+          appId: "1:216769654742:web:16792742d4613f4269be77",
+          measurementId: "G-K4XZHP11MM"
+        };
+      } else {
+        console.log('✅ Tenant\'tan gelen firebaseConfig kullanılıyor:', firebaseConfig.projectId || 'N/A');
+      }
+
+      try {
+        // Ana Firebase zaten başlatılmış mı kontrol et
+        try {
+          app = firebase.app('main');
+          firebase.app('main').delete();
+        } catch (e) {
+          // App yok, devam et
+        }
+        app = firebase.initializeApp(firebaseConfig, 'main');
+        db = firebase.firestore(app);
+        console.log('✅ Ana Firebase başarıyla başlatıldı:', firebaseConfig.projectId);
+        
+        // Masalar için ayrı Firebase başlat
+        if (!tablesFirebaseConfig) {
+          console.warn('⚠️ tablesFirebaseConfig yüklenmedi, varsayılan değerler kullanılıyor');
+          // Varsayılan masalar Firebase config
+          tablesFirebaseConfig = {
+            apiKey: "AIzaSyDu_NUrgas4wZ_wdfAYE-DgxqTpb7vKxyo",
+            authDomain: "makaramasalar.firebaseapp.com",
+            projectId: "makaramasalar",
+            storageBucket: "makaramasalar.firebasestorage.app",
+            messagingSenderId: "840151572206",
+            appId: "1:840151572206:web:0afaf93deea636309e5dff",
+            measurementId: "G-2S0J3566ZY"
+          };
+        } else {
+          console.log('✅ Tenant\'tan gelen tablesFirebaseConfig kullanılıyor:', tablesFirebaseConfig.projectId || 'N/A');
+        }
+        
+        try {
+          try {
+            tablesApp = firebase.app('tables');
+            firebase.app('tables').delete();
+          } catch (e) {
+            // App yok, devam et
+          }
+          tablesApp = firebase.initializeApp(tablesFirebaseConfig, 'tables');
+          tablesDb = firebase.firestore(tablesApp);
+          console.log('✅ Masalar Firebase başarıyla başlatıldı:', tablesFirebaseConfig.projectId);
+        } catch (tablesError) {
+          console.error('❌ Masalar Firebase başlatma hatası:', tablesError);
+        }
+        
+        document.getElementById('errorMessage')?.remove();
+      } catch (error) {
+        console.error('❌ Firebase başlatma hatası:', error);
+        const errorDiv = document.createElement('div');
+        errorDiv.id = 'errorMessage';
+        errorDiv.style.cssText = 'background: #ff4444; color: white; padding: 20px; text-align: center; margin: 20px; border-radius: 10px;';
+        errorDiv.innerHTML = '<h3>❌ Firebase SDK Yüklenemedi</h3><p>Lütfen sayfayı yenileyin veya internet bağlantınızı kontrol edin.</p>';
+        document.body.insertBefore(errorDiv, document.body.firstChild);
+      }
+    }
+
+    // Gece 03:00'a göre günlük tarih hesaplama fonksiyonları
+    // Gece 03:00'tan önceki saatler bir önceki güne ait sayılır
+    function getBusinessDayDate() {
+      const now = new Date();
+      const hour = now.getHours();
+      // Eğer saat 03:00'tan önceyse, bir önceki günü döndür
+      if (hour < 3) {
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        return yesterday;
+      }
+      return now;
+    }
+
+    function getTodayDateString() {
+      const businessDay = getBusinessDayDate();
+      return businessDay.toLocaleDateString('tr-TR');
+    }
+
+    function getYesterdayDateString() {
+      const businessDay = getBusinessDayDate();
+      const yesterday = new Date(businessDay);
+      yesterday.setDate(yesterday.getDate() - 1);
+      return yesterday.toLocaleDateString('tr-TR');
+    }
+
+    // Tarih karşılaştırması için - gece 03:00'a göre
+    function getBusinessDayStart(date) {
+      const d = new Date(date);
+      // Eğer tarih bugünse ve saat 03:00'tan önceyse, bir önceki günün başlangıcını döndür
+      const now = new Date();
+      if (d.toDateString() === now.toDateString() && now.getHours() < 3) {
+        d.setDate(d.getDate() - 1);
+      }
+      d.setHours(3, 0, 0, 0);
+      return d;
+    }
+
+    function getBusinessDayEnd(date) {
+      const d = new Date(date);
+      // Eğer tarih bugünse ve saat 03:00'tan önceyse, bir önceki günün sonunu döndür
+      const now = new Date();
+      if (d.toDateString() === now.toDateString() && now.getHours() < 3) {
+        d.setDate(d.getDate() - 1);
+      }
+      d.setHours(2, 59, 59, 999);
+      d.setDate(d.getDate() + 1); // Bir sonraki günün 02:59:59'u
+      return d;
+    }
 
     function showLogin() {
       const loginSection = document.getElementById('loginSection');
@@ -139,23 +686,32 @@
           setTimeout(() => {
             loader.style.display = 'none';
             
-            // Firebase kontrolü ve dashboard gösterimi
-            if (!db) {
-              console.error('❌ Ana Firebase başlatılamadı');
-              return;
-            }
+            // Firebase'in hazır olmasını bekle
+            const checkFirebase = setInterval(() => {
+              if (db) {
+                clearInterval(checkFirebase);
+                
+                if (!tablesDb) {
+                  console.warn('⚠️ Masalar Firebase başlatılamadı - masalar bölümü çalışmayabilir');
+                } else {
+                  console.log('✅ Masalar Firebase hazır');
+                }
+                
+                if (sessionStorage.getItem('adminAuthenticated') === 'true') {
+                  showDashboard();
+                } else {
+                  showLogin();
+                }
+              }
+            }, 100);
             
-            if (!tablesDb) {
-              console.warn('⚠️ Masalar Firebase başlatılamadı - masalar bölümü çalışmayabilir');
-            } else {
-              console.log('✅ Masalar Firebase hazır');
-            }
-            
-            if (sessionStorage.getItem('adminAuthenticated') === 'true') {
-              showDashboard();
-            } else {
-              showLogin();
-            }
+            // 5 saniye sonra timeout
+            setTimeout(() => {
+              clearInterval(checkFirebase);
+              if (!db) {
+                console.error('❌ Ana Firebase başlatılamadı');
+              }
+            }, 5000);
           }, 500);
         }
       }, 2500);
@@ -406,17 +962,17 @@
       const dayName = days[date.getDay()];
       const monthName = months[parseInt(month) - 1];
       
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const saleDate = new Date(year, month - 1, day);
-      saleDate.setHours(0, 0, 0, 0);
-      
-      const yesterday = new Date(today);
+      const businessDay = getBusinessDayDate();
+      const todayStr = businessDay.toLocaleDateString('tr-TR');
+      const yesterday = new Date(businessDay);
       yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toLocaleDateString('tr-TR');
       
-      if (saleDate.getTime() === today.getTime()) {
+      const saleDateStr = `${day}.${month}.${year}`;
+      
+      if (saleDateStr === todayStr) {
         return `Bugün - ${day} ${monthName} ${year}`;
-      } else if (saleDate.getTime() === yesterday.getTime()) {
+      } else if (saleDateStr === yesterdayStr) {
         return `Dün - ${day} ${monthName} ${year}`;
       } else {
         return `${day} ${monthName} ${year} - ${dayName}`;
@@ -425,49 +981,54 @@
 
     // Satışları tarih filtresine göre filtrele
     function filterSalesByDateForHistory(sales) {
+      const businessDay = getBusinessDayDate();
       const now = new Date();
       now.setHours(23, 59, 59, 999);
       
       if (salesDateFilter === 'yesterday') {
-        const yesterday = new Date(now);
+        const yesterday = new Date(businessDay);
         yesterday.setDate(yesterday.getDate() - 1);
-        yesterday.setHours(0, 0, 0, 0);
-        const yesterdayEnd = new Date(yesterday);
-        yesterdayEnd.setHours(23, 59, 59, 999);
+        const yesterdayStr = yesterday.toLocaleDateString('tr-TR');
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-          const [day, month, year] = sale.sale_date.split('.');
-          if (!day || !month || !year) return false;
-          const saleDate = new Date(year, month - 1, day);
-          saleDate.setHours(0, 0, 0, 0);
-          return saleDate >= yesterday && saleDate <= yesterdayEnd;
+          return sale.sale_date === yesterdayStr;
         });
       } else if (salesDateFilter === 'week') {
-        const weekAgo = new Date(now);
+        const weekAgo = new Date(businessDay);
         weekAgo.setDate(weekAgo.getDate() - 7);
-        weekAgo.setHours(0, 0, 0, 0);
+        const weekAgoStr = weekAgo.toLocaleDateString('tr-TR');
+        const todayStr = businessDay.toLocaleDateString('tr-TR');
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
+          // Tarih string karşılaştırması için parse et
           const [day, month, year] = sale.sale_date.split('.');
           if (!day || !month || !year) return false;
           const saleDate = new Date(year, month - 1, day);
+          const weekAgoDate = new Date(weekAgo);
+          weekAgoDate.setHours(0, 0, 0, 0);
+          const todayDate = new Date(businessDay);
+          todayDate.setHours(23, 59, 59, 999);
           saleDate.setHours(0, 0, 0, 0);
-          return saleDate >= weekAgo && saleDate <= now;
+          return saleDate >= weekAgoDate && saleDate <= todayDate;
         });
       } else if (salesDateFilter === 'month') {
-        const monthAgo = new Date(now);
+        const monthAgo = new Date(businessDay);
         monthAgo.setMonth(monthAgo.getMonth() - 1);
-        monthAgo.setHours(0, 0, 0, 0);
+        const todayStr = businessDay.toLocaleDateString('tr-TR');
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
           const [day, month, year] = sale.sale_date.split('.');
           if (!day || !month || !year) return false;
           const saleDate = new Date(year, month - 1, day);
+          const monthAgoDate = new Date(monthAgo);
+          monthAgoDate.setHours(0, 0, 0, 0);
+          const todayDate = new Date(businessDay);
+          todayDate.setHours(23, 59, 59, 999);
           saleDate.setHours(0, 0, 0, 0);
-          return saleDate >= monthAgo && saleDate <= now;
+          return saleDate >= monthAgoDate && saleDate <= todayDate;
         });
       } else if (salesDateFilter === 'custom' && salesCustomDateRange.start && salesCustomDateRange.end) {
         const startDate = new Date(salesCustomDateRange.start);
@@ -850,7 +1411,7 @@
 
     // İstatistikleri güncelle
     function updateStats(sales) {
-      const today = new Date().toLocaleDateString('tr-TR');
+      const today = getTodayDateString();
       // Masrafları hariç tut
       const todaySales = sales.filter(s => 
         s.sale_date === today && 
@@ -990,49 +1551,50 @@
 
     // Tarih filtresine göre satışları filtrele
     function filterSalesByDate(sales) {
+      const businessDay = getBusinessDayDate();
       const now = new Date();
       now.setHours(23, 59, 59, 999);
       
       if (reportDateFilter === 'yesterday') {
-        const yesterday = new Date(now);
+        const yesterday = new Date(businessDay);
         yesterday.setDate(yesterday.getDate() - 1);
-        yesterday.setHours(0, 0, 0, 0);
-        const yesterdayEnd = new Date(yesterday);
-        yesterdayEnd.setHours(23, 59, 59, 999);
+        const yesterdayStr = yesterday.toLocaleDateString('tr-TR');
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-          const [day, month, year] = sale.sale_date.split('.');
-          if (!day || !month || !year) return false;
-          const saleDate = new Date(year, month - 1, day);
-          saleDate.setHours(0, 0, 0, 0);
-          return saleDate >= yesterday && saleDate <= yesterdayEnd;
+          return sale.sale_date === yesterdayStr;
         });
       } else if (reportDateFilter === 'week') {
-        const weekAgo = new Date(now);
+        const weekAgo = new Date(businessDay);
         weekAgo.setDate(weekAgo.getDate() - 7);
-        weekAgo.setHours(0, 0, 0, 0);
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
           const [day, month, year] = sale.sale_date.split('.');
           if (!day || !month || !year) return false;
           const saleDate = new Date(year, month - 1, day);
+          const weekAgoDate = new Date(weekAgo);
+          weekAgoDate.setHours(0, 0, 0, 0);
+          const todayDate = new Date(businessDay);
+          todayDate.setHours(23, 59, 59, 999);
           saleDate.setHours(0, 0, 0, 0);
-          return saleDate >= weekAgo && saleDate <= now;
+          return saleDate >= weekAgoDate && saleDate <= todayDate;
         });
       } else if (reportDateFilter === 'month') {
-        const monthAgo = new Date(now);
+        const monthAgo = new Date(businessDay);
         monthAgo.setMonth(monthAgo.getMonth() - 1);
-        monthAgo.setHours(0, 0, 0, 0);
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
           const [day, month, year] = sale.sale_date.split('.');
           if (!day || !month || !year) return false;
           const saleDate = new Date(year, month - 1, day);
+          const monthAgoDate = new Date(monthAgo);
+          monthAgoDate.setHours(0, 0, 0, 0);
+          const todayDate = new Date(businessDay);
+          todayDate.setHours(23, 59, 59, 999);
           saleDate.setHours(0, 0, 0, 0);
-          return saleDate >= monthAgo && saleDate <= now;
+          return saleDate >= monthAgoDate && saleDate <= todayDate;
         });
       } else if (reportDateFilter === 'custom' && customDateRange.start && customDateRange.end) {
         const startDate = new Date(customDateRange.start);
@@ -1256,20 +1818,19 @@
           : 'Özel Tarih Aralığı'
       };
 
-      // Seçilen zaman dilimi bilgisi
+      // Seçilen zaman dilimi bilgisi (gece 03:00'a göre)
       let periodInfo = '';
+      const businessDay = getBusinessDayDate();
       if (reportDateFilter === 'yesterday') {
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        periodInfo = yesterday.toLocaleDateString('tr-TR');
+        periodInfo = getYesterdayDateString();
       } else if (reportDateFilter === 'week') {
-        const weekAgo = new Date();
+        const weekAgo = new Date(businessDay);
         weekAgo.setDate(weekAgo.getDate() - 7);
-        periodInfo = `${weekAgo.toLocaleDateString('tr-TR')} - ${new Date().toLocaleDateString('tr-TR')}`;
+        periodInfo = `${weekAgo.toLocaleDateString('tr-TR')} - ${businessDay.toLocaleDateString('tr-TR')}`;
       } else if (reportDateFilter === 'month') {
-        const monthAgo = new Date();
+        const monthAgo = new Date(businessDay);
         monthAgo.setMonth(monthAgo.getMonth() - 1);
-        periodInfo = `${monthAgo.toLocaleDateString('tr-TR')} - ${new Date().toLocaleDateString('tr-TR')}`;
+        periodInfo = `${monthAgo.toLocaleDateString('tr-TR')} - ${businessDay.toLocaleDateString('tr-TR')}`;
       } else if (reportDateFilter === 'custom' && customDateRange.start && customDateRange.end) {
         periodInfo = `${customDateRange.start.toLocaleDateString('tr-TR')} - ${customDateRange.end.toLocaleDateString('tr-TR')}`;
       } else {
@@ -1665,9 +2226,9 @@
       // Yeni Firebase'den masaları dinle (makaramasalar)
       if (!tablesDb) {
         console.warn('⚠️ tablesDb bulunamadı - sadece statik masalar gösterilecek');
-        // Firebase olmasa bile tüm masaları göster
+        // Firebase olmasa bile tüm masaları göster (dinamik)
         allStaticTables = {};
-        for (let i = 1; i <= 20; i++) {
+        for (let i = 1; i <= insideTablesCount; i++) {
           allStaticTables[`inside-${i}`] = {
             table_id: `inside-${i}`,
             table_name: `İçeri ${i}`,
@@ -1678,7 +2239,7 @@
             items: []
           };
         }
-        for (let i = 1; i <= 20; i++) {
+        for (let i = 1; i <= outsideTablesCount; i++) {
           allStaticTables[`outside-${i}`] = {
             table_id: `outside-${i}`,
             table_name: `Dışarı ${i}`,
@@ -1689,7 +2250,7 @@
             items: []
           };
         }
-        for (let i = 1; i <= 5; i++) {
+        for (let i = 1; i <= packageTablesCount; i++) {
           allStaticTables[`package-inside-${i}`] = {
             table_id: `package-inside-${i}`,
             table_name: `Paket ${i}`,
@@ -1700,7 +2261,7 @@
             items: []
           };
         }
-        for (let i = 1; i <= 5; i++) {
+        for (let i = 1; i <= packageTablesCount; i++) {
           allStaticTables[`package-outside-${i}`] = {
             table_id: `package-outside-${i}`,
             table_name: `Paket ${i}`,
@@ -1729,8 +2290,8 @@
       // Global allStaticTables objesini kullan
       allStaticTables = {};
       
-      // İçeri masalar (1-20)
-      for (let i = 1; i <= 20; i++) {
+      // İçeri masalar (dinamik)
+      for (let i = 1; i <= insideTablesCount; i++) {
         const tableId = `inside-${i}`;
         allStaticTables[tableId] = {
           table_id: tableId,
@@ -1743,8 +2304,8 @@
         };
       }
       
-      // Dışarı masalar (1-20)
-      for (let i = 1; i <= 20; i++) {
+      // Dışarı masalar (dinamik)
+      for (let i = 1; i <= outsideTablesCount; i++) {
         const tableId = `outside-${i}`;
         allStaticTables[tableId] = {
           table_id: tableId,
@@ -1757,8 +2318,8 @@
         };
       }
       
-      // Paket masaları - İçeri (1-5)
-      for (let i = 1; i <= 5; i++) {
+      // Paket masaları - İçeri (dinamik)
+      for (let i = 1; i <= packageTablesCount; i++) {
         const tableId = `package-inside-${i}`;
         allStaticTables[tableId] = {
           table_id: tableId,
@@ -1771,8 +2332,8 @@
         };
       }
       
-      // Paket masaları - Dışarı (1-5)
-      for (let i = 1; i <= 5; i++) {
+      // Paket masaları - Dışarı (dinamik)
+      for (let i = 1; i <= packageTablesCount; i++) {
         const tableId = `package-outside-${i}`;
         allStaticTables[tableId] = {
           table_id: tableId,
@@ -1907,10 +2468,18 @@
       } else {
         // Boş masalar
         if (isInside) {
-          // İç masalar: açık pembe
-          bgColor = '#fce7f3';
-          borderColor = '#f9a8d4';
-          statusColor = '#ec4899';
+          // İç masalar: tema rengi ile açık ton
+          const rgb = hexToRgb(themeColor || '#f97316');
+          if (rgb) {
+            bgColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1)`;
+            borderColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)`;
+            statusColor = themeColor || '#f97316';
+          } else {
+            // Fallback için varsayılan renkler (tema rengi yüklenemezse)
+            bgColor = '#fce7f3';
+            borderColor = '#f9a8d4';
+            statusColor = themeColor || '#f97316';
+          }
         } else if (isOutside) {
           // Dış masalar: açık sarı
           bgColor = '#fef3c7';
@@ -2566,11 +3135,9 @@
       
       content.innerHTML = '';
       
-      // Dün ve bugün verilerini hesapla
-      const today = new Date().toLocaleDateString('tr-TR');
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toLocaleDateString('tr-TR');
+      // Dün ve bugün verilerini hesapla (gece 03:00'a göre)
+      const today = getTodayDateString();
+      const yesterdayStr = getYesterdayDateString();
       
       // Masrafları hariç tut
       const todaySales = allSales.filter(s => 
@@ -3177,9 +3744,9 @@
       --bg-subtle: #f9fafb;
       --border-subtle: #e5e7eb;
       --border-strong: #d1d5db;
-      --primary: #dc2626;       /* Makara kırmızı */
-      --primary-soft: #fee2e2;
-      --primary-strong: #b91c1c;
+      --primary: #f97316;       /* Tema rengi (tenant'tan gelecek) */
+      --primary-soft: #fff7ed;
+      --primary-strong: #ea580c;
       --accent: #2563eb;
       --text-main: #111827;
       --text-muted: #6b7280;
@@ -3315,7 +3882,7 @@
       top: 0;
       z-index: 100;
       background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-      border-bottom: 2px solid #ec4899;
+      border-bottom: 2px solid var(--primary, #f97316);
       padding: 12px 20px;
       margin: 0;
       box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
@@ -3404,28 +3971,28 @@
     }
 
     .refresh-btn {
-      border-color: #ec4899;
-      color: #ec4899;
+      border-color: var(--primary, #f97316);
+      color: var(--primary, #f97316);
       background: #ffffff;
     }
 
     .refresh-btn:hover {
-      border-color: #db2777;
-      background: #fdf2f8;
-      box-shadow: 0 4px 16px rgba(236, 72, 153, 0.25);
+      border-color: var(--primary-strong, #ea580c);
+      background: var(--primary-soft, #fff7ed);
+      box-shadow: 0 4px 16px rgba(249, 115, 22, 0.25);
       transform: translateY(-1px);
     }
 
     .logout-btn {
-      border-color: #ec4899;
+      border-color: var(--primary, #f97316);
       color: #ffffff;
-      background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+      background: linear-gradient(135deg, var(--primary, #f97316) 0%, var(--primary-strong, #ea580c) 100%);
     }
 
     .logout-btn:hover {
-      border-color: #db2777;
-      background: linear-gradient(135deg, #db2777 0%, #be185d 100%);
-      box-shadow: 0 4px 16px rgba(236, 72, 153, 0.35);
+      border-color: var(--primary-strong, #ea580c);
+      background: linear-gradient(135deg, var(--primary-strong, #ea580c) 0%, #c2410c 100%);
+      box-shadow: 0 4px 16px rgba(249, 115, 22, 0.35);
       transform: translateY(-1px);
     }
 
@@ -3495,23 +4062,23 @@
     }
 
     .stat-card-purple {
-      border-color: #8b5cf6;
+      border-color: var(--primary, #f97316);
       background: #ffffff;
     }
 
     .stat-card-purple:hover {
-      border-color: #7c3aed;
-      box-shadow: 0 8px 24px rgba(139, 92, 246, 0.2), 0 0 0 1px rgba(139, 92, 246, 0.1);
+      border-color: var(--primary-strong, #ea580c);
+      box-shadow: 0 8px 24px rgba(249, 115, 22, 0.2), 0 0 0 1px rgba(249, 115, 22, 0.1);
     }
 
     .stat-card-pink {
-      border-color: #ec4899;
+      border-color: var(--primary, #f97316);
       background: #ffffff;
     }
 
     .stat-card-pink:hover {
-      border-color: #db2777;
-      box-shadow: 0 8px 24px rgba(236, 72, 153, 0.2), 0 0 0 1px rgba(236, 72, 153, 0.1);
+      border-color: var(--primary-strong, #ea580c);
+      box-shadow: 0 8px 24px rgba(249, 115, 22, 0.2), 0 0 0 1px rgba(249, 115, 22, 0.1);
     }
 
     .stat-icon {
@@ -3561,11 +4128,11 @@
     }
 
     .stat-card-purple .stat-content h3 {
-      color: #7c3aed;
+      color: var(--primary-strong, #ea580c);
     }
 
     .stat-card-pink .stat-content h3 {
-      color: #db2777;
+      color: var(--primary-strong, #ea580c);
     }
 
     .stat-value {
@@ -3586,11 +4153,11 @@
     }
 
     .stat-card-purple .stat-value {
-      color: #6d28d9;
+      color: var(--primary, #f97316);
     }
 
     .stat-card-pink .stat-value {
-      color: #ec4899;
+      color: var(--primary, #f97316);
     }
 
     /* Günlük Ciro altında ödeme detayları mini kartı */
@@ -4714,7 +5281,7 @@
       left: 0;
       right: 0;
       height: 3px;
-      background: linear-gradient(90deg, #ec4899 0%, #db2777 100%);
+      background: linear-gradient(90deg, var(--primary, #f97316) 0%, var(--primary-strong, #ea580c) 100%);
       transform: scaleX(0);
       transform-origin: left;
       transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -4739,10 +5306,10 @@
     }
 
     .tab-btn.active {
-      border-color: #ec4899;
-      background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
-      color: #db2777;
-      box-shadow: 0 8px 24px rgba(236, 72, 153, 0.2), 0 0 0 1px rgba(236, 72, 153, 0.1);
+      border-color: var(--primary, #f97316);
+      background: linear-gradient(135deg, var(--primary-soft, #fff7ed) 0%, #ffedd5 100%);
+      color: var(--primary-strong, #ea580c);
+      box-shadow: 0 8px 24px rgba(249, 115, 22, 0.2), 0 0 0 1px rgba(249, 115, 22, 0.1);
       transform: translateY(-2px);
     }
 
@@ -4756,13 +5323,13 @@
     }
 
     .tab-btn.active .tab-btn-text {
-      color: #db2777;
+      color: var(--primary-strong, #ea580c);
       font-weight: 700;
     }
 
     .tab-btn.active .tab-btn-indicator {
       transform: scaleX(1);
-      background: linear-gradient(90deg, #ec4899 0%, #db2777 100%);
+      background: linear-gradient(90deg, var(--primary, #f97316) 0%, var(--primary-strong, #ea580c) 100%);
     }
 
     /* Raporlar */
@@ -4794,13 +5361,13 @@
       padding: 10px 20px;
       background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
       color: #1f2937;
-      border: 2px solid #ec4899;
+      border: 2px solid var(--primary, #f97316);
       border-radius: 12px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 2px 8px rgba(236, 72, 153, 0.15);
+      box-shadow: 0 2px 8px rgba(249, 115, 22, 0.15);
       position: relative;
       overflow: hidden;
     }
@@ -5209,7 +5776,7 @@
       padding: 20px;
       background: #f9fafb;
       border-radius: 12px;
-      border-left: 4px solid #ec4899;
+      border-left: 4px solid var(--primary, #f97316);
     }
 
     .analysis-summary {
@@ -5228,8 +5795,8 @@
     }
 
     .analysis-card:hover {
-      border-color: #ec4899;
-      box-shadow: 0 4px 12px rgba(236, 72, 153, 0.1);
+      border-color: var(--primary, #f97316);
+      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.1);
       transform: translateY(-2px);
     }
 
@@ -6035,7 +6602,7 @@
 
     .payment-progress-fill {
       height: 100%;
-      background: linear-gradient(90deg, #6366f1, #ec4899);
+      background: linear-gradient(90deg, #6366f1, var(--primary, #f97316));
       transition: width 0.2s ease;
     }
 
@@ -6603,8 +7170,8 @@
 <body>
   <div id="loader" class="admin-splash-screen">
     <div class="splash-content">
-      <img src="logo.png" alt="MAKARA Logo" class="splash-logo" onerror="this.style.display='none';">
-      <h1 class="splash-main-text">MAKARA</h1>
+      <img src="logo.png" alt="Logo" class="splash-logo" onerror="this.style.display='none';">
+      <h1 class="splash-main-text" id="splashBusinessName">Yaka's Grill</h1>
       <div class="splash-decorative-line"></div>
       <p class="splash-subtitle-text">Admin Dashboard</p>
     </div>
@@ -6626,7 +7193,7 @@
             <img src="logo.png" alt="MAKARA Logo" class="navbar-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
             <div class="navbar-logo" style="display: none;">M</div>
             <div class="navbar-title-group">
-              <h1 class="navbar-title">MAKARA Admin Dashboard</h1>
+              <h1 class="navbar-title" id="navbarBusinessName">Yaka's Grill Admin Dashboard</h1>
               <p class="navbar-subtitle">Anlık Satış Detayları ve İstatistikler</p>
             </div>
           </div>

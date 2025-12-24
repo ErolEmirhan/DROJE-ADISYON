@@ -1,11 +1,20 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import PinModal from './PinModal';
 import SettingsModal from './SettingsModal';
 import SettingsSplash from './SettingsSplash';
 import DateTimeDisplay from './DateTimeDisplay';
+import { getThemeColors } from '../utils/themeUtils';
 
-const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType, onRoleSplash, onProductsUpdated, onExit }) => {
+const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType, onRoleSplash, onProductsUpdated, onExit, businessName = 'MAKARA', themeColor = '#f97316' }) => {
+  // Tema renklerini hesapla
+  const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
+  
+  // Debug: businessName prop'unu kontrol et
+  useEffect(() => {
+    console.log('📊 Navbar - businessName:', businessName);
+  }, [businessName]);
+  
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -22,6 +31,11 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
   const [newPassword, setNewPassword] = useState('');
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [showStaffAccountsModal, setShowStaffAccountsModal] = useState(false);
+  const [staffAccounts, setStaffAccounts] = useState([]);
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [accountAmount, setAccountAmount] = useState('');
+  const [accountType, setAccountType] = useState('alacak'); // 'alacak' or 'verecek'
   const menuRef = useRef(null);
 
   // Dışarı tıklayınca menüyü kapat
@@ -85,6 +99,98 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
       setStaffList(staff);
     } catch (error) {
       console.error('Personel yükleme hatası:', error);
+    }
+  };
+
+  const loadStaffAccounts = async () => {
+    try {
+      if (window.electronAPI && window.electronAPI.getStaffAccounts) {
+        const accounts = await window.electronAPI.getStaffAccounts();
+        setStaffAccounts(accounts || []);
+      } else {
+        // Eğer API yoksa, staff listesinden accounts oluştur
+        const accounts = staffList.map(staff => ({
+          staffId: staff.id,
+          staffName: `${staff.name} ${staff.surname}`,
+          balance: 0,
+          transactions: []
+        }));
+        setStaffAccounts(accounts);
+      }
+    } catch (error) {
+      console.error('Personel hesapları yükleme hatası:', error);
+      // Hata durumunda staff listesinden accounts oluştur
+      const accounts = staffList.map(staff => ({
+        staffId: staff.id,
+        staffName: `${staff.name} ${staff.surname}`,
+        balance: 0,
+        transactions: []
+      }));
+      setStaffAccounts(accounts);
+    }
+  };
+
+  const handleAddAccountTransaction = async () => {
+    if (!editingAccount || !accountAmount || parseFloat(accountAmount) <= 0) {
+      alert('Lütfen geçerli bir tutar girin');
+      return;
+    }
+
+    try {
+      const amount = parseFloat(accountAmount);
+      // Alacak için pozitif, verecek için negatif
+      const transactionAmount = accountType === 'alacak' ? amount : -amount;
+      
+      console.log('💰 Frontend - Transaction oluşturuluyor:', {
+        staffId: editingAccount.staffId,
+        accountAmount: amount,
+        accountType: accountType,
+        transactionAmount: transactionAmount
+      });
+      
+      const transaction = {
+        staffId: editingAccount.staffId,
+        amount: transactionAmount, // Alacak: +, Verecek: -
+        type: accountType,
+        date: new Date().toISOString()
+      };
+
+      if (window.electronAPI && window.electronAPI.addStaffAccountTransaction) {
+        const result = await window.electronAPI.addStaffAccountTransaction(transaction);
+        if (result.success) {
+          await loadStaffAccounts();
+          setEditingAccount(null);
+          setAccountAmount('');
+          setAccountType('alacak');
+          setSuccessMessage(`${editingAccount.staffName} için işlem eklendi`);
+          setShowSuccessToast(true);
+          setTimeout(() => setShowSuccessToast(false), 3000);
+        } else {
+          alert('Hata: ' + (result.error || 'Bilinmeyen hata'));
+        }
+      } else {
+        // Fallback: Local state güncelle
+        setStaffAccounts(prev => prev.map(acc => {
+          if (acc.staffId === editingAccount.staffId) {
+            const newBalance = acc.balance + transaction.amount;
+            return {
+              ...acc,
+              balance: newBalance,
+              transactions: [...(acc.transactions || []), transaction]
+            };
+          }
+          return acc;
+        }));
+        setEditingAccount(null);
+        setAccountAmount('');
+        setAccountType('alacak');
+        setSuccessMessage(`${editingAccount.staffName} için işlem eklendi`);
+        setShowSuccessToast(true);
+        setTimeout(() => setShowSuccessToast(false), 3000);
+      }
+    } catch (error) {
+      console.error('Hesap işlemi ekleme hatası:', error);
+      alert('İşlem eklenemedi: ' + error.message);
     }
   };
 
@@ -170,7 +276,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
 
 
   return (
-    <nav className="h-20 bg-white/90 backdrop-blur-xl border-b border-purple-200 px-8 flex items-center justify-between shadow-lg relative z-50">
+    <nav className="h-20 bg-white/90 backdrop-blur-xl border-b px-8 flex items-center justify-between shadow-lg relative z-50" style={{ borderColor: theme.primary200 + '80' }}>
       <div className="flex items-center space-x-4">
         <div className="w-12 h-12 rounded-xl flex items-center justify-center shadow-lg overflow-hidden bg-white p-1">
           <img 
@@ -186,8 +292,8 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
           />
         </div>
         <div>
-          <h1 className="text-lg font-bold text-pink-500">Makara Satış Sistemi</h1>
-          <p className="text-xs text-gray-500 font-medium">v2.3.9</p>
+          <h1 className="text-lg font-bold bg-clip-text text-transparent" style={{ backgroundImage: theme.gradient.main }}>{businessName} Satış Sistemi</h1>
+          <p className="text-xs text-gray-500 font-medium">v2.4.0</p>
         </div>
         <div className="ml-4 pl-4 border-l border-gray-300">
           <DateTimeDisplay />
@@ -210,9 +316,10 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
           onClick={() => setCurrentView('tables')}
           className={`px-6 py-3 rounded-xl font-medium transition-all duration-300 ${
             currentView === 'tables'
-              ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg transform scale-105'
+              ? 'text-white shadow-lg transform scale-105'
               : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800'
           }`}
+          style={currentView === 'tables' ? { backgroundImage: theme.gradient.main } : {}}
         >
           <div className="flex items-center space-x-2">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -225,9 +332,10 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
           onClick={() => setCurrentView('pos')}
           className={`px-6 py-3 rounded-xl font-medium transition-all duration-300 ${
             currentView === 'pos'
-              ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg transform scale-105'
+              ? 'text-white shadow-lg transform scale-105'
               : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800'
           }`}
+          style={currentView === 'pos' ? { backgroundImage: theme.gradient.main } : {}}
         >
           <div className="flex items-center space-x-2">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -248,9 +356,10 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
               onClick={() => setCurrentView('sales')}
               className={`px-6 py-3 rounded-xl font-medium transition-all duration-300 ${
                 currentView === 'sales'
-                  ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg transform scale-105'
+                  ? 'text-white shadow-lg transform scale-105'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800'
               }`}
+              style={currentView === 'sales' ? { backgroundImage: theme.gradient.main } : {}}
             >
               <div className="flex items-center space-x-2">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -301,7 +410,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
 
           {/* Dropdown Menu */}
           {showUserMenu && (
-            <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl shadow-2xl border border-purple-200 overflow-hidden animate-fade-in z-[100]">
+            <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl shadow-2xl border overflow-hidden animate-fade-in z-[100]" style={{ borderColor: theme.primary200 }}>
               <div className="p-2">
                 <button
                   onClick={() => handleUserTypeChange('Admin')}
@@ -419,6 +528,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
         <PinModal
           onClose={handlePinClose}
           onSuccess={handlePinSuccess}
+          themeColor={themeColor}
         />
       )}
 
@@ -429,6 +539,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
             setShowSettingsSplash(false);
             setShowSettingsModal(true);
           }}
+          themeColor={themeColor}
         />
       )}
 
@@ -437,6 +548,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
         <SettingsModal
           onClose={() => setShowSettingsModal(false)}
           onProductsUpdated={onProductsUpdated}
+          themeColor={themeColor}
         />
       )}
 
@@ -486,15 +598,29 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
                       <h4 className="text-xl font-bold text-gray-900 mb-1">Personel Listesi</h4>
                       <p className="text-sm text-gray-500">{staffList.length} personel</p>
                     </div>
-                    <button
-                      onClick={() => setShowAddStaff(true)}
-                      className="px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-500 text-white rounded-xl text-sm font-semibold hover:shadow-lg transition-all duration-200 flex items-center space-x-2 shadow-md hover:shadow-xl"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      <span>Personel Ekle</span>
-                    </button>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={async () => {
+                          setShowStaffAccountsModal(true);
+                          await loadStaffAccounts();
+                        }}
+                        className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-green-500 text-white rounded-xl text-sm font-semibold hover:shadow-lg transition-all duration-200 flex items-center space-x-2 shadow-md hover:shadow-xl"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                        </svg>
+                        <span>Alacak/Verecek</span>
+                      </button>
+                      <button
+                        onClick={() => setShowAddStaff(true)}
+                        className="px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-500 text-white rounded-xl text-sm font-semibold hover:shadow-lg transition-all duration-200 flex items-center space-x-2 shadow-md hover:shadow-xl"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        <span>Personel Ekle</span>
+                      </button>
+                    </div>
                   </div>
                   
                   {staffList.length === 0 ? (
@@ -771,6 +897,270 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
                 </div>
               </div>
             )}
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Personel Alacak/Verecek Modal */}
+      {showStaffAccountsModal && createPortal(
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[1000] animate-fade-in px-4 py-8">
+          <div className="bg-white rounded-3xl w-full max-w-5xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)] transform animate-scale-in relative overflow-hidden border border-gray-200 max-h-[90vh] flex flex-col">
+            {/* Premium Top Border */}
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-600 via-green-500 to-emerald-600"></div>
+            
+            {/* Close Button */}
+            <button
+              onClick={() => {
+                setShowStaffAccountsModal(false);
+                setEditingAccount(null);
+                setAccountAmount('');
+                setAccountType('alacak');
+              }}
+              className="absolute top-6 right-6 w-10 h-10 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center transition-all duration-200 border border-gray-200 hover:border-gray-300 shadow-sm hover:shadow-md z-10"
+            >
+              <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            
+            {/* Header */}
+            <div className="px-10 pt-10 pb-6 border-b border-gray-200">
+              <div className="flex items-center space-x-4 mb-4">
+                <div className="w-16 h-16 bg-gradient-to-br from-emerald-600 to-green-500 rounded-2xl flex items-center justify-center shadow-lg border-2 border-white">
+                  <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-3xl font-bold text-gray-900 mb-1 tracking-tight">Personel Alacak/Verecek Yönetimi</h3>
+                  <p className="text-sm text-gray-600 font-medium">Personellerin alacak ve verecek hesaplarını yönetin</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Content Area */}
+            <div className="flex-1 overflow-y-auto px-10 py-6">
+              {editingAccount ? (
+                /* İşlem Ekleme Formu */
+                <div className="bg-gradient-to-br from-emerald-50 to-green-50 rounded-2xl p-6 space-y-4 border-2 border-emerald-200 shadow-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-lg font-bold text-gray-900">
+                      {editingAccount.staffName} - İşlem Ekle
+                    </h4>
+                    <button
+                      onClick={() => {
+                        setEditingAccount(null);
+                        setAccountAmount('');
+                        setAccountType('alacak');
+                      }}
+                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">İşlem Tipi</label>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          onClick={() => setAccountType('alacak')}
+                          className={`px-6 py-4 rounded-xl font-bold transition-all duration-200 ${
+                            accountType === 'alacak'
+                              ? 'bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-lg transform scale-105'
+                              : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-2 border-emerald-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-center space-x-2">
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                            </svg>
+                            <span>Alacak</span>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => setAccountType('verecek')}
+                          className={`px-6 py-4 rounded-xl font-bold transition-all duration-200 ${
+                            accountType === 'verecek'
+                              ? 'bg-gradient-to-r from-red-500 to-red-600 text-white shadow-lg transform scale-105'
+                              : 'bg-red-50 text-red-700 hover:bg-red-100 border-2 border-red-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-center space-x-2">
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
+                            </svg>
+                            <span>Verecek</span>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Tutar (₺)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        placeholder="0.00"
+                        value={accountAmount}
+                        onChange={(e) => setAccountAmount(e.target.value)}
+                        className="w-full px-4 py-3 rounded-xl border-2 border-gray-300 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200 transition-all bg-white text-lg font-semibold"
+                      />
+                    </div>
+                    
+                    <div className="flex space-x-3 pt-2">
+                      <button
+                        onClick={handleAddAccountTransaction}
+                        className={`flex-1 px-6 py-3 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 shadow-md ${
+                          accountType === 'alacak'
+                            ? 'bg-gradient-to-r from-emerald-600 to-green-500'
+                            : 'bg-gradient-to-r from-red-600 to-red-500'
+                        }`}
+                      >
+                        Ekle
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingAccount(null);
+                          setAccountAmount('');
+                          setAccountType('alacak');
+                        }}
+                        className="px-6 py-3 bg-white text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition-all duration-200 border-2 border-gray-300"
+                      >
+                        İptal
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Personel Hesapları Listesi */
+                <div className="space-y-4">
+                  {staffAccounts.length === 0 ? (
+                    <div className="bg-gray-50 rounded-xl p-8 text-center border-2 border-dashed border-gray-300">
+                      <svg className="w-12 h-12 text-gray-400 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                      </svg>
+                      <p className="text-gray-600 font-medium mb-1">Henüz hesap kaydı yok</p>
+                      <p className="text-xs text-gray-500">Personel hesapları yükleniyor...</p>
+                    </div>
+                  ) : (
+                    staffAccounts.map((account) => {
+                      const isPositive = account.balance > 0;
+                      const isNegative = account.balance < 0;
+                      const balanceColor = isPositive 
+                        ? 'text-emerald-600' 
+                        : isNegative 
+                        ? 'text-red-600' 
+                        : 'text-gray-600';
+                      const balanceBg = isPositive
+                        ? 'bg-emerald-50 border-emerald-200'
+                        : isNegative
+                        ? 'bg-red-50 border-red-200'
+                        : 'bg-gray-50 border-gray-200';
+                      
+                      return (
+                        <div key={account.staffId} className={`bg-white border-2 rounded-2xl p-5 hover:shadow-lg transition-all duration-200 ${balanceBg}`}>
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center space-x-3">
+                              <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-md ${
+                                isPositive
+                                  ? 'bg-gradient-to-br from-emerald-500 to-green-600'
+                                  : isNegative
+                                  ? 'bg-gradient-to-br from-red-500 to-red-600'
+                                  : 'bg-gradient-to-br from-gray-400 to-gray-500'
+                              }`}>
+                                <span className="text-white font-bold text-lg">
+                                  {account.staffName.split(' ').map(n => n[0]).join('')}
+                                </span>
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-gray-900 text-lg">{account.staffName}</h4>
+                                <p className="text-xs text-gray-500">ID: {account.staffId}</p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-xs text-gray-500 mb-1">Bakiye</p>
+                              <p className={`text-2xl font-bold ${balanceColor}`}>
+                                {account.balance > 0 ? '+' : ''}{account.balance.toFixed(2)} ₺
+                              </p>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => {
+                                setEditingAccount(account);
+                                setAccountAmount('');
+                                setAccountType('alacak');
+                              }}
+                              className="flex-1 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-green-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 text-sm"
+                            >
+                              <div className="flex items-center justify-center space-x-2">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                </svg>
+                                <span>Alacak Ekle</span>
+                              </div>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingAccount(account);
+                                setAccountAmount('');
+                                setAccountType('verecek');
+                              }}
+                              className="flex-1 px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 text-sm"
+                            >
+                              <div className="flex items-center justify-center space-x-2">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                                </svg>
+                                <span>Verecek Ekle</span>
+                              </div>
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (window.confirm(`${account.staffName} için bakiyeyi sıfırlamak istediğinize emin misiniz? Tüm işlem geçmişi silinecektir.`)) {
+                                  try {
+                                    if (window.electronAPI && window.electronAPI.resetStaffAccount) {
+                                      const result = await window.electronAPI.resetStaffAccount(account.staffId);
+                                      if (result.success) {
+                                        await loadStaffAccounts();
+                                        setSuccessMessage(`${account.staffName} için bakiye sıfırlandı`);
+                                        setShowSuccessToast(true);
+                                        setTimeout(() => setShowSuccessToast(false), 3000);
+                                      } else {
+                                        alert('Hata: ' + (result.error || 'Bilinmeyen hata'));
+                                      }
+                                    } else {
+                                      alert('Sıfırlama özelliği mevcut değil');
+                                    }
+                                  } catch (error) {
+                                    console.error('Bakiye sıfırlama hatası:', error);
+                                    alert('Bakiye sıfırlanamadı: ' + error.message);
+                                  }
+                                }
+                              }}
+                              className="px-4 py-2.5 bg-gradient-to-r from-gray-600 to-gray-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 text-sm"
+                            >
+                              <div className="flex items-center justify-center space-x-2">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                                <span>Sıfırla</span>
+                              </div>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>,
         document.body

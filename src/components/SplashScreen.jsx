@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 
-const SplashScreen = ({ onComplete }) => {
+const SplashScreen = ({ onComplete, businessName = 'MAKARA' }) => {
   const [visible, setVisible] = useState(true);
   const [fadeOut, setFadeOut] = useState(false);
   
-  const text = 'MAKARA';
+  const text = businessName.toUpperCase();
   const subtitle = 'Profesyonel Adisyon Sistemi';
 
   useEffect(() => {

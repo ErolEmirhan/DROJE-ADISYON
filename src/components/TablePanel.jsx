@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import TableOrderModal from './TableOrderModal';
 import TablePartialPaymentModal from './TablePartialPaymentModal';
 import TableTransferModal from './TableTransferModal';
 
-const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
+const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTablesCount = 20, outsideTablesCount = 20, packageTablesCount = 5 }) => {
   const [selectedType, setSelectedType] = useState('inside'); // 'inside' or 'outside'
   const [tableOrders, setTableOrders] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
@@ -13,27 +13,46 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
-  const insideTables = Array.from({ length: 20 }, (_, i) => ({
-    id: `inside-${i + 1}`,
-    number: i + 1,
-    type: 'inside',
-    name: `İçeri ${i + 1}`
-  }));
+  // Debug: Masa sayılarını logla
+  useEffect(() => {
+    console.log('🪑 TablePanel - Masa Sayıları:', {
+      insideTablesCount,
+      outsideTablesCount,
+      packageTablesCount,
+      insideTablesCountType: typeof insideTablesCount,
+      outsideTablesCountType: typeof outsideTablesCount
+    });
+  }, [insideTablesCount, outsideTablesCount, packageTablesCount]);
 
-  const outsideTables = Array.from({ length: 20 }, (_, i) => ({
-    id: `outside-${i + 1}`,
-    number: i + 1,
-    type: 'outside',
-    name: `Dışarı ${i + 1}`
-  }));
+  const insideTables = useMemo(() => {
+    console.log('🔄 insideTables oluşturuluyor, count:', insideTablesCount);
+    return Array.from({ length: insideTablesCount }, (_, i) => ({
+      id: `inside-${i + 1}`,
+      number: i + 1,
+      type: 'inside',
+      name: `İçeri ${i + 1}`
+    }));
+  }, [insideTablesCount]);
+
+  const outsideTables = useMemo(() => {
+    console.log('🔄 outsideTables oluşturuluyor, count:', outsideTablesCount);
+    return Array.from({ length: outsideTablesCount }, (_, i) => ({
+      id: `outside-${i + 1}`,
+      number: i + 1,
+      type: 'outside',
+      name: `Dışarı ${i + 1}`
+    }));
+  }, [outsideTablesCount]);
 
   // Paket masaları (hem içeri hem dışarı için)
-  const packageTables = Array.from({ length: 5 }, (_, i) => ({
-    id: `package-${selectedType}-${i + 1}`,
-    number: i + 1,
-    type: selectedType,
-    name: `Paket ${i + 1}`
-  }));
+  const packageTables = useMemo(() => {
+    return Array.from({ length: packageTablesCount }, (_, i) => ({
+      id: `package-${selectedType}-${i + 1}`,
+      number: i + 1,
+      type: selectedType,
+      name: `Paket ${i + 1}`
+    }));
+  }, [packageTablesCount, selectedType]);
 
   // Masa siparişlerini yükle
   useEffect(() => {
@@ -619,6 +638,9 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt }) => {
             setShowTransferModal(false);
           }}
           onTransfer={handleTransferTable}
+          insideTablesCount={insideTablesCount}
+          outsideTablesCount={outsideTablesCount}
+          packageTablesCount={packageTablesCount}
         />
       )}
 

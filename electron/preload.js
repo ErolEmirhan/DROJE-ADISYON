@@ -72,6 +72,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getStaff: () => ipcRenderer.invoke('get-staff'),
   verifyStaffPin: (password) => ipcRenderer.invoke('verify-staff-pin', password),
   setStaffManager: (staffId, isManager) => ipcRenderer.invoke('set-staff-manager', staffId, isManager),
+  // Staff Account Management API
+  getStaffAccounts: () => ipcRenderer.invoke('get-staff-accounts'),
+  addStaffAccountTransaction: (transactionData) => ipcRenderer.invoke('add-staff-account-transaction', transactionData),
+  resetStaffAccount: (staffId) => ipcRenderer.invoke('reset-staff-account', staffId),
   // Image optimization API
   optimizeAllProductImages: () => ipcRenderer.invoke('optimize-all-product-images'),
   // Real-time updates
@@ -95,6 +99,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
   },
   // Window Management API
-  minimizeWindow: () => ipcRenderer.invoke('minimize-window')
+  minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
+  enterFullscreen: () => ipcRenderer.invoke('enter-fullscreen'),
+  // Tenant Management API
+  setTenantInfo: (tenantInfo) => ipcRenderer.invoke('set-tenant-info', tenantInfo),
+  getTenantInfo: () => ipcRenderer.invoke('get-tenant-info'),
+  getBusinessName: () => ipcRenderer.invoke('get-business-name'),
+  onTenantSuspended: (callback) => {
+    console.log('🔧 preload.js: onTenantSuspended listener kuruluyor...');
+    ipcRenderer.on('tenant-suspended', (event, data) => {
+      console.log('🔧 preload.js: tenant-suspended event alındı!', data);
+      callback(data);
+    });
+    return () => {
+      console.log('🔧 preload.js: tenant-suspended listener temizleniyor...');
+      ipcRenderer.removeAllListeners('tenant-suspended');
+    };
+  }
 });
 

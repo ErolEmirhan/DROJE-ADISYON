@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-const ReceiptModal = ({ saleInfo, items, onClose, onPrint }) => {
+const ReceiptModal = ({ saleInfo, items, onClose, onPrint, businessName = 'MAKARA' }) => {
   const [isPrinting, setIsPrinting] = useState(false);
 
   if (!saleInfo) return null;
@@ -52,7 +52,7 @@ const ReceiptModal = ({ saleInfo, items, onClose, onPrint }) => {
           style={{ width: '220px', minHeight: 'auto', maxWidth: '220px' }}
         >
           <div className="text-center mb-4">
-            <h3 className="font-bold text-lg mb-1">MAKARA</h3>
+            <h3 className="font-bold text-lg mb-1">{businessName || 'MAKARA'}</h3>
             <p className="text-xs text-gray-600">
               {saleInfo.tableName ? 'Masa Siparişi' : 'Satış Fişi'}
             </p>

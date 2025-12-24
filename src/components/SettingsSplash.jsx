@@ -1,7 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { getThemeColors } from '../utils/themeUtils';
 
-const SettingsSplash = ({ onComplete }) => {
+const SettingsSplash = ({ onComplete, themeColor = '#f97316' }) => {
+  // Tema renklerini hesapla
+  const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   const [visible, setVisible] = useState(true);
   const [fadeOut, setFadeOut] = useState(false);
   
@@ -33,7 +36,7 @@ const SettingsSplash = ({ onComplete }) => {
         left: 0,
         right: 0,
         bottom: 0,
-        background: 'linear-gradient(135deg, #9333ea 0%, #ec4899 100%)',
+        background: theme.gradient.main,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',

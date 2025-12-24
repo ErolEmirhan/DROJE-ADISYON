@@ -11,8 +11,9 @@ const QRCode = require('qrcode');
 const os = require('os');
 const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const tenantManager = require('./tenantManager');
 
-// Firebase entegrasyonu
+// Firebase entegrasyonu - Tenant'a göre dinamik yüklenecek
 let firebaseApp = null;
 let firestore = null;
 let storage = null;
@@ -28,6 +29,11 @@ let storageRef = null;
 let storageUploadBytes = null;
 let storageGetDownloadURL = null;
 let storageDeleteObject = null;
+
+// Firebase listener'ları için cleanup fonksiyonları
+let categoriesListenerCleanup = null;
+let productsListenerCleanup = null;
+let broadcastsListenerCleanup = null;
 
 // Cloudflare R2 entegrasyonu
 const R2_CONFIG = {
@@ -50,81 +56,150 @@ const r2Client = new S3Client({
   },
 });
 
-// Ana Firebase (satışlar, ürünler, kategoriler için)
-try {
-  // Firebase modüllerini dinamik olarak yükle
-  const firebaseAppModule = require('firebase/app');
-  const firebaseFirestoreModule = require('firebase/firestore');
-  const firebaseStorageModule = require('firebase/storage');
-  
-  const firebaseConfig = {
-    apiKey: "AIzaSyCdf-c13e0wCafRYHXhIls1epJgD1RjPUA",
-    authDomain: "makara-16344.firebaseapp.com",
-    projectId: "makara-16344",
-    storageBucket: "makara-16344.firebasestorage.app",
-    messagingSenderId: "216769654742",
-    appId: "1:216769654742:web:16792742d4613f4269be77",
-    measurementId: "G-K4XZHP11MM"
-  };
-
-  firebaseApp = firebaseAppModule.initializeApp(firebaseConfig);
-  firestore = firebaseFirestoreModule.getFirestore(firebaseApp);
-  storage = firebaseStorageModule.getStorage(firebaseApp);
-  firebaseCollection = firebaseFirestoreModule.collection;
-  firebaseAddDoc = firebaseFirestoreModule.addDoc;
-  firebaseServerTimestamp = firebaseFirestoreModule.serverTimestamp;
-  firebaseGetDocs = firebaseFirestoreModule.getDocs;
-  firebaseDeleteDoc = firebaseFirestoreModule.deleteDoc;
-  firebaseDoc = firebaseFirestoreModule.doc;
-  firebaseSetDoc = firebaseFirestoreModule.setDoc;
-  firebaseOnSnapshot = firebaseFirestoreModule.onSnapshot;
-  storageRef = firebaseStorageModule.ref;
-  storageUploadBytes = firebaseStorageModule.uploadBytes;
-  storageGetDownloadURL = firebaseStorageModule.getDownloadURL;
-  storageDeleteObject = firebaseStorageModule.deleteObject;
-  console.log('✅ Ana Firebase başarıyla başlatıldı (Firestore + Storage)');
-} catch (error) {
-  console.error('❌ Ana Firebase başlatılamadı:', error);
-  console.log('Firebase olmadan devam ediliyor...');
-}
-
-// Masalar için ayrı Firebase (makaramasalar)
-let tablesFirebaseApp = null;
-let tablesFirestore = null;
-let tablesFirebaseCollection = null;
-let tablesFirebaseDoc = null;
-let tablesFirebaseSetDoc = null;
-
-try {
-  const firebaseAppModule = require('firebase/app');
-  const firebaseFirestoreModule = require('firebase/firestore');
-  
-  const tablesFirebaseConfig = {
-    apiKey: "AIzaSyDu_NUrgas4wZ_wdfAYE-DgxqTpb7vKxyo",
-    authDomain: "makaramasalar.firebaseapp.com",
-    projectId: "makaramasalar",
-    storageBucket: "makaramasalar.firebasestorage.app",
-    messagingSenderId: "840151572206",
-    appId: "1:840151572206:web:0afaf93deea636309e5dff",
-    measurementId: "G-2S0J3566ZY"
-  };
-
-  tablesFirebaseApp = firebaseAppModule.initializeApp(tablesFirebaseConfig, 'tables');
-  tablesFirestore = firebaseFirestoreModule.getFirestore(tablesFirebaseApp);
-  tablesFirebaseCollection = firebaseFirestoreModule.collection;
-  tablesFirebaseDoc = firebaseFirestoreModule.doc;
-  tablesFirebaseSetDoc = firebaseFirestoreModule.setDoc;
-  console.log('✅ Masalar Firebase başarıyla başlatıldı (makaramasalar)');
-} catch (error) {
-  console.error('❌ Masalar Firebase başlatılamadı:', error);
-  console.log('Masalar Firebase olmadan devam ediliyor...');
-}
+// Firebase'ler tenant'a göre dinamik yüklenecek - başlangıçta null
+// Tenant bilgisi geldiğinde initializeTenantFirebases() çağrılacak
 
 let mainWindow;
 let dbPath;
 let apiServer = null;
 let io = null;
 let serverPort = 3000;
+
+// Masalar için ayrı Firebase (tenant'a göre dinamik)
+let tablesFirebaseApp = null;
+let tablesFirestore = null;
+let tablesFirebaseCollection = null;
+let tablesFirebaseDoc = null;
+let tablesFirebaseSetDoc = null;
+
+// Tenant'a göre Firebase'leri başlat
+async function initializeTenantFirebases(tenantInfo) {
+  try {
+    // Önce mevcut Firebase'leri temizle
+    await cleanupFirebases();
+
+    const firebaseAppModule = require('firebase/app');
+    const firebaseFirestoreModule = require('firebase/firestore');
+    const firebaseStorageModule = require('firebase/storage');
+
+    // Ana Firebase (satışlar, ürünler, kategoriler için)
+    if (tenantInfo.mainFirebaseConfig) {
+      const mainConfig = tenantInfo.mainFirebaseConfig;
+      
+      // Eğer aynı isimde bir app varsa sil
+      try {
+        const existingApp = firebaseAppModule.getApp('main');
+        if (existingApp) {
+          await firebaseAppModule.deleteApp(existingApp);
+        }
+      } catch (e) {
+        // App yok, devam et
+      }
+
+      firebaseApp = firebaseAppModule.initializeApp(mainConfig, 'main');
+      firestore = firebaseFirestoreModule.getFirestore(firebaseApp);
+      storage = firebaseStorageModule.getStorage(firebaseApp);
+      firebaseCollection = firebaseFirestoreModule.collection;
+      firebaseAddDoc = firebaseFirestoreModule.addDoc;
+      firebaseServerTimestamp = firebaseFirestoreModule.serverTimestamp;
+      firebaseGetDocs = firebaseFirestoreModule.getDocs;
+      firebaseDeleteDoc = firebaseFirestoreModule.deleteDoc;
+      firebaseDoc = firebaseFirestoreModule.doc;
+      firebaseSetDoc = firebaseFirestoreModule.setDoc;
+      firebaseOnSnapshot = firebaseFirestoreModule.onSnapshot;
+      storageRef = firebaseStorageModule.ref;
+      storageUploadBytes = firebaseStorageModule.uploadBytes;
+      storageGetDownloadURL = firebaseStorageModule.getDownloadURL;
+      storageDeleteObject = firebaseStorageModule.deleteObject;
+      
+      console.log(`✅ Ana Firebase başlatıldı: ${mainConfig.projectId}`);
+    } else {
+      console.warn('⚠️ Ana Firebase config bulunamadı');
+    }
+
+    // Masalar Firebase (tables, product_stocks için)
+    if (tenantInfo.tablesFirebaseConfig) {
+      const tablesConfig = tenantInfo.tablesFirebaseConfig;
+      
+      // Eğer aynı isimde bir app varsa sil
+      try {
+        const existingApp = firebaseAppModule.getApp('tables');
+        if (existingApp) {
+          await firebaseAppModule.deleteApp(existingApp);
+        }
+      } catch (e) {
+        // App yok, devam et
+      }
+
+      tablesFirebaseApp = firebaseAppModule.initializeApp(tablesConfig, 'tables');
+      tablesFirestore = firebaseFirestoreModule.getFirestore(tablesFirebaseApp);
+      tablesFirebaseCollection = firebaseFirestoreModule.collection;
+      tablesFirebaseDoc = firebaseFirestoreModule.doc;
+      tablesFirebaseSetDoc = firebaseFirestoreModule.setDoc;
+      
+      console.log(`✅ Masalar Firebase başlatıldı: ${tablesConfig.projectId}`);
+    } else {
+      console.warn('⚠️ Masalar Firebase config bulunamadı');
+    }
+
+    return true;
+  } catch (error) {
+    console.error('❌ Firebase başlatma hatası:', error);
+    return false;
+  }
+}
+
+// Mevcut Firebase'leri temizle
+async function cleanupFirebases() {
+  try {
+    const firebaseAppModule = require('firebase/app');
+    
+    // Mevcut listener'ları temizle
+    if (categoriesListenerCleanup) {
+      categoriesListenerCleanup();
+      categoriesListenerCleanup = null;
+    }
+    if (productsListenerCleanup) {
+      productsListenerCleanup();
+      productsListenerCleanup = null;
+    }
+    if (broadcastsListenerCleanup) {
+      broadcastsListenerCleanup();
+      broadcastsListenerCleanup = null;
+    }
+    
+    // Tenant status listener'ı temizle
+    tenantManager.cleanupTenantStatusListener();
+
+    // Firebase app'leri sil
+    try {
+      if (firebaseApp) {
+        await firebaseAppModule.deleteApp(firebaseApp);
+        firebaseApp = null;
+      }
+    } catch (e) {
+      // App zaten silinmiş
+    }
+
+    try {
+      if (tablesFirebaseApp) {
+        await firebaseAppModule.deleteApp(tablesFirebaseApp);
+        tablesFirebaseApp = null;
+      }
+    } catch (e) {
+      // App zaten silinmiş
+    }
+
+    // Değişkenleri sıfırla
+    firestore = null;
+    storage = null;
+    tablesFirestore = null;
+    
+    console.log('✅ Mevcut Firebase\'ler temizlendi');
+  } catch (error) {
+    console.error('Firebase temizleme hatası:', error);
+  }
+}
 
 // Saat formatı helper fonksiyonu (saat:dakika:saniye)
 function getFormattedTime(date = new Date()) {
@@ -133,6 +208,19 @@ function getFormattedTime(date = new Date()) {
     minute: '2-digit', 
     second: '2-digit' 
   });
+}
+
+// Gece 03:00'a göre günlük tarih hesaplama fonksiyonu
+// Gece 03:00'tan önceki saatler bir önceki güne ait sayılır
+function getBusinessDayDateString(date = new Date()) {
+  const hour = date.getHours();
+  // Eğer saat 03:00'tan önceyse, bir önceki günü döndür
+  if (hour < 3) {
+    const yesterday = new Date(date);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return yesterday.toLocaleDateString('tr-TR');
+  }
+  return date.toLocaleDateString('tr-TR');
 }
 let db = {
   categories: [],
@@ -148,8 +236,10 @@ let db = {
   printerAssignments: [] // { printerName, printerType, category_id }
 };
 
-function initDatabase() {
-  dbPath = path.join(app.getPath('userData'), 'makara-db.json');
+function initDatabase(tenantId = null) {
+  // Tenant'a göre database path'i oluştur
+  const tenantSuffix = tenantId ? `-${tenantId}` : '';
+  dbPath = path.join(app.getPath('userData'), `makara-db${tenantSuffix}.json`);
   
   // Veritabanını yükle veya yeni oluştur
   if (fs.existsSync(dbPath)) {
@@ -921,9 +1011,14 @@ function createWindow() {
   // Menü çubuğunu kaldır
   Menu.setApplicationMenu(null);
 
+  // Launcher için büyük pencere (profesyonel kurumsal görünüm)
+  const screenSize = require('electron').screen.getPrimaryDisplay().workAreaSize;
+  const launcherWidth = 1400;
+  const launcherHeight = 900;
+
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: launcherWidth,
+    height: launcherHeight,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -931,11 +1026,13 @@ function createWindow() {
       devTools: true // DevTools'u etkinleştir
     },
     frame: false,
-    title: 'MAKARA POS',
+    title: `${tenantManager.getBusinessName()} POS`,
     backgroundColor: '#f0f4ff',
     autoHideMenuBar: true, // Menü çubuğunu gizle
-    fullscreen: true, // Tam ekran modu
-    kiosk: true // Kiosk modu - görev çubuğu ve diğer Windows öğelerini gizler
+    center: true, // Pencereyi ekranın ortasına yerleştir
+    resizable: false, // Launcher için boyutlandırılamaz
+    fullscreen: false, // Launcher için tam ekran değil
+    kiosk: false // Launcher için kiosk modu kapalı
   });
 
   // F12 ile DevTools aç/kapa
@@ -962,6 +1059,94 @@ function createWindow() {
     mainWindow = null;
   });
 }
+
+// Tenant Management IPC Handlers
+ipcMain.handle('set-tenant-info', async (event, tenantInfo) => {
+  try {
+    console.log('🔄 Tenant bilgisi ayarlanıyor:', tenantInfo.tenantId);
+    
+    // ÖNCE Status değişikliği callback'ini ayarla (listener başlatılmadan önce!)
+    tenantManager.setStatusChangeCallback((statusInfo) => {
+      console.log('⚠️ Tenant status callback çağrıldı:', statusInfo);
+      console.log('⚠️ isActive:', statusInfo.isActive, 'status:', statusInfo.status);
+      
+      // isActive: false veya status: 'suspended' durumunda bildirim gönder
+      if (!statusInfo.isActive || statusInfo.status === 'suspended') {
+        console.log('🚨 Tenant suspended - renderer\'a bildirim gönderiliyor');
+        // Renderer'a bildir
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('tenant-suspended', {
+            message: 'Hesabınız yönetici tarafından askıya alınmıştır. Lütfen yönetici ile iletişime geçiniz.',
+            businessName: statusInfo.businessName
+          });
+          console.log('✅ tenant-suspended event gönderildi');
+        } else {
+          console.error('❌ mainWindow veya webContents mevcut değil');
+        }
+      } else {
+        console.log('ℹ️ Tenant aktif, bildirim gönderilmiyor');
+      }
+    });
+    
+    // SONRA Tenant bilgisini kaydet (bu listener'ı başlatacak)
+    tenantManager.setCurrentTenantInfo(tenantInfo);
+    
+    // Mevcut veritabanını kaydet (eğer varsa)
+    if (dbPath && fs.existsSync(dbPath)) {
+      saveDatabase();
+    }
+    
+    // Yeni tenant için database'i başlat
+    initDatabase(tenantInfo.tenantId);
+    
+    // Firebase'leri tenant'a göre başlat
+    const firebaseInitialized = await initializeTenantFirebases(tenantInfo);
+    
+    if (!firebaseInitialized) {
+      return { success: false, error: 'Firebase başlatılamadı' };
+    }
+    
+    // Pencere başlığını güncelle
+    if (mainWindow) {
+      mainWindow.setTitle(`${tenantInfo.businessName} POS`);
+    }
+    
+    // Firebase'den verileri senkronize et
+    setTimeout(async () => {
+      console.log('🔄 Firebase senkronizasyonu başlatılıyor...');
+      
+      // Kategorileri ve ürünleri çek
+      await syncCategoriesFromFirebase();
+      await syncProductsFromFirebase();
+      
+      // Gerçek zamanlı listener'ları başlat
+      setupCategoriesRealtimeListener();
+      setupProductsRealtimeListener();
+      setupBroadcastsRealtimeListener();
+      
+      console.log('✅ Firebase senkronizasyonu tamamlandı');
+      
+      // Renderer'a bildir
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('tenant-changed', tenantInfo);
+      }
+    }, 1000);
+    
+    return { success: true, tenantInfo };
+  } catch (error) {
+    console.error('Tenant bilgisi ayarlama hatası:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-tenant-info', () => {
+  const tenantInfo = tenantManager.getCurrentTenantInfo();
+  return tenantInfo || null;
+});
+
+ipcMain.handle('get-business-name', () => {
+  return tenantManager.getBusinessName();
+});
 
 // IPC Handlers
 ipcMain.handle('get-categories', () => {
@@ -1182,7 +1367,7 @@ ipcMain.handle('create-sale', async (event, saleData) => {
   const { items, totalAmount, paymentMethod, orderNote, staff_name } = saleData;
   
   const now = new Date();
-  const saleDate = now.toLocaleDateString('tr-TR');
+  const saleDate = getBusinessDayDateString(now);
   const saleTime = getFormattedTime(now);
 
   // Stok kontrolü ve düşürme (sadece stok takibi yapılan ürünler için)
@@ -2158,7 +2343,7 @@ ipcMain.handle('complete-table-order', async (event, orderId, paymentMethod = 'N
 
   // Satış geçmişine ekle (seçilen ödeme yöntemi ile)
   const now = new Date();
-  const saleDate = now.toLocaleDateString('tr-TR');
+  const saleDate = getBusinessDayDateString(now);
   const saleTime = getFormattedTime(now);
 
   // Yeni satış ID'si
@@ -2335,7 +2520,7 @@ ipcMain.handle('update-table-order-amount', async (event, orderId, paidAmount) =
 // Kısmi ödeme için satış kaydı oluştur
 ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
   const now = new Date();
-  const saleDate = now.toLocaleDateString('tr-TR');
+  const saleDate = getBusinessDayDateString(now);
   const saleTime = getFormattedTime(now);
 
   // Yeni satış ID'si
@@ -2513,7 +2698,7 @@ ipcMain.handle('pay-table-order-item', async (event, itemId, paymentMethod, paid
 
   // Satış kaydı oluştur (sadece bu ürün için)
   const now = new Date();
-  const saleDate = now.toLocaleDateString('tr-TR');
+  const saleDate = getBusinessDayDateString(now);
   const saleTime = getFormattedTime(now);
 
   const saleId = db.sales.length > 0 
@@ -4327,7 +4512,7 @@ function generateProductionReceiptHTML(items, receiptData) {
     </head>
     <body>
       <div class="header">
-        <h3>MAKARA</h3>
+        <h3>${tenantManager.getBusinessName()}</h3>
         <p style="font-size: 10px; margin: 0; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">ÜRETİM FİŞİ</p>
       </div>
       
@@ -4557,7 +4742,7 @@ function generateReceiptHTML(receiptData) {
     </head>
     <body>
       <div class="header">
-        <h3>MAKARA</h3>
+        <h3>${tenantManager.getBusinessName()}</h3>
         <p style="font-size: 10px; margin: 0; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">${receiptData.tableName ? 'Masa Siparişi' : 'Satış Fişi'}</p>
       </div>
       
@@ -4626,30 +4811,13 @@ function generateReceiptHTML(receiptData) {
 }
 
 app.whenReady().then(() => {
+  // İlk database'i başlat (tenant bilgisi yoksa varsayılan)
   initDatabase();
   createWindow();
   startAPIServer();
 
-  // Firebase senkronizasyonu: Sadece Firebase'den çek, gereksiz write işlemleri yapma
-  setTimeout(async () => {
-    console.log('🔄 Firebase senkronizasyonu başlatılıyor...');
-    
-    // 1. Önce Firebase'den kategorileri ve ürünleri çek (sadece read)
-    await syncCategoriesFromFirebase();
-    await syncProductsFromFirebase();
-    
-    // 2. Local path'leri Firebase Storage'a yükle (migration - sadece ilk kurulum için)
-    await migrateLocalImagesToFirebase();
-    
-    // 3. Gerçek zamanlı listener'ları başlat (anında güncellemeler için)
-    // NOT: Artık tüm ürünleri Firebase'e yazmıyoruz - sadece yeni ekleme/silme işlemlerinde yazıyoruz
-    setupCategoriesRealtimeListener();
-    setupProductsRealtimeListener();
-    setupBroadcastsRealtimeListener();
-    
-    console.log('✅ Firebase senkronizasyonu tamamlandı ve gerçek zamanlı listener\'lar aktif');
-    console.log('💡 Not: Ürünler sadece ekleme/silme işlemlerinde Firebase\'e yazılacak (maliyet optimizasyonu)');
-  }, 2000); // 2 saniye bekle, Firebase tam yüklensin
+  // Firebase senkronizasyonu tenant bilgisi geldiğinde yapılacak
+  // set-tenant-info handler'ında yapılıyor
 
   // Uygulama paketlenmişse güncelleme kontrolü yap
   if (app.isPackaged) {
@@ -6002,24 +6170,56 @@ async function printCancelReceipt(printerName, printerType, cancelData) {
 }
 
 function generateMobileHTML(serverURL) {
+  // Tenant'ın tema rengini ve masa sayılarını al
+  // Şimdilik her zaman turuncu kullan
+  const tenantInfo = tenantManager.getCurrentTenantInfo();
+  const themeColor = '#f97316'; // tenantInfo?.themeColor || '#f97316';
+  const insideTablesCount = tenantInfo?.insideTables || 20;
+  const outsideTablesCount = tenantInfo?.outsideTables || 20;
+  const packageTablesCount = tenantInfo?.packageTables || 5;
+  
+  // Tema renklerini hesapla (basit versiyon)
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16),
+      g: parseInt(result[2], 16),
+      b: parseInt(result[3], 16)
+    } : null;
+  };
+  
+  const adjustBrightness = (hex, percent) => {
+    const rgb = hexToRgb(hex);
+    if (!rgb) return hex;
+    const r = Math.max(0, Math.min(255, rgb.r + (rgb.r * percent / 100)));
+    const g = Math.max(0, Math.min(255, rgb.g + (rgb.g * percent / 100)));
+    const b = Math.max(0, Math.min(255, rgb.b + (rgb.b * percent / 100)));
+    return `#${Math.round(r).toString(16).padStart(2, '0')}${Math.round(g).toString(16).padStart(2, '0')}${Math.round(b).toString(16).padStart(2, '0')}`;
+  };
+  
+  const primary = themeColor;
+  const primaryLight = adjustBrightness(themeColor, 15);
+  const primaryDark = adjustBrightness(themeColor, -20);
+  const rgb = hexToRgb(primary);
+  
   return `<!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#ec4899">
+  <meta name="theme-color" content="#f97316">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="MAKARA Mobil">
+  <meta name="apple-mobile-web-app-title" content="${tenantManager.getBusinessName()} Mobil">
   <link rel="manifest" href="${serverURL}/mobile-manifest.json">
   <link rel="icon" type="image/png" href="${serverURL}/mobilpersonel.png">
   <link rel="apple-touch-icon" href="${serverURL}/mobilpersonel.png">
-  <title>MAKARA - Mobil Sipariş</title>
+  <title>${tenantManager.getBusinessName()} - Mobil Sipariş</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { 
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); 
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%); 
       min-height: 100vh; 
       padding: 10px; 
     }
@@ -6119,9 +6319,9 @@ function generateMobileHTML(serverURL) {
     }
     .table-btn.selected {
       border-color: #a855f7;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
       color: white;
-      box-shadow: 0 4px 12px rgba(168, 85, 247, 0.4);
+      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4);
     }
     .table-btn.has-order {
       border-color: #047857;
@@ -6238,9 +6438,9 @@ function generateMobileHTML(serverURL) {
       transform: scale(0.97) translateY(0);
     }
     .category-tab.active {
-      border-color: #fbcfe8;
+      border-color: #fed7aa;
       background: linear-gradient(135deg, #fce7f3 0%, #fdf2f8 100%);
-      color: #ec4899;
+      color: #f97316;
       box-shadow: 0 4px 16px rgba(236, 72, 153, 0.25), 0 2px 8px rgba(236, 72, 153, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.8);
       transform: translateY(-2px);
       font-weight: 700;
@@ -6253,7 +6453,7 @@ function generateMobileHTML(serverURL) {
       left: 0;
       right: 0;
       height: 3px;
-      background: linear-gradient(90deg, #f472b6 0%, #ec4899 50%, #f472b6 100%);
+      background: linear-gradient(90deg, #fb923c 0%, #f97316 50%, #fb923c 100%);
       border-radius: 0 0 14px 14px;
       box-shadow: 0 2px 8px rgba(236, 72, 153, 0.4);
     }
@@ -6293,7 +6493,7 @@ function generateMobileHTML(serverURL) {
       background-repeat: no-repeat;
       cursor: pointer;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 2px 8px rgba(236, 72, 153, 0.4), 0 1px 3px rgba(219, 39, 119, 0.3);
+      box-shadow: 0 2px 8px rgba(249, 115, 22, 0.4), 0 1px 3px rgba(234, 88, 12, 0.3);
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -6308,12 +6508,12 @@ function generateMobileHTML(serverURL) {
       left: 0;
       right: 0;
       bottom: 0;
-      background: linear-gradient(135deg, rgba(236, 72, 153, 0.85) 0%, rgba(219, 39, 119, 0.8) 50%, rgba(236, 72, 153, 0.85) 100%);
+      background: linear-gradient(135deg, rgba(249, 115, 22, 0.85) 0%, rgba(251, 146, 60, 0.8) 50%, rgba(234, 88, 12, 0.85) 100%);
       z-index: 1;
     }
     .product-card:hover {
       border-color: rgba(255, 255, 255, 0.4);
-      box-shadow: 0 4px 16px rgba(236, 72, 153, 0.5), 0 2px 8px rgba(219, 39, 119, 0.4);
+      box-shadow: 0 4px 16px rgba(249, 115, 22, 0.5), 0 2px 8px rgba(234, 88, 12, 0.4);
       transform: translateY(-2px);
     }
     .product-card:active {
@@ -6387,17 +6587,17 @@ function generateMobileHTML(serverURL) {
       width: 44px;
       height: 44px;
       border-radius: 12px;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
       display: flex;
       align-items: center;
       justify-content: center;
       color: white;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 4px 12px rgba(168, 85, 247, 0.3);
+      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
     }
     .cart-header-icon:active {
       transform: scale(0.95);
-      box-shadow: 0 2px 6px rgba(168, 85, 247, 0.4);
+      box-shadow: 0 2px 6px rgba(249, 115, 22, 0.4);
     }
     .cart-content {
       padding: 20px;
@@ -6459,10 +6659,10 @@ function generateMobileHTML(serverURL) {
     .qty-btn {
       width: 36px;
       height: 36px;
-      border: 2px solid #a855f7;
+      border: 2px solid #f97316;
       border-radius: 10px;
       background: white;
-      color: #a855f7;
+      color: #f97316;
       font-weight: 700;
       cursor: pointer;
       font-size: 16px;
@@ -6472,7 +6672,7 @@ function generateMobileHTML(serverURL) {
       transition: all 0.3s;
     }
     .qty-btn:hover {
-      background: #a855f7;
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
       color: white;
       transform: scale(1.05);
     }
@@ -6482,14 +6682,14 @@ function generateMobileHTML(serverURL) {
     .send-btn {
       width: 100%;
       padding: 18px;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
       color: white;
       border: none;
       border-radius: 14px;
       font-size: 17px;
       font-weight: 700;
       cursor: pointer;
-      box-shadow: 0 4px 16px rgba(168, 85, 247, 0.4);
+      box-shadow: 0 4px 16px rgba(249, 115, 22, 0.4);
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       letter-spacing: 0.3px;
     }
@@ -6503,7 +6703,7 @@ function generateMobileHTML(serverURL) {
     .loading {
       text-align: center;
       padding: 20px;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -6652,7 +6852,7 @@ function generateMobileHTML(serverURL) {
     }
     .staff-info p {
       font-weight: bold;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -6662,12 +6862,12 @@ function generateMobileHTML(serverURL) {
       text-align: center;
       margin-bottom: 15px;
       padding: 12px;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
       border-radius: 12px;
       color: white;
       font-weight: bold;
       font-size: 16px;
-      box-shadow: 0 4px 12px rgba(168, 85, 247, 0.3);
+      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
     }
     .back-btn {
       display: flex;
@@ -6676,7 +6876,11 @@ function generateMobileHTML(serverURL) {
       gap: 10px;
       padding: 12px 20px;
       background: white;
-      color: #a855f7;
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      color: #f97316;
       border: 2px solid #e5e7eb;
       border-radius: 12px;
       font-size: 15px;
@@ -6687,9 +6891,13 @@ function generateMobileHTML(serverURL) {
     }
     .back-btn:hover {
       background: #f9fafb;
-      border-color: #a855f7;
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      border-color: #f97316;
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(168, 85, 247, 0.2);
+      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.2);
     }
     .back-btn:active {
       transform: translateY(0) scale(0.98);
@@ -6801,7 +7009,7 @@ function generateMobileHTML(serverURL) {
     .logout-modal-staff-name {
       font-weight: 600;
       color: #a855f7;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -6987,7 +7195,7 @@ function generateMobileHTML(serverURL) {
       width: 100px;
       height: 100px;
       margin: 0 auto 32px;
-      background: linear-gradient(135deg, #ec4899 0%, #f472b6 50%, #fbcfe8 100%);
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #fed7aa 100%);
       border-radius: 50%;
       display: flex;
       align-items: center;
@@ -7002,7 +7210,7 @@ function generateMobileHTML(serverURL) {
       position: absolute;
       inset: -4px;
       border-radius: 50%;
-      background: linear-gradient(135deg, #ec4899, #f472b6);
+      background: linear-gradient(135deg, #f97316, #fb923c);
       opacity: 0.2;
       filter: blur(12px);
       z-index: -1;
@@ -7036,7 +7244,7 @@ function generateMobileHTML(serverURL) {
     }
     .splash-loader-bar {
       height: 100%;
-      background: linear-gradient(90deg, #ec4899 0%, #f472b6 50%, #ec4899 100%);
+      background: linear-gradient(90deg, #f97316 0%, #fb923c 50%, #f97316 100%);
       background-size: 200% 100%;
       border-radius: 8px;
       width: 0%;
@@ -7231,7 +7439,7 @@ function generateMobileHTML(serverURL) {
     .order-total-amount {
       font-size: 18px;
       font-weight: 800;
-      background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -7301,8 +7509,8 @@ function generateMobileHTML(serverURL) {
         
         <div style="display: flex; flex-direction: column; gap: 32px; width: 100%; max-width: 500px; flex: 1; justify-content: center; padding: 20px;">
           <!-- İçeri Butonu -->
-          <button onclick="selectTableTypeScreen('inside')" style="width: 100%; min-height: 280px; background: #fdf2f8; border: 3px solid #fbcfe8; border-radius: 20px; color: #111827; font-size: 24px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; position: relative; box-shadow: 0 4px 16px rgba(244, 114, 182, 0.25);" onmouseover="this.style.borderColor='#f472b6'; this.style.boxShadow='0 12px 32px rgba(244, 114, 182, 0.35)'; this.style.transform='translateY(-6px)'" onmouseout="this.style.borderColor='#fbcfe8'; this.style.boxShadow='0 4px 16px rgba(244, 114, 182, 0.25)'; this.style.transform='translateY(0)'">
-            <svg width="80" height="80" fill="none" stroke="#f472b6" viewBox="0 0 24 24" stroke-width="1.5" style="transition: all 0.2s;">
+          <button onclick="selectTableTypeScreen('inside')" style="width: 100%; min-height: 280px; background: #fdf2f8; border: 3px solid #fed7aa; border-radius: 20px; color: #111827; font-size: 24px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; position: relative; box-shadow: 0 4px 16px rgba(244, 114, 182, 0.25);" onmouseover="this.style.borderColor='#fb923c'; this.style.boxShadow='0 12px 32px rgba(244, 114, 182, 0.35)'; this.style.transform='translateY(-6px)'" onmouseout="this.style.borderColor='#fed7aa'; this.style.boxShadow='0 4px 16px rgba(244, 114, 182, 0.25)'; this.style.transform='translateY(0)'">
+            <svg width="80" height="80" fill="none" stroke="#fb923c" viewBox="0 0 24 24" stroke-width="1.5" style="transition: all 0.2s;">
               <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"/>
             </svg>
             <div style="font-size: 32px; font-weight: 800; color: #111827; letter-spacing: 1px;">İÇERİ</div>
@@ -7354,7 +7562,7 @@ function generateMobileHTML(serverURL) {
             <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
             </svg>
-            <span>Masalara Dön</span>
+            <span style="background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; color: #f97316;">Masalara Dön</span>
           </button>
         </div>
         
@@ -7405,7 +7613,7 @@ function generateMobileHTML(serverURL) {
         <span id="cartItemCount">0 ürün</span>
       </div>
       <div style="display: flex; align-items: center; gap: 12px;">
-        <span style="font-size: 20px; font-weight: 800; background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"><span id="cartTotal">0.00</span> ₺</span>
+        <span style="font-size: 20px; font-weight: 800; background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"><span id="cartTotal">0.00</span> ₺</span>
         <div class="cart-header-icon" id="cartToggleIcon">
           <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5"/>
@@ -7462,7 +7670,7 @@ function generateMobileHTML(serverURL) {
   <!-- Not Ekle Modal -->
   <div id="noteModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; align-items: center; justify-content: center; padding: 20px;" onclick="if(event.target === this) hideNoteModal()">
     <div style="background: white; border-radius: 20px; width: 100%; max-width: 400px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
-      <div style="background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); color: white; padding: 20px;">
+      <div style="background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%); color: white; padding: 20px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <h2 style="margin: 0; font-size: 20px; font-weight: 800;">Sipariş Notu</h2>
           <button onclick="hideNoteModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold;">×</button>
@@ -7473,7 +7681,7 @@ function generateMobileHTML(serverURL) {
       </div>
       <div style="border-top: 1px solid #e5e7eb; padding: 16px; display: flex; justify-content: flex-end; gap: 12px;">
         <button onclick="hideNoteModal()" style="padding: 12px 24px; background: #f3f4f6; color: #374151; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">İptal</button>
-        <button onclick="saveNote()" style="padding: 12px 24px; background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(168, 85, 247, 0.3);" onmouseover="this.style.transform='scale(1.02)'; this.style.boxShadow='0 6px 16px rgba(168, 85, 247, 0.4)';" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(168, 85, 247, 0.3)';">Kaydet</button>
+        <button onclick="saveNote()" style="padding: 12px 24px; background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);" onmouseover="this.style.transform='scale(1.02)'; this.style.boxShadow='0 6px 16px rgba(249, 115, 22, 0.4)';" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(249, 115, 22, 0.3)';">Kaydet</button>
       </div>
     </div>
   </div>
@@ -7599,7 +7807,7 @@ function generateMobileHTML(serverURL) {
       to { transform: rotate(360deg); }
     }
   </style>
-        <button onclick="saveNote()" style="padding: 12px 24px; background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.opacity='0.9';" onmouseout="this.style.opacity='1';">Kaydet</button>
+        <button onclick="saveNote()" style="padding: 12px 24px; background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.opacity='0.9';" onmouseout="this.style.opacity='1';">Kaydet</button>
       </div>
     </div>
   </div>
@@ -7674,6 +7882,14 @@ function generateMobileHTML(serverURL) {
   <script>
     const API_URL = '${serverURL}/api';
     const SOCKET_URL = '${serverURL}';
+    // Tema rengi değerleri (global)
+    const themePrimary = '${primary}';
+    const themePrimaryLight = '${primaryLight}';
+    const themePrimaryDark = '${primaryDark}';
+    const themeRgb = ${rgb ? `{ r: ${rgb.r}, g: ${rgb.g}, b: ${rgb.b} }` : '{ r: 249, g: 115, b: 22 }'};
+    const insideTablesCount = ${insideTablesCount};
+    const outsideTablesCount = ${outsideTablesCount};
+    const packageTablesCount = ${packageTablesCount};
     let selectedTable = null;
     let categories = [];
     let products = [];
@@ -8047,13 +8263,13 @@ function generateMobileHTML(serverURL) {
             : 'linear-gradient(135deg, #f97316 0%, #fb923c 50%, #fd7e14 100%)';
           const iconColor = table.hasOrder ? '#10b981' : '#f97316';
           
-          return '<button class="table-btn package-table-btn' + hasOrderClass + selectedClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')" style="background: ' + bgGradient + '; border: 3px solid ' + borderColor + '; box-shadow: 0 4px 16px ' + (table.hasOrder ? 'rgba(16, 185, 129, 0.35)' : 'rgba(249, 115, 22, 0.35)') + ', 0 0 0 1px rgba(255, 255, 255, 0.4) inset; position: relative; overflow: hidden; transform: scale(1); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);">' +
-            '<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: ' + (table.hasOrder ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, transparent 100%)' : 'linear-gradient(135deg, rgba(249, 115, 22, 0.15) 0%, transparent 100%)') + '; pointer-events: none; opacity: 0.8;"></div>' +
+          return '<button class="table-btn package-table-btn' + hasOrderClass + selectedClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')" style="background: ' + bgGradient + '; border: 3px solid ' + borderColor + '; box-shadow: 0 4px 16px ' + (table.hasOrder ? 'rgba(16, 185, 129, 0.35)' : 'rgba(' + themeRgb.r + ', ' + themeRgb.g + ', ' + themeRgb.b + ', 0.35)') + ', 0 0 0 1px rgba(255, 255, 255, 0.4) inset; position: relative; overflow: hidden; transform: scale(1); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);">' +
+            '<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: ' + (table.hasOrder ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, transparent 100%)' : 'linear-gradient(135deg, rgba(' + themeRgb.r + ', ' + themeRgb.g + ', ' + themeRgb.b + ', 0.15) 0%, transparent 100%)') + '; pointer-events: none; opacity: 0.8;"></div>' +
             '<div style="position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%); pointer-events: none; transform: rotate(45deg);"></div>' +
-            '<div class="table-number" style="background: ' + numberBg + '; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 900; color: white; box-shadow: 0 4px 16px ' + (table.hasOrder ? 'rgba(16, 185, 129, 0.5)' : 'rgba(249, 115, 22, 0.5)') + ', 0 0 0 3px rgba(255, 255, 255, 0.4) inset; margin-bottom: 8px; position: relative; z-index: 2; transition: all 0.3s;">' + table.number + '</div>' +
+            '<div class="table-number" style="background: ' + numberBg + '; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 900; color: white; box-shadow: 0 4px 16px ' + (table.hasOrder ? 'rgba(16, 185, 129, 0.5)' : 'rgba(' + themeRgb.r + ', ' + themeRgb.g + ', ' + themeRgb.b + ', 0.5)') + ', 0 0 0 3px rgba(255, 255, 255, 0.4) inset; margin-bottom: 8px; position: relative; z-index: 2; transition: all 0.3s;">' + table.number + '</div>' +
             '<div style="position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 5px;">' +
             '<div class="table-label" style="font-size: 12px; font-weight: 900; color: ' + (table.hasOrder ? '#047857' : '#9a3412') + '; letter-spacing: 0.8px; text-shadow: 0 1px 2px rgba(255, 255, 255, 0.5);">' + table.name + '</div>' +
-            (table.hasOrder ? '<div style="width: 8px; height: 8px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; box-shadow: 0 0 12px rgba(16, 185, 129, 0.8), 0 0 6px rgba(16, 185, 129, 0.6); animation: pulse 2s infinite;"></div>' : '<div style="width: 6px; height: 6px; background: linear-gradient(135deg, #f97316 0%, #fb923c 100%); border-radius: 50%; opacity: 0.6;"></div>') +
+            (table.hasOrder ? '<div style="width: 8px; height: 8px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; box-shadow: 0 0 12px rgba(16, 185, 129, 0.8), 0 0 6px rgba(16, 185, 129, 0.6); animation: pulse 2s infinite;"></div>' : '<div style="width: 6px; height: 6px; background: linear-gradient(135deg, ' + themePrimary + ' 0%, ' + themePrimaryLight + ' 100%); border-radius: 50%; opacity: 0.6;"></div>') +
             '</div>' +
             (table.hasOrder ? '<div style="position: absolute; top: 6px; right: 6px; width: 12px; height: 12px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; box-shadow: 0 0 12px rgba(16, 185, 129, 0.9), 0 0 6px rgba(16, 185, 129, 0.7); animation: pulse 2s infinite; z-index: 3;"></div>' : '') +
           '</button>';
@@ -8451,7 +8667,7 @@ function generateMobileHTML(serverURL) {
       // Soft pastel renk paleti (çeşitli renkler - flu tonlar)
       const softColors = [
         { bg: '#fef3c7', border: '#fde68a', text: '#92400e', hover: '#fef08a' }, // Soft Amber
-        { bg: '#fce7f3', border: '#fbcfe8', text: '#9f1239', hover: '#f9a8d4' }, // Soft Pink
+        { bg: '#fce7f3', border: '#fed7aa', text: '#9f1239', hover: '#f9a8d4' }, // Soft Pink
         { bg: '#e0e7ff', border: '#c7d2fe', text: '#3730a3', hover: '#a5b4fc' }, // Soft Indigo
         { bg: '#d1fae5', border: '#a7f3d0', text: '#065f46', hover: '#6ee7b7' }, // Soft Emerald
         { bg: '#e0f2fe', border: '#bae6fd', text: '#0c4a6e', hover: '#7dd3fc' }, // Soft Sky
@@ -8650,7 +8866,7 @@ function generateMobileHTML(serverURL) {
         const cardStyle = isOutOfStock ? backgroundStyle + ' opacity: 0.6; cursor: not-allowed; pointer-events: none;' : backgroundStyle;
         
         // Kilit ikonu (sadece stok 0 olduğunda)
-        const lockIcon = isOutOfStock ? '<div style="position: absolute; top: 8px; left: 8px; background: linear-gradient(135deg, rgba(252, 231, 243, 0.95) 0%, rgba(253, 242, 248, 0.9) 100%); color: #ec4899; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; z-index: 10; box-shadow: 0 2px 8px rgba(236, 72, 153, 0.25), 0 0 0 1px rgba(236, 72, 153, 0.1) inset;"><svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg></div>' : '';
+        const lockIcon = isOutOfStock ? '<div style="position: absolute; top: 8px; left: 8px; background: linear-gradient(135deg, rgba(252, 231, 243, 0.95) 0%, rgba(253, 242, 248, 0.9) 100%); color: #f97316; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; z-index: 10; box-shadow: 0 2px 8px rgba(236, 72, 153, 0.25), 0 0 0 1px rgba(236, 72, 153, 0.1) inset;"><svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg></div>' : '';
         
         // Stok uyarı badge'i (0 ise "Kalmadı", 1-5 arası ise "X adet kaldı")
         let stockBadge = '';
@@ -9675,8 +9891,14 @@ function startAPIServer() {
   });
 
   appExpress.get('/api/tables', (req, res) => {
+    // Tenant'tan masa sayılarını al
+    const tenantInfo = tenantManager.getCurrentTenantInfo();
+    const insideTablesCount = tenantInfo?.insideTables || 20;
+    const outsideTablesCount = tenantInfo?.outsideTables || 20;
+    const packageTablesCount = tenantInfo?.packageTables || 5;
+    
     const tables = [];
-    for (let i = 1; i <= 20; i++) {
+    for (let i = 1; i <= insideTablesCount; i++) {
       const tableId = `inside-${i}`;
       const hasPendingOrder = (db.tableOrders || []).some(
         o => o.table_id === tableId && o.status === 'pending'
@@ -9689,7 +9911,7 @@ function startAPIServer() {
         hasOrder: hasPendingOrder
       });
     }
-    for (let i = 1; i <= 20; i++) {
+    for (let i = 1; i <= outsideTablesCount; i++) {
       const tableId = `outside-${i}`;
       const hasPendingOrder = (db.tableOrders || []).some(
         o => o.table_id === tableId && o.status === 'pending'
@@ -9703,7 +9925,7 @@ function startAPIServer() {
       });
     }
     // Paket masaları - İçeri
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= packageTablesCount; i++) {
       const tableId = `package-inside-${i}`;
       const hasPendingOrder = (db.tableOrders || []).some(
         o => o.table_id === tableId && o.status === 'pending'
@@ -9717,7 +9939,7 @@ function startAPIServer() {
       });
     }
     // Paket masaları - Dışarı
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= packageTablesCount; i++) {
       const tableId = `package-outside-${i}`;
       const hasPendingOrder = (db.tableOrders || []).some(
         o => o.table_id === tableId && o.status === 'pending'
@@ -10050,13 +10272,13 @@ function startAPIServer() {
     const baseURL = `${protocol}://${host}`;
     
     const manifest = {
-      "name": "MAKARA Mobil Sipariş",
-      "short_name": "MAKARA Mobil",
-      "description": "MAKARA Satış Sistemi - Mobil Personel Arayüzü",
+      "name": `${tenantManager.getBusinessName()} Mobil Sipariş`,
+      "short_name": `${tenantManager.getBusinessName()} Mobil`,
+      "description": `${tenantManager.getBusinessName()} Satış Sistemi - Mobil Personel Arayüzü`,
       "start_url": `${baseURL}/mobile`,
       "display": "standalone",
-      "background_color": "#ec4899",
-      "theme_color": "#ec4899",
+      "background_color": "#f97316", // tenantManager.getCurrentTenantInfo()?.themeColor || "#f97316",
+      "theme_color": "#f97316", // tenantManager.getCurrentTenantInfo()?.themeColor || "#f97316",
       "orientation": "portrait",
       "icons": [
         {
@@ -10393,6 +10615,16 @@ ipcMain.handle('quit-app', () => {
 });
 
 // Minimize window handler
+ipcMain.handle('enter-fullscreen', () => {
+  if (mainWindow) {
+    mainWindow.setFullScreen(true);
+    mainWindow.setKiosk(true);
+    mainWindow.setResizable(false);
+    return { success: true };
+  }
+  return { success: false };
+});
+
 ipcMain.handle('minimize-window', () => {
   if (mainWindow) {
     mainWindow.minimize();
@@ -10588,6 +10820,147 @@ ipcMain.handle('verify-staff-pin', (event, password) => {
     return { success: true, staff: { id: staff.id, name: staff.name, surname: staff.surname } };
   }
   return { success: false, error: 'Şifre hatalı' };
+});
+
+// Staff Account Management IPC Handlers
+ipcMain.handle('get-staff-accounts', (event) => {
+  if (!db.staff) db.staff = [];
+  if (!db.staffAccounts) db.staffAccounts = [];
+  
+  // Her personel için hesap oluştur (yoksa)
+  const accounts = db.staff.map(staff => {
+    const existingAccount = db.staffAccounts.find(acc => acc.staffId === staff.id);
+    if (existingAccount) {
+      // Bakiyeyi transaction'lardan hesapla (her zaman transaction'lardan hesapla, güvenilir)
+      const balance = (existingAccount.transactions || []).reduce((sum, t) => {
+        const tAmount = parseFloat(t.amount) || 0;
+        return sum + tAmount;
+      }, 0);
+      
+      // Debug log
+      console.log(`💰 ${staff.name} ${staff.surname} - Transaction sayısı: ${(existingAccount.transactions || []).length}, Bakiye: ${balance}`);
+      
+      // Account'taki balance'ı da güncelle (senkronizasyon için)
+      existingAccount.balance = balance;
+      
+      return {
+        staffId: staff.id,
+        staffName: `${staff.name} ${staff.surname}`,
+        balance: balance,
+        transactions: existingAccount.transactions || []
+      };
+    } else {
+      // Yeni hesap oluştur
+      const newAccount = {
+        staffId: staff.id,
+        staffName: `${staff.name} ${staff.surname}`,
+        balance: 0,
+        transactions: []
+      };
+      db.staffAccounts.push(newAccount);
+      saveDatabase();
+      return newAccount;
+    }
+  });
+  
+  // Database'i kaydet (balance güncellemeleri için)
+  saveDatabase();
+  
+  return accounts;
+});
+
+ipcMain.handle('add-staff-account-transaction', (event, transactionData) => {
+  if (!db.staffAccounts) db.staffAccounts = [];
+  
+  const { staffId, amount, type, date } = transactionData;
+  
+  // Debug: Gelen veriyi logla
+  console.log('💰 Transaction ekleniyor:', { staffId, amount, type, date });
+  
+  // Personel hesabını bul veya oluştur
+  let account = db.staffAccounts.find(acc => acc.staffId === staffId);
+  if (!account) {
+    const staff = db.staff.find(s => s.id === staffId);
+    if (!staff) {
+      return { success: false, error: 'Personel bulunamadı' };
+    }
+    account = {
+      staffId: staffId,
+      staffName: `${staff.name} ${staff.surname}`,
+      balance: 0,
+      transactions: []
+    };
+    db.staffAccounts.push(account);
+  }
+  
+  // Eski bakiyeyi logla
+  const oldBalance = account.balance;
+  console.log('💰 Eski bakiye:', oldBalance);
+  console.log('💰 Mevcut transaction sayısı:', account.transactions.length);
+  
+  // Transaction ekle - amount'u sayısal olarak kaydet
+  const transactionAmount = parseFloat(amount) || 0;
+  const transaction = {
+    id: account.transactions.length > 0 
+      ? Math.max(...account.transactions.map(t => t.id || 0)) + 1 
+      : 1,
+    staffId: staffId,
+    amount: transactionAmount, // Sayısal olarak kaydet (alacak: +, verecek: -)
+    type: type,
+    date: date || new Date().toISOString()
+  };
+  
+  account.transactions.push(transaction);
+  
+  // Bakiyeyi transaction'lardan yeniden hesapla (her zaman transaction'lardan hesapla, güvenilir)
+  account.balance = account.transactions.reduce((sum, t) => {
+    const tAmount = typeof t.amount === 'number' ? t.amount : parseFloat(t.amount) || 0;
+    console.log(`💰 Transaction ${t.id}: amount=${tAmount} (type: ${typeof tAmount}), type=${t.type}`);
+    return sum + tAmount;
+  }, 0);
+  
+  console.log('💰 Yeni bakiye:', account.balance);
+  console.log('💰 Toplam transaction sayısı:', account.transactions.length);
+  
+  saveDatabase();
+  
+  return { 
+    success: true, 
+    account: {
+      staffId: account.staffId,
+      staffName: account.staffName,
+      balance: account.balance,
+      transactions: account.transactions
+    }
+  };
+});
+
+// Staff Account Sıfırlama
+ipcMain.handle('reset-staff-account', (event, staffId) => {
+  if (!db.staffAccounts) db.staffAccounts = [];
+  
+  const account = db.staffAccounts.find(acc => acc.staffId === staffId);
+  if (!account) {
+    return { success: false, error: 'Personel hesabı bulunamadı' };
+  }
+  
+  // Tüm transaction'ları sil
+  account.transactions = [];
+  account.balance = 0;
+  
+  console.log(`💰 ${account.staffName} için hesap sıfırlandı`);
+  
+  saveDatabase();
+  
+  return { 
+    success: true, 
+    account: {
+      staffId: account.staffId,
+      staffName: account.staffName,
+      balance: 0,
+      transactions: []
+    }
+  };
 });
 
 // Mesaj gönderme IPC handler

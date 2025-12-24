@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { getThemeColors } from '../utils/themeUtils';
 
-const PinModal = ({ onClose, onSuccess }) => {
+const PinModal = ({ onClose, onSuccess, themeColor = '#f97316' }) => {
+  // Tema renklerini hesapla
+  const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -64,9 +67,13 @@ const PinModal = ({ onClose, onSuccess }) => {
                 : success
                 ? 'border-green-500 bg-green-50 scale-110'
                 : pin.length > index
-                ? 'border-purple-500 bg-gradient-to-br from-purple-500 to-pink-500 shadow-lg scale-110'
+                ? 'shadow-lg scale-110'
                 : 'border-gray-300 bg-gray-50'
             }`}
+            style={pin.length > index && !error && !success ? { 
+              borderColor: theme.primary500,
+              backgroundImage: theme.gradient.main
+            } : {}}
           >
             {pin.length > index && (
               <div className={`text-3xl font-bold ${success ? 'text-green-600' : 'text-white'}`}>
@@ -83,9 +90,30 @@ const PinModal = ({ onClose, onSuccess }) => {
     <button
       onClick={() => handleNumberClick(number.toString())}
       disabled={success}
-      className="w-20 h-20 rounded-2xl bg-gradient-to-br from-white to-gray-50 border-2 border-gray-200 hover:border-purple-400 hover:shadow-xl active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed group"
+      className="w-20 h-20 rounded-2xl bg-gradient-to-br from-white to-gray-50 border-2 border-gray-200 hover:shadow-xl active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed group"
+      onMouseEnter={(e) => {
+        if (!success) {
+          e.currentTarget.style.borderColor = theme.primary400;
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!success) {
+          e.currentTarget.style.borderColor = '#e5e7eb';
+        }
+      }}
     >
-      <span className="text-3xl font-bold text-gray-700 group-hover:text-purple-600 transition-colors">
+      <span className="text-3xl font-bold text-gray-700 transition-colors"
+        onMouseEnter={(e) => {
+          if (!success) {
+            e.currentTarget.style.color = theme.primary600;
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!success) {
+            e.currentTarget.style.color = '#374151';
+          }
+        }}
+      >
         {number}
       </span>
     </button>
@@ -94,7 +122,7 @@ const PinModal = ({ onClose, onSuccess }) => {
   return createPortal(
     <div className="fixed inset-0 bg-black/80 backdrop-blur-lg flex items-center justify-center z-[999] animate-fade-in px-4">
       <div className="bg-white rounded-3xl p-10 w-full max-w-xl shadow-2xl transform animate-scale-in relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-purple-500 via-pink-500 to-blue-500"></div>
+        <div className="absolute top-0 left-0 w-full h-2" style={{ backgroundImage: theme.gradient.horizontal }}></div>
       
       <button
         onClick={onClose}
@@ -148,8 +176,8 @@ const PinModal = ({ onClose, onSuccess }) => {
         </div>
 
         <div className="text-center">
-          <div className="inline-flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-50 to-pink-50 rounded-full border border-purple-200">
-            <svg className="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="inline-flex items-center space-x-2 px-4 py-2 rounded-full border" style={{ backgroundColor: theme.primary50, borderColor: theme.primary200 }}>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: theme.primary600 }}>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
             <span className="text-xs text-gray-600 font-medium">

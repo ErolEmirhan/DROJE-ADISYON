@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { getThemeColors } from '../utils/themeUtils';
 
-const SettingsModal = ({ onClose, onProductsUpdated }) => {
+const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316' }) => {
+  // Tema renklerini hesapla
+  const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   const [activeTab, setActiveTab] = useState('password'); // 'password', 'products', 'printers', or 'stock'
   const [printerSubTab, setPrinterSubTab] = useState('usb'); // 'usb' or 'network'
   
@@ -778,7 +781,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
   return createPortal(
     <div className="fixed inset-0 bg-black/80 backdrop-blur-lg flex items-center justify-center z-[999] animate-fade-in px-4">
       <div className="bg-white rounded-3xl p-8 w-full max-w-6xl max-h-[90vh] shadow-2xl transform animate-scale-in relative overflow-hidden flex flex-col">
-        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-purple-500 via-pink-500 to-blue-500"></div>
+        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-orange-500 via-orange-400 to-blue-500"></div>
       
         <button
           onClick={onClose}
@@ -790,7 +793,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
         </button>
 
         <div className="text-center mb-6">
-          <div className="w-16 h-16 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+          <div className="w-16 h-16 bg-gradient-to-br from-orange-500 via-orange-400 to-orange-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
             <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -805,7 +808,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
             onClick={() => setActiveTab('password')}
             className={`px-6 py-3 font-medium transition-all ${
               activeTab === 'password'
-                ? 'text-purple-600 border-b-2 border-purple-600'
+                ? 'text-orange-600 border-b-2 border-orange-600'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -815,7 +818,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
             onClick={() => setActiveTab('products')}
             className={`px-6 py-3 font-medium transition-all ${
               activeTab === 'products'
-                ? 'text-purple-600 border-b-2 border-purple-600'
+                ? 'text-orange-600 border-b-2 border-orange-600'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -825,7 +828,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
             onClick={() => setActiveTab('printers')}
             className={`px-6 py-3 font-medium transition-all ${
               activeTab === 'printers'
-                ? 'text-purple-600 border-b-2 border-purple-600'
+                ? 'text-orange-600 border-b-2 border-orange-600'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -835,7 +838,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
             onClick={() => setActiveTab('stock')}
             className={`px-6 py-3 font-medium transition-all ${
               activeTab === 'stock'
-                ? 'text-purple-600 border-b-2 border-purple-600'
+                ? 'text-orange-600 border-b-2 border-orange-600'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -861,7 +864,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                       setCurrentPassword(val);
                       setPasswordError('');
                     }}
-                    className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-purple-500 focus:outline-none transition-all"
+                    className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none transition-all"
                     placeholder="4 haneli parola"
                   />
                 </div>
@@ -879,7 +882,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                       setNewPassword(val);
                       setPasswordError('');
                     }}
-                    className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-purple-500 focus:outline-none transition-all"
+                    className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none transition-all"
                     placeholder="4 haneli yeni parola"
                   />
                 </div>
@@ -897,7 +900,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                       setConfirmPassword(val);
                       setPasswordError('');
                     }}
-                    className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-purple-500 focus:outline-none transition-all"
+                    className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none transition-all"
                     placeholder="Yeni parolayı tekrar girin"
                   />
                 </div>
@@ -916,7 +919,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
 
                 <button
                   onClick={handlePasswordChange}
-                  className="w-full px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl font-semibold hover:shadow-lg transform hover:scale-105 transition-all"
+                  className="w-full px-6 py-3 bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white rounded-xl font-semibold hover:shadow-lg transform hover:scale-105 transition-all"
                 >
                   Parolayı Değiştir
                 </button>
@@ -927,7 +930,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
           {activeTab === 'products' && (
             <div className="space-y-6">
               {/* Product Form */}
-              <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl p-6 border border-purple-200">
+              <div className="bg-gradient-to-br from-orange-50 to-orange-50 rounded-2xl p-6 border border-orange-200">
                 <h3 className="text-xl font-bold text-gray-800 mb-4">
                   {editingProduct ? 'Ürün Düzenle' : 'Yeni Ürün Ekle'}
                 </h3>
@@ -941,7 +944,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                         type="text"
                         value={productForm.name}
                         onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
-                        className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-purple-500 focus:outline-none"
+                        className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none"
                         placeholder="Ürün adı"
                         required
                       />
@@ -956,18 +959,18 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                         onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
                         className={`w-full px-4 py-3 rounded-xl border-2 transition-all text-left flex items-center justify-between ${
                           productForm.category_id
-                            ? 'border-purple-500 bg-purple-50'
-                            : 'border-gray-200 hover:border-purple-300'
-                        } focus:border-purple-500 focus:outline-none`}
+                            ? 'border-orange-500 bg-orange-50'
+                            : 'border-gray-200 hover:border-orange-300'
+                        } focus:border-orange-500 focus:outline-none`}
                       >
-                        <span className={productForm.category_id ? 'text-purple-700 font-medium' : 'text-gray-500'}>
+                        <span className={productForm.category_id ? 'text-orange-700 font-medium' : 'text-gray-500'}>
                           {productForm.category_id
                             ? categories.find(c => c.id === parseInt(productForm.category_id))?.name || 'Kategori Seçin'
                             : 'Kategori Seçin'}
                         </span>
                         <svg 
                           className={`w-5 h-5 transition-transform ${showCategoryDropdown ? 'rotate-180' : ''} ${
-                            productForm.category_id ? 'text-purple-600' : 'text-gray-400'
+                            productForm.category_id ? 'text-orange-600' : 'text-gray-400'
                           }`}
                           fill="none" 
                           stroke="currentColor" 
@@ -978,7 +981,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                       </button>
                       
                       {showCategoryDropdown && (
-                        <div className="absolute z-20 w-full mt-2 bg-white rounded-xl shadow-2xl border-2 border-purple-200 overflow-hidden max-h-60 overflow-y-auto">
+                        <div className="absolute z-20 w-full mt-2 bg-white rounded-xl shadow-2xl border-2 border-orange-200 overflow-hidden max-h-60 overflow-y-auto">
                           {categories.map(cat => (
                             <button
                               key={cat.id}
@@ -987,16 +990,16 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                                 setProductForm({ ...productForm, category_id: cat.id.toString() });
                                 setShowCategoryDropdown(false);
                               }}
-                              className={`w-full px-4 py-3 text-left hover:bg-purple-50 transition-all flex items-center space-x-3 ${
+                              className={`w-full px-4 py-3 text-left hover:bg-orange-50 transition-all flex items-center space-x-3 ${
                                 productForm.category_id === cat.id.toString()
-                                  ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                                  ? 'bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white'
                                   : 'text-gray-700'
                               }`}
                             >
                               <div className={`w-2 h-2 rounded-full ${
                                 productForm.category_id === cat.id.toString()
                                   ? 'bg-white'
-                                  : 'bg-purple-500'
+                                  : 'bg-orange-500'
                               }`}></div>
                               <span className="font-medium">{cat.name}</span>
                               {productForm.category_id === cat.id.toString() && (
@@ -1032,7 +1035,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                             : normalized;
                           setProductForm({ ...productForm, price: finalValue });
                         }}
-                        className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-purple-500 focus:outline-none"
+                        className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none"
                         placeholder="0.00"
                         required
                       />
@@ -1047,7 +1050,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                           type="text"
                           value={productForm.image}
                           onChange={(e) => setProductForm({ ...productForm, image: e.target.value })}
-                          className="flex-1 px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-purple-500 focus:outline-none"
+                          className="flex-1 px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none"
                           placeholder="Görsel URL'si girin veya dosya seçin"
                         />
                         <button
@@ -1071,7 +1074,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                               alert('Dosya seçme hatası: ' + error.message);
                             }
                           }}
-                          className="px-6 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl font-medium hover:shadow-lg transform hover:scale-105 transition-all whitespace-nowrap"
+                          className="px-6 py-2 bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white rounded-xl font-medium hover:shadow-lg transform hover:scale-105 transition-all whitespace-nowrap"
                         >
                           📁 Dosya Seç
                         </button>
@@ -1115,7 +1118,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                           <img 
                             src={productForm.image} 
                             alt="Önizleme" 
-                            className="w-24 h-24 object-cover rounded-lg border-2 border-purple-200"
+                            className="w-24 h-24 object-cover rounded-lg border-2 border-orange-200"
                             onError={(e) => {
                               e.target.style.display = 'none';
                             }}
@@ -1128,7 +1131,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                   <div className="flex space-x-3">
                     <button
                       type="submit"
-                      className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl font-semibold hover:shadow-lg transform hover:scale-105 transition-all"
+                      className="flex-1 px-6 py-3 bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white rounded-xl font-semibold hover:shadow-lg transform hover:scale-105 transition-all"
                     >
                       {editingProduct ? 'Güncelle' : 'Ekle'}
                     </button>
@@ -1190,9 +1193,9 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                 
                 {/* Modern Category Filter */}
                 <div className="mb-6">
-                  <div className="bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 rounded-2xl p-4 border-2 border-purple-200 shadow-lg">
+                  <div className="bg-gradient-to-br from-orange-50 via-orange-50 to-blue-50 rounded-2xl p-4 border-2 border-orange-200 shadow-lg">
                     <div className="flex items-center space-x-2 mb-3">
-                      <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
                       </svg>
                       <span className="text-sm font-semibold text-gray-700">Kategori Filtrele</span>
@@ -1202,8 +1205,8 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                         onClick={() => setSelectedCategory(null)}
                         className={`px-4 py-2.5 rounded-xl font-medium transition-all duration-300 transform hover:scale-105 ${
                           !selectedCategory
-                            ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg scale-105'
-                            : 'bg-white text-gray-700 hover:bg-purple-50 border-2 border-gray-200 hover:border-purple-300'
+                            ? 'bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white shadow-lg scale-105'
+                            : 'bg-white text-gray-700 hover:bg-orange-50 border-2 border-gray-200 hover:border-orange-300'
                         }`}
                       >
                         <div className="flex items-center space-x-2">
@@ -1219,13 +1222,13 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                             onClick={() => setSelectedCategory(cat)}
                             className={`px-4 py-2.5 rounded-xl font-medium transition-all duration-300 transform hover:scale-105 ${
                               selectedCategory?.id === cat.id
-                                ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg scale-105'
-                                : 'bg-white text-gray-700 hover:bg-purple-50 border-2 border-gray-200 hover:border-purple-300'
+                                ? 'bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white shadow-lg scale-105'
+                                : 'bg-white text-gray-700 hover:bg-orange-50 border-2 border-gray-200 hover:border-orange-300'
                             }`}
                           >
                             <div className="flex items-center space-x-2">
                               <div className={`w-2 h-2 rounded-full ${
-                                selectedCategory?.id === cat.id ? 'bg-white' : 'bg-purple-500'
+                                selectedCategory?.id === cat.id ? 'bg-white' : 'bg-orange-500'
                               }`}></div>
                               <span>{cat.name}</span>
                               {selectedCategory?.id === cat.id && (
@@ -1302,12 +1305,12 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                       </button>
                     </div>
                     {selectedCategory && (
-                      <div className="mt-3 pt-3 border-t border-purple-200">
+                      <div className="mt-3 pt-3 border-t border-orange-200">
                         <div className="flex items-center justify-between">
                           <span className="text-sm text-gray-600">
-                            <span className="font-semibold text-purple-600">{selectedCategory.name}</span> kategorisinde
+                            <span className="font-semibold text-orange-600">{selectedCategory.name}</span> kategorisinde
                           </span>
-                          <span className="text-sm font-bold text-purple-600">
+                          <span className="text-sm font-bold text-orange-600">
                             {filteredProducts.length} ürün
                           </span>
                         </div>
@@ -1328,14 +1331,14 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                           {product.image ? (
                             <img src={product.image} alt={product.name} className="w-16 h-16 rounded-lg object-cover" />
                           ) : (
-                            <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-purple-200 to-pink-200 flex items-center justify-center">
+                            <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-orange-200 to-orange-200 flex items-center justify-center">
                               <span className="text-2xl">📦</span>
                             </div>
                           )}
                           <div className="flex-1">
                             <h4 className="font-semibold text-gray-800">{product.name}</h4>
                             <p className="text-sm text-gray-500">{category?.name || 'Kategori yok'}</p>
-                            <p className="text-lg font-bold text-purple-600">{product.price.toFixed(2)} ₺</p>
+                            <p className="text-lg font-bold text-orange-600">{product.price.toFixed(2)} ₺</p>
                           </div>
                         </div>
                         <div className="flex space-x-2">
@@ -1365,7 +1368,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
               <h3 className="text-xl font-bold text-gray-800 mb-4">Stok Takibi</h3>
               
               {/* Filtreler */}
-              <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl p-6 border border-purple-200">
+              <div className="bg-gradient-to-br from-orange-50 to-orange-50 rounded-2xl p-6 border border-orange-200">
                 <h4 className="text-lg font-semibold text-gray-800 mb-4">Filtrele</h4>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -1380,7 +1383,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                         setStockFilterCategory(cat || null);
                         setStockFilterProduct(null); // Kategori değişince ürün seçimini temizle
                       }}
-                      className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-purple-500 focus:outline-none"
+                      className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none"
                     >
                       <option value="">Tüm Kategoriler</option>
                       {categories.map(cat => (
@@ -1434,7 +1437,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                         const prod = products.find(p => p.id === prodId);
                         setStockFilterProduct(prod || null);
                       }}
-                      className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-purple-500 focus:outline-none"
+                      className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none"
                       disabled={!stockFilterCategory && categories.length > 0}
                     >
                       <option value="">Ürün Seçin</option>
@@ -1542,7 +1545,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                           {product.image ? (
                             <img src={product.image} alt={product.name} className="w-16 h-16 rounded-lg object-cover" />
                           ) : (
-                            <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-purple-200 to-pink-200 flex items-center justify-center">
+                            <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-orange-200 to-orange-200 flex items-center justify-center">
                               <span className="text-2xl">📦</span>
                             </div>
                           )}
@@ -1557,7 +1560,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                             </div>
                             <p className="text-sm text-gray-500">{category?.name || 'Kategori yok'}</p>
                             <div className="flex items-center gap-4 mt-1">
-                              <p className="text-lg font-bold text-purple-600">{product.price.toFixed(2)} ₺</p>
+                              <p className="text-lg font-bold text-orange-600">{product.price.toFixed(2)} ₺</p>
                               {trackStock && stock !== null ? (
                                 <span className={`text-sm font-bold px-3 py-1 rounded-lg ${
                                   stock === 0 
@@ -1617,8 +1620,8 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                   onClick={() => setPrinterSubTab('usb')}
                   className={`px-6 py-3 rounded-xl font-medium transition-all ${
                     printerSubTab === 'usb'
-                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg'
-                      : 'bg-white text-gray-700 hover:bg-purple-50 border-2 border-gray-200'
+                      ? 'bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white shadow-lg'
+                      : 'bg-white text-gray-700 hover:bg-orange-50 border-2 border-gray-200'
                   }`}
                 >
                   🔌 USB ile Bağlı Yazıcılar
@@ -1627,8 +1630,8 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                   onClick={() => setPrinterSubTab('network')}
                   className={`px-6 py-3 rounded-xl font-medium transition-all ${
                     printerSubTab === 'network'
-                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg'
-                      : 'bg-white text-gray-700 hover:bg-purple-50 border-2 border-gray-200'
+                      ? 'bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white shadow-lg'
+                      : 'bg-white text-gray-700 hover:bg-orange-50 border-2 border-gray-200'
                   }`}
                 >
                   🌐 Ethernet Yazıcılar
@@ -1664,7 +1667,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                           <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
                             isCashierPrinter 
                               ? 'bg-gradient-to-br from-green-400 to-emerald-500' 
-                              : 'bg-gradient-to-br from-blue-200 to-purple-200'
+                              : 'bg-gradient-to-br from-blue-200 to-orange-200'
                           }`}>
                             <svg className={`w-6 h-6 ${isCashierPrinter ? 'text-white' : 'text-blue-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
@@ -1683,14 +1686,14 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                             {assignedCategories.length > 0 ? (
                               <div className="mt-1 flex flex-wrap gap-1">
                                 {assignedCategories.map(category => (
-                                  <span key={category.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-100 text-purple-700 text-xs font-medium">
+                                  <span key={category.id} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-orange-100 text-orange-700 text-xs font-medium">
                                     📋 {category.name}
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         handleRemoveCategoryAssignment(category.id);
                                       }}
-                                      className="hover:bg-purple-200 rounded px-1 transition-colors"
+                                      className="hover:bg-orange-200 rounded px-1 transition-colors"
                                       title="Kategori atamasını kaldır"
                                     >
                                       ✕
@@ -1717,7 +1720,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                         </button>
                         <button
                           onClick={() => handleAssignCategory(printer.name, printerSubTab)}
-                          className="flex-1 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:shadow-lg transition-all font-medium"
+                          className="flex-1 px-4 py-2 bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white rounded-lg hover:shadow-lg transition-all font-medium"
                         >
                           Kategori Ata
                         </button>
@@ -1747,7 +1750,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
       {showCategoryAssignModal && selectedPrinter && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-lg flex items-center justify-center z-[1000] animate-fade-in px-4">
           <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl transform animate-scale-in relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-purple-500 via-pink-500 to-blue-500"></div>
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-orange-500 via-orange-400 to-blue-500"></div>
             
             <button
               onClick={() => {
@@ -1764,14 +1767,14 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
             </button>
             
             <div className="text-center mb-6">
-              <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+              <div className="w-20 h-20 bg-gradient-to-br from-orange-500 via-orange-400 to-orange-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
                 <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
                 </svg>
               </div>
               <h3 className="text-2xl font-bold text-gray-800 mb-2">Kategori Ata</h3>
               <p className="text-gray-600 mb-2">
-                <span className="font-semibold text-purple-600">{selectedPrinter.name}</span>
+                <span className="font-semibold text-orange-600">{selectedPrinter.name}</span>
               </p>
               <p className="text-sm text-gray-500">Bu yazıcıya birden fazla kategori seçebilirsiniz</p>
             </div>
@@ -1808,9 +1811,9 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                         }}
                         className={`w-full px-4 py-3 rounded-xl text-left transition-all cursor-pointer ${
                           isSelected
-                        ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                        ? 'bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white'
                             : isAssignedToThisPrinter
-                            ? 'bg-purple-200 text-purple-800 border-2 border-purple-400'
+                            ? 'bg-orange-200 text-orange-800 border-2 border-orange-400'
                             : isAssignedToOtherPrinter
                             ? 'bg-yellow-100 text-yellow-800 border-2 border-yellow-400 cursor-not-allowed opacity-60'
                         : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -1827,13 +1830,13 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                                 }
                               }}
                               disabled={isAssignedToOtherPrinter}
-                              className="w-5 h-5 rounded border-2 border-gray-300 text-purple-600 focus:ring-purple-500 focus:ring-2 cursor-pointer"
+                              className="w-5 h-5 rounded border-2 border-gray-300 text-orange-600 focus:ring-orange-500 focus:ring-2 cursor-pointer"
                               onClick={(e) => e.stopPropagation()}
                             />
                             <span className="font-medium">{category.name}</span>
                     </div>
                           {isAssignedToThisPrinter && !isSelected && (
-                            <span className="text-xs bg-purple-600 text-white px-2 py-1 rounded">
+                            <span className="text-xs bg-orange-600 text-white px-2 py-1 rounded">
                               Bu yazıcıya atanmış
                             </span>
                           )}
@@ -1867,7 +1870,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
                     <button
                   onClick={confirmCategoryAssignment}
                   disabled={assigningCategory}
-                  className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl hover:shadow-lg transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white rounded-xl hover:shadow-lg transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {assigningCategory ? 'Atanıyor...' : 'Kategorileri Ata'}
                     </button>
@@ -2057,17 +2060,17 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
       {deleteConfirmModal && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-lg flex items-center justify-center z-[1000] animate-fade-in px-4">
           <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl transform animate-scale-in relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-500 via-pink-500 to-red-500"></div>
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-500 via-orange-500 to-red-500"></div>
             
             <div className="text-center mb-6">
-              <div className="w-20 h-20 bg-gradient-to-br from-red-500 to-pink-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+              <div className="w-20 h-20 bg-gradient-to-br from-red-500 to-orange-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
                 <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
               </div>
               <h3 className="text-2xl font-bold text-gray-800 mb-2">Ürünü Sil</h3>
               <p className="text-gray-600 mb-4">
-                <span className="font-semibold text-purple-600">{deleteConfirmModal.productName}</span> adlı ürünü silmek istediğinize emin misiniz?
+                <span className="font-semibold text-orange-600">{deleteConfirmModal.productName}</span> adlı ürünü silmek istediğinize emin misiniz?
               </p>
               <p className="text-sm text-red-600 bg-red-50 px-4 py-2 rounded-lg border border-red-200">
                 ⚠️ Bu işlem geri alınamaz!
@@ -2083,7 +2086,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
               </button>
               <button
                 onClick={confirmDelete}
-                className="flex-1 px-6 py-3 bg-gradient-to-r from-red-500 to-pink-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all transform hover:scale-105"
+                className="flex-1 px-6 py-3 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all transform hover:scale-105"
               >
                 <div className="flex items-center justify-center space-x-2">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2194,17 +2197,17 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
       {deleteCategoryModal && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-lg flex items-center justify-center z-[1000] animate-fade-in px-4">
           <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl transform animate-scale-in relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-500 via-pink-500 to-red-500"></div>
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-500 via-orange-500 to-red-500"></div>
             
             <div className="text-center mb-6">
-              <div className="w-20 h-20 bg-gradient-to-br from-red-500 to-pink-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+              <div className="w-20 h-20 bg-gradient-to-br from-red-500 to-orange-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
                 <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
               </div>
               <h3 className="text-2xl font-bold text-gray-800 mb-2">Kategoriyi Sil</h3>
               <p className="text-gray-600 mb-4">
-                <span className="font-semibold text-purple-600">{deleteCategoryModal.categoryName}</span> kategorisini silmek istediğinizden emin misiniz?
+                <span className="font-semibold text-orange-600">{deleteCategoryModal.categoryName}</span> kategorisini silmek istediğinizden emin misiniz?
               </p>
               <p className="text-sm text-red-600 bg-red-50 px-4 py-2 rounded-lg border border-red-200">
                 ⚠️ Bu işlem geri alınamaz! Kategorideki tüm ürünler de silinecektir.
@@ -2220,7 +2223,7 @@ const SettingsModal = ({ onClose, onProductsUpdated }) => {
               </button>
               <button
                 onClick={handleDeleteCategory}
-                className="flex-1 px-6 py-3 bg-gradient-to-r from-red-500 to-pink-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all transform hover:scale-105"
+                className="flex-1 px-6 py-3 bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all transform hover:scale-105"
               >
                 <div className="flex items-center justify-center space-x-2">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

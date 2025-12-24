@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { getThemeColors } from './utils/themeUtils';
 import Navbar from './components/Navbar';
 import CategoryPanel from './components/CategoryPanel';
 import TablePanel from './components/TablePanel';
@@ -14,8 +15,13 @@ import SplashScreen from './components/SplashScreen';
 import ExitSplash from './components/ExitSplash';
 import UpdateModal from './components/UpdateModal';
 import ExpenseModal from './components/ExpenseModal';
+import LauncherClient from './components/LauncherClient';
+
 function App() {
-  const [showSplash, setShowSplash] = useState(true);
+  const [showLauncher, setShowLauncher] = useState(true);
+  const [tenantId, setTenantId] = useState(null);
+  const [tenantInfo, setTenantInfo] = useState(null); // Tenant bilgileri (businessName için)
+  const [showSplash, setShowSplash] = useState(false);
   const [currentView, setCurrentView] = useState('pos'); // 'pos', 'sales', or 'tables'
   const [categories, setCategories] = useState([]);
   const [products, setProducts] = useState([]);
@@ -38,6 +44,7 @@ function App() {
   const [showExitSplash, setShowExitSplash] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [suspendedInfo, setSuspendedInfo] = useState(null); // { message, businessName }
   const searchInputRef = useRef(null);
   const triggerRoleSplash = (role) => {
     setActiveRoleSplash(role);
@@ -46,38 +53,122 @@ function App() {
 
   const [broadcastMessage, setBroadcastMessage] = useState(null);
 
-  useEffect(() => {
-    loadCategories();
-    
-    // Update event listeners
-    if (window.electronAPI) {
-      window.electronAPI.onUpdateAvailable((info) => {
-        setUpdateInfo({ ...info, downloaded: false });
-      });
-      
-      window.electronAPI.onUpdateDownloaded((info) => {
-        setUpdateInfo({ ...info, downloaded: true });
-      });
-      
-      window.electronAPI.onUpdateError((error) => {
-        console.error('Update error:', error);
-        // Hata durumunda modal'ı kapat
-        setUpdateInfo(null);
-      });
-      
-      window.electronAPI.onUpdateProgress((progress) => {
-        setUpdateDownloadProgress(progress);
-      });
+  // Her açılışta launcher göster (şimdilik "beni hatırla" yok)
+  // useEffect(() => {
+  //   const savedTenantId = localStorage.getItem('makara_tenant_id');
+  //   if (savedTenantId) {
+  //     setTenantId(savedTenantId);
+  //     setShowLauncher(false);
+  //     setShowSplash(true);
+  //   }
+  // }, []);
 
-      // Broadcast message listener
-      if (window.electronAPI.onBroadcastMessage) {
-        const cleanup = window.electronAPI.onBroadcastMessage((data) => {
-          setBroadcastMessage(data);
+  const handleLauncherLogin = (tenantInfo) => {
+    setTenantId(tenantInfo.tenantId);
+    setTenantInfo(tenantInfo); // Tenant bilgilerini state'e kaydet
+    // Tenant bilgilerini Electron'a gönder (müessese ismi değişimi için)
+    if (window.electronAPI && window.electronAPI.setTenantInfo) {
+      window.electronAPI.setTenantInfo(tenantInfo);
+    }
+    setShowLauncher(false);
+    setShowSplash(true);
+  };
+  
+  // Business name'i al (fallback: MAKARA)
+  const businessName = tenantInfo?.businessName || 'MAKARA';
+  
+  // Tema rengini al (fallback: turuncu)
+  // Şimdilik her zaman turuncu kullan
+  const themeColor = '#f97316'; // tenantInfo?.themeColor || '#f97316';
+  
+  // Tema renklerini hesapla
+  const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
+  
+  // Debug: Tenant bilgilerini kontrol et
+  useEffect(() => {
+    if (tenantInfo) {
+      console.log('✅ Tenant Info:', tenantInfo);
+      console.log('✅ Business Name:', businessName);
+      console.log('✅ Inside Tables:', tenantInfo.insideTables, 'Type:', typeof tenantInfo.insideTables);
+      console.log('✅ Outside Tables:', tenantInfo.outsideTables, 'Type:', typeof tenantInfo.outsideTables);
+      console.log('✅ Package Tables:', tenantInfo.packageTables, 'Type:', typeof tenantInfo.packageTables);
+    }
+  }, [tenantInfo, businessName]);
+
+  // Debug: suspendedInfo değişikliklerini izle
+  useEffect(() => {
+    if (suspendedInfo) {
+      console.log('🎨 suspendedInfo state güncellendi:', suspendedInfo);
+      console.log('🎨 Modal render edilecek mi?', !!suspendedInfo);
+    } else {
+      console.log('🎨 suspendedInfo null/undefined');
+    }
+  }, [suspendedInfo]);
+
+  useEffect(() => {
+    if (!showLauncher && tenantId) {
+      loadCategories();
+      
+      // Update event listeners
+      if (window.electronAPI) {
+        window.electronAPI.onUpdateAvailable((info) => {
+          setUpdateInfo({ ...info, downloaded: false });
         });
-        return cleanup;
+        
+        window.electronAPI.onUpdateDownloaded((info) => {
+          setUpdateInfo({ ...info, downloaded: true });
+        });
+        
+        window.electronAPI.onUpdateError((error) => {
+          console.error('Update error:', error);
+          // Hata durumunda modal'ı kapat
+          setUpdateInfo(null);
+        });
+        
+        window.electronAPI.onUpdateProgress((progress) => {
+          setUpdateDownloadProgress(progress);
+        });
+
+        // Cleanup fonksiyonları
+        const cleanups = [];
+
+        // Broadcast message listener
+        if (window.electronAPI.onBroadcastMessage) {
+          const cleanup = window.electronAPI.onBroadcastMessage((data) => {
+            console.log('📢 Broadcast message alındı:', data);
+            setBroadcastMessage(data);
+          });
+          if (cleanup) cleanups.push(cleanup);
+        }
+
+        // Tenant suspended listener
+        if (window.electronAPI.onTenantSuspended) {
+          console.log('👂 Tenant suspended listener kuruluyor...');
+          const cleanup = window.electronAPI.onTenantSuspended((data) => {
+            console.log('⚠️⚠️⚠️ Tenant suspended event alındı:', data);
+            console.log('⚠️⚠️⚠️ setSuspendedInfo çağrılıyor...');
+            // Suspended modal'ı göster
+            setSuspendedInfo(data);
+            console.log('⚠️⚠️⚠️ setSuspendedInfo çağrıldı, suspendedInfo state:', data);
+          });
+          console.log('✅ Tenant suspended listener kuruldu');
+          if (cleanup) cleanups.push(cleanup);
+        } else {
+          console.error('❌ window.electronAPI.onTenantSuspended mevcut değil!');
+        }
+
+        // Tüm cleanup fonksiyonlarını döndür
+        return () => {
+          console.log('🧹 Cleanup fonksiyonları çağrılıyor...');
+          cleanups.forEach(cleanup => {
+            if (typeof cleanup === 'function') {
+              cleanup();
+            }
+          });
+        };
       }
     }
-  }, []);
+  }, [showLauncher, tenantId]);
 
   useEffect(() => {
     if (selectedCategory) {
@@ -526,13 +617,48 @@ function App() {
   };
 
   const handleExitComplete = async () => {
-    // Veritabanını kaydet ve uygulamayı kapat
-    if (window.electronAPI && window.electronAPI.quitApp) {
-      await window.electronAPI.quitApp();
-    } else {
-      // Fallback
-      window.close();
+    // Veritabanını kaydet
+    if (window.electronAPI && window.electronAPI.saveDatabase) {
+      try {
+        await window.electronAPI.saveDatabase();
+      } catch (error) {
+        console.error('Veritabanı kaydedilirken hata:', error);
+      }
     }
+    
+    // Tüm state'leri temizle
+    setCart([]);
+    setOrderNote('');
+    setSelectedTable(null);
+    setCategories([]);
+    setProducts([]);
+    setAllProducts([]);
+    setSelectedCategory(null);
+    setCurrentView('pos');
+    setSaleSuccessInfo(null);
+    setPrintToast(null);
+    setUpdateInfo(null);
+    setUpdateDownloadProgress(null);
+    setBroadcastMessage(null);
+    setSuspendedInfo(null);
+    setShowExitSplash(false);
+    setShowSplash(false);
+    
+    // Tenant bilgilerini temizle
+    setTenantId(null);
+    setTenantInfo(null);
+    
+    // Electron'dan tenant bilgisini temizle
+    if (window.electronAPI && window.electronAPI.setTenantInfo) {
+      try {
+        await window.electronAPI.setTenantInfo(null);
+      } catch (error) {
+        console.error('Tenant bilgisi temizlenirken hata:', error);
+      }
+    }
+    
+    // LauncherClient'e geri dön
+    setShowLauncher(true);
   };
 
   const handleSaveExpense = async (expenseData) => {
@@ -562,10 +688,15 @@ function App() {
     }
   };
 
+  // Show launcher if tenant ID is not set
+  if (showLauncher) {
+    return <LauncherClient onLogin={handleLauncherLogin} />;
+  }
+
   return (
     <>
       {showSplash && (
-        <SplashScreen onComplete={() => setShowSplash(false)} />
+        <SplashScreen onComplete={() => setShowSplash(false)} businessName={businessName} />
       )}
 
       {showExitSplash && (
@@ -588,6 +719,8 @@ function App() {
         onRoleSplash={triggerRoleSplash}
         onProductsUpdated={refreshProducts}
         onExit={handleExit}
+        businessName={businessName}
+        themeColor={themeColor}
       />
       
       {currentView === 'tables' ? (
@@ -599,6 +732,9 @@ function App() {
               setReceiptData(receiptData);
               setShowReceiptModal(true);
             }}
+            insideTablesCount={tenantInfo?.insideTables !== undefined && tenantInfo?.insideTables !== null ? tenantInfo.insideTables : 20}
+            outsideTablesCount={tenantInfo?.outsideTables !== undefined && tenantInfo?.outsideTables !== null ? tenantInfo.outsideTables : 20}
+            packageTablesCount={tenantInfo?.packageTables !== undefined && tenantInfo?.packageTables !== null ? tenantInfo.packageTables : 5}
           />
         </div>
       ) : currentView === 'pos' ? (
@@ -606,7 +742,7 @@ function App() {
           {/* Sol Panel - Kategoriler ve Ürünler */}
           <div className="flex-1 flex flex-col p-4 overflow-hidden">
             {selectedTable && (
-              <div className="mb-3 p-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl shadow-lg flex items-center justify-between">
+              <div className="mb-3 p-3 bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white rounded-xl shadow-lg flex items-center justify-between">
                 <p className="text-base font-semibold">
                   Masa: {selectedTable.name} için sipariş oluşturuyorsunuz
                 </p>
@@ -631,6 +767,7 @@ function App() {
                 setSelectedCategory(category);
                 setSearchQuery(''); // Kategori değiştiğinde aramayı temizle
               }}
+              themeColor={themeColor}
             />
             
             {/* Arama Çubuğu ve (sadece Admin için) Masraf Ekle Butonu */}
@@ -642,7 +779,19 @@ function App() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Ürün ara..."
-                  className="w-full px-3 py-2 pl-10 bg-white/90 backdrop-blur-xl border-2 border-purple-200 rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800 font-medium placeholder-gray-400 transition-all duration-200 text-sm"
+                  className="w-full px-3 py-2 pl-10 bg-white/90 backdrop-blur-xl border-2 rounded-lg shadow-md focus:outline-none focus:ring-2 focus:border-transparent text-gray-800 font-medium placeholder-gray-400 transition-all duration-200 text-sm"
+                  style={{ 
+                    borderColor: theme.primary200,
+                    '--focus-ring': theme.primary500 
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = theme.primary500;
+                    e.target.style.boxShadow = `0 0 0 2px ${theme.primary500}40`;
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = theme.primary200;
+                    e.target.style.boxShadow = 'none';
+                  }}
                 />
                 <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
                   <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -692,7 +841,7 @@ function App() {
           </div>
 
           {/* Sağ Panel - Sepet */}
-          <div className="w-[420px] bg-gradient-to-b from-purple-50/80 to-pink-50/80 backdrop-blur-xl border-l border-purple-200 p-6">
+          <div className="w-[420px] bg-gradient-to-b from-gray-50 to-gray-100 backdrop-blur-xl border-l border-gray-200 p-6">
             <Cart
               cart={cart}
               onUpdateQuantity={updateCartItemQuantity}
@@ -706,12 +855,13 @@ function App() {
               orderNote={orderNote}
               onOrderNoteChange={setOrderNote}
               onToggleGift={toggleGift}
+              themeColor={themeColor}
             />
           </div>
         </div>
       ) : (
         <div className="p-6">
-          <SalesHistory />
+          <SalesHistory themeColor={themeColor} />
         </div>
       )}
 
@@ -778,7 +928,7 @@ function App() {
             window.electronAPI.minimizeWindow();
           }
         }}
-        className="fixed bottom-4 left-4 z-50 w-10 h-10 rounded-full bg-white/80 hover:bg-white border-2 border-purple-300 hover:border-purple-500 shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center group"
+        className="fixed bottom-4 left-4 z-50 w-10 h-10 rounded-full bg-white/80 hover:bg-white border-2 border-orange-300 hover:border-orange-500 shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center group"
         title="Uygulamayı Arka Plana Al (Alt+Tab)"
       >
         <svg 
@@ -813,11 +963,11 @@ function App() {
             }}
           >
             {/* Dekoratif arka plan efektleri */}
-            <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-purple-200/20 to-blue-200/20 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-            <div className="absolute bottom-0 left-0 w-40 h-40 bg-gradient-to-tr from-pink-200/20 to-purple-200/20 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+            <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-orange-200/20 to-blue-200/20 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+            <div className="absolute bottom-0 left-0 w-40 h-40 bg-gradient-to-tr from-orange-200/20 to-orange-200/20 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
             
             {/* Header */}
-            <div className="relative bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 text-white p-7 overflow-hidden">
+            <div className="relative text-white p-7 overflow-hidden" style={{ backgroundImage: `linear-gradient(to right, #4f46e5 0%, ${theme.primary} 50%, ${theme.primaryDark} 100%)` }}>
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
               <div className="relative z-10 flex items-center gap-4">
                 <div className="w-14 h-14 bg-white/25 backdrop-blur-md rounded-2xl flex items-center justify-center shadow-lg border border-white/30">
@@ -853,9 +1003,107 @@ function App() {
             <div className="relative z-10 border-t border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 flex justify-center">
               <button
                 onClick={() => setBroadcastMessage(null)}
-                className="px-12 py-4 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 hover:from-indigo-700 hover:via-purple-700 hover:to-pink-600 text-white font-bold rounded-2xl transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 relative overflow-hidden group"
+                className="px-12 py-4 bg-gradient-to-r from-indigo-600 via-orange-500 to-orange-600 hover:from-indigo-700 hover:via-orange-600 hover:to-orange-700 text-white font-bold rounded-2xl transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 relative overflow-hidden group"
                 style={{
                   boxShadow: '0 8px 20px rgba(102, 126, 234, 0.4)',
+                  letterSpacing: '0.3px'
+                }}
+              >
+                <span className="relative z-10">Anladım</span>
+                <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              </button>
+            </div>
+          </div>
+          
+          <style>{`
+            @keyframes fadeIn {
+              from { opacity: 0; }
+              to { opacity: 1; }
+            }
+            @keyframes slideUpScale {
+              from { transform: translateY(40px) scale(0.9); opacity: 0; }
+              to { transform: translateY(0) scale(1); opacity: 1; }
+            }
+            .animate-fade-in {
+              animation: fadeIn 0.3s ease-out;
+            }
+            .animate-slide-up-scale {
+              animation: slideUpScale 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            }
+          `}</style>
+        </div>
+      )}
+
+      {/* Tenant Suspended Modal */}
+      {suspendedInfo && (
+        <div 
+          className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-[10000] p-4" 
+          style={{ animation: 'fadeIn 0.3s ease' }}
+        >
+          <div 
+            className="bg-gradient-to-br from-white to-slate-50 rounded-[32px] max-w-md w-full shadow-2xl overflow-hidden relative border border-white/20"
+            style={{ 
+              animation: 'slideUpScale 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+              boxShadow: '0 30px 80px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.1) inset'
+            }}
+          >
+            {/* Dekoratif arka plan efektleri */}
+            <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-red-200/30 to-orange-200/30 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+            <div className="absolute bottom-0 left-0 w-40 h-40 bg-gradient-to-tr from-pink-200/30 to-red-200/30 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+            
+            {/* Header */}
+            <div className="relative bg-gradient-to-r from-red-500 via-red-600 to-orange-500 text-white p-7 overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
+              <div className="relative z-10 flex items-center gap-4">
+                <div className="w-16 h-16 bg-white/25 backdrop-blur-md rounded-2xl flex items-center justify-center shadow-lg border border-white/30">
+                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-2xl font-black text-white mb-1 tracking-tight" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.2)' }}>
+                    Hesap Askıya Alındı
+                  </h3>
+                  <p className="text-sm font-medium text-white/95">Yönetim Bildirimi</p>
+                </div>
+              </div>
+            </div>
+            
+            {/* Content */}
+            <div className="relative z-10 p-7">
+              <div className="mb-5">
+                <p className="text-base font-semibold text-gray-800 leading-relaxed mb-4 tracking-wide">
+                  {suspendedInfo.message || 'Hesabınız yönetici tarafından askıya alınmıştır. Lütfen yönetici ile iletişime geçiniz.'}
+                </p>
+                {suspendedInfo.businessName && (
+                  <div className="bg-gradient-to-r from-slate-100 to-slate-50 border border-slate-200 rounded-2xl p-4 flex items-center justify-center gap-2">
+                    <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                    </svg>
+                    <p className="text-sm font-semibold text-slate-700">
+                      {suspendedInfo.businessName}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            {/* Footer */}
+            <div className="relative z-10 border-t border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 flex justify-center">
+              <button
+                onClick={async () => {
+                  setSuspendedInfo(null);
+                  // Uygulamayı kapat
+                  if (window.electronAPI && window.electronAPI.quitApp) {
+                    await window.electronAPI.quitApp();
+                  } else {
+                    // Fallback
+                    window.close();
+                  }
+                }}
+                className="px-12 py-4 bg-gradient-to-r from-red-500 via-red-600 to-orange-500 hover:from-red-600 hover:via-red-700 hover:to-orange-600 text-white font-bold rounded-2xl transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 relative overflow-hidden group"
+                style={{
+                  boxShadow: '0 8px 20px rgba(239, 68, 68, 0.4)',
                   letterSpacing: '0.3px'
                 }}
               >

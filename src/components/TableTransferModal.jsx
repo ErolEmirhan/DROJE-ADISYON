@@ -5,21 +5,24 @@ const TableTransferModal = ({
   currentTableId, 
   currentTableType,
   onClose, 
-  onTransfer 
+  onTransfer,
+  insideTablesCount = 20,
+  outsideTablesCount = 20,
+  packageTablesCount = 5
 }) => {
   const [step, setStep] = useState(1); // 1: source table, 2: target table
   const [tableOrders, setTableOrders] = useState([]);
   const [selectedSourceTable, setSelectedSourceTable] = useState(null);
   const [selectedTargetTable, setSelectedTargetTable] = useState(null);
 
-  const insideTables = Array.from({ length: 20 }, (_, i) => ({
+  const insideTables = Array.from({ length: insideTablesCount }, (_, i) => ({
     id: `inside-${i + 1}`,
     number: i + 1,
     type: 'inside',
     name: `İçeri ${i + 1}`
   }));
 
-  const outsideTables = Array.from({ length: 20 }, (_, i) => ({
+  const outsideTables = Array.from({ length: outsideTablesCount }, (_, i) => ({
     id: `outside-${i + 1}`,
     number: i + 1,
     type: 'outside',
@@ -27,14 +30,14 @@ const TableTransferModal = ({
   }));
 
   // Paket masaları (hem içeri hem dışarı için)
-  const packageTablesInside = Array.from({ length: 5 }, (_, i) => ({
+  const packageTablesInside = Array.from({ length: packageTablesCount }, (_, i) => ({
     id: `package-inside-${i + 1}`,
     number: i + 1,
     type: 'inside',
     name: `Paket ${i + 1}`
   }));
 
-  const packageTablesOutside = Array.from({ length: 5 }, (_, i) => ({
+  const packageTablesOutside = Array.from({ length: packageTablesCount }, (_, i) => ({
     id: `package-outside-${i + 1}`,
     number: i + 1,
     type: 'outside',
