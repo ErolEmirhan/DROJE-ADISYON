@@ -54,7 +54,7 @@ droje-pos/
 ├── electron/
 │   ├── main.js              # Electron ana süreç
 │   ├── preload.js           # Electron preload script
-│   └── tenantManager.js     # Tenant yönetimi
+│   └── tenantManager.js aa    # Tenant yönetimi
 ├── src/
 │   ├── components/
 │   │   ├── Navbar.jsx           # Üst navigasyon
