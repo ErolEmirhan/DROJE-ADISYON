@@ -6211,7 +6211,20 @@ async function printCancelReceipt(printerName, printerType, cancelData) {
 function generateMobileHTML(serverURL) {
   // Tenant'ın tema rengini ve masa sayılarını al (masaüstü uygulamadaki mantıkla aynı)
   const tenantInfo = tenantManager.getCurrentTenantInfo();
+  const tenantId = tenantInfo?.tenantId || null;
+  const isSultanSomati = tenantId === 'TENANT-1766611377865';
   const themeColor = tenantInfo?.themeColor || '#f97316';
+  
+  // Sultan Somatı için salon yapısı
+  const sultanSomatiSalons = [
+    { id: 'disari', name: 'Dışarı', count: 4, icon: '☀️' },
+    { id: 'kis-bahcesi', name: 'Kış Bahçesi', count: 14, icon: '🌿' },
+    { id: 'osmanli-odasi', name: 'Osmanlı Odası', count: 8, icon: '🏛️' },
+    { id: 'selcuklu-odasi', name: 'Selçuklu Odası', count: 10, icon: '🕌' },
+    { id: 'mevlevi-odasi', name: 'Mevlevi Odası', count: 1, icon: '🕯️' },
+    { id: 'ask-odasi', name: 'Aşk Odası', count: 1, icon: '💕' }
+  ];
+  
   // 0 değeri geçerli olduğu için null/undefined kontrolü yapıyoruz
   const insideTablesCount = tenantInfo?.insideTables !== undefined && tenantInfo?.insideTables !== null 
     ? tenantInfo.insideTables 
@@ -6252,7 +6265,7 @@ function generateMobileHTML(serverURL) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#f97316">
+  <meta name="theme-color" content="${themeColor}">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="${tenantManager.getBusinessName()} Mobil">
@@ -6264,18 +6277,19 @@ function generateMobileHTML(serverURL) {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { 
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%); 
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%); 
       min-height: 100vh; 
-      padding: 10px; 
+      padding: 0; 
+      margin: 0;
     }
     .container { 
-      max-width: 600px; 
-      margin: 0 auto; 
+      max-width: 100%; 
+      margin: 0; 
       background: white; 
-      border-radius: 20px; 
-      padding: 15px; 
-      box-shadow: 0 20px 60px rgba(0,0,0,0.3); 
-      min-height: calc(100vh - 20px);
+      border-radius: 0; 
+      padding: 0; 
+      box-shadow: none; 
+      min-height: 100vh;
     }
     .table-type-tabs {
       display: flex;
@@ -6311,22 +6325,23 @@ function generateMobileHTML(serverURL) {
       color: #c2410c;
     }
     .table-type-tab[data-type="outside"].active {
-      background: linear-gradient(135deg, #f97316 0%, #fbbf24 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 100%);
       color: white;
-      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4);
+      box-shadow: 0 4px 12px ${primary}66;
     }
     .table-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 8px;
+      grid-template-columns: ${isSultanSomati ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)'};
+      gap: ${isSultanSomati ? '12px' : '8px'};
       margin-bottom: 20px;
+      ${isSultanSomati ? 'padding-top: 10px;' : ''}
     }
     .table-btn {
-      aspect-ratio: 1;
-      border: 2px solid #e0e0e0;
+      ${isSultanSomati ? 'min-height: 120px;' : 'aspect-ratio: 1;'}
+      border: ${isSultanSomati ? '1px' : '2px'} solid #e0e0e0;
       border-radius: 12px;
       background: white;
-      font-size: 14px;
+      font-size: ${isSultanSomati ? '18px' : '14px'};
       font-weight: bold;
       color: #333;
       cursor: pointer;
@@ -6336,7 +6351,7 @@ function generateMobileHTML(serverURL) {
       align-items: center;
       justify-content: center;
       flex-direction: column;
-      padding: 5px;
+      padding: ${isSultanSomati ? '20px' : '5px'};
     }
     .table-btn.outside-empty {
       background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
@@ -6363,10 +6378,10 @@ function generateMobileHTML(serverURL) {
       box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
     }
     .table-btn.selected {
-      border-color: #a855f7;
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      border-color: ${primary};
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%);
       color: white;
-      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4);
+      box-shadow: 0 4px 12px ${primary}66;
     }
     .table-btn.has-order {
       border-color: #047857;
@@ -6485,8 +6500,8 @@ function generateMobileHTML(serverURL) {
     .category-tab.active {
       border-color: #fed7aa;
       background: linear-gradient(135deg, #fce7f3 0%, #fdf2f8 100%);
-      color: #f97316;
-      box-shadow: 0 4px 16px rgba(236, 72, 153, 0.25), 0 2px 8px rgba(236, 72, 153, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      color: ${primary};
+      box-shadow: 0 4px 16px ${primary}40, 0 2px 8px ${primary}25, inset 0 1px 0 rgba(255, 255, 255, 0.8);
       transform: translateY(-2px);
       font-weight: 700;
       position: relative;
@@ -6498,9 +6513,9 @@ function generateMobileHTML(serverURL) {
       left: 0;
       right: 0;
       height: 3px;
-      background: linear-gradient(90deg, #fb923c 0%, #f97316 50%, #fb923c 100%);
+      background: linear-gradient(90deg, ${primaryLight} 0%, ${primary} 50%, ${primaryLight} 100%);
       border-radius: 0 0 14px 14px;
-      box-shadow: 0 2px 8px rgba(236, 72, 153, 0.4);
+      box-shadow: 0 2px 8px ${primary}66;
     }
     .products-grid {
       display: grid;
@@ -6538,7 +6553,7 @@ function generateMobileHTML(serverURL) {
       background-repeat: no-repeat;
       cursor: pointer;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 2px 8px rgba(249, 115, 22, 0.4), 0 1px 3px rgba(234, 88, 12, 0.3);
+      box-shadow: 0 2px 8px ${rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.4)` : 'rgba(249, 115, 22, 0.4)'}, 0 1px 3px ${rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)` : 'rgba(234, 88, 12, 0.3)'};
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -6553,12 +6568,12 @@ function generateMobileHTML(serverURL) {
       left: 0;
       right: 0;
       bottom: 0;
-      background: linear-gradient(135deg, rgba(249, 115, 22, 0.85) 0%, rgba(251, 146, 60, 0.8) 50%, rgba(234, 88, 12, 0.85) 100%);
+      background: linear-gradient(135deg, ${rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.85)` : 'rgba(249, 115, 22, 0.85)'} 0%, ${rgb ? `rgba(${Math.min(255, rgb.r + 20)}, ${Math.min(255, rgb.g + 20)}, ${Math.min(255, rgb.b + 20)}, 0.8)` : 'rgba(251, 146, 60, 0.8)'} 50%, ${rgb ? `rgba(${Math.max(0, rgb.r - 20)}, ${Math.max(0, rgb.g - 20)}, ${Math.max(0, rgb.b - 20)}, 0.85)` : 'rgba(234, 88, 12, 0.85)'} 100%);
       z-index: 1;
     }
     .product-card:hover {
       border-color: rgba(255, 255, 255, 0.4);
-      box-shadow: 0 4px 16px rgba(249, 115, 22, 0.5), 0 2px 8px rgba(234, 88, 12, 0.4);
+      box-shadow: 0 4px 16px ${rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.5)` : 'rgba(249, 115, 22, 0.5)'}, 0 2px 8px ${rgb ? `rgba(${Math.max(0, rgb.r - 20)}, ${Math.max(0, rgb.g - 20)}, ${Math.max(0, rgb.b - 20)}, 0.4)` : 'rgba(234, 88, 12, 0.4)'};
       transform: translateY(-2px);
     }
     .product-card:active {
@@ -6589,6 +6604,7 @@ function generateMobileHTML(serverURL) {
       left: 0;
       right: 0;
       background: white;
+      display: none;
       border-top: 3px solid #a855f7;
       box-shadow: 0 -8px 30px rgba(0,0,0,0.15);
       border-radius: 20px 20px 0 0;
@@ -6632,17 +6648,17 @@ function generateMobileHTML(serverURL) {
       width: 44px;
       height: 44px;
       border-radius: 12px;
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%);
       display: flex;
       align-items: center;
       justify-content: center;
       color: white;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
+      box-shadow: 0 4px 12px ${primary}4D;
     }
     .cart-header-icon:active {
       transform: scale(0.95);
-      box-shadow: 0 2px 6px rgba(249, 115, 22, 0.4);
+      box-shadow: 0 2px 6px ${primary}66;
     }
     .cart-content {
       padding: 20px;
@@ -6704,10 +6720,10 @@ function generateMobileHTML(serverURL) {
     .qty-btn {
       width: 36px;
       height: 36px;
-      border: 2px solid #f97316;
+      border: 2px solid ${primary};
       border-radius: 10px;
       background: white;
-      color: #f97316;
+      color: ${primary};
       font-weight: 700;
       cursor: pointer;
       font-size: 16px;
@@ -6717,7 +6733,7 @@ function generateMobileHTML(serverURL) {
       transition: all 0.3s;
     }
     .qty-btn:hover {
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%);
       color: white;
       transform: scale(1.05);
     }
@@ -6727,14 +6743,14 @@ function generateMobileHTML(serverURL) {
     .send-btn {
       width: 100%;
       padding: 18px;
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%);
       color: white;
       border: none;
       border-radius: 14px;
       font-size: 17px;
       font-weight: 700;
       cursor: pointer;
-      box-shadow: 0 4px 16px rgba(249, 115, 22, 0.4);
+      box-shadow: 0 4px 16px ${rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.4)` : 'rgba(249, 115, 22, 0.4)'};
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       letter-spacing: 0.3px;
     }
@@ -6748,7 +6764,7 @@ function generateMobileHTML(serverURL) {
     .loading {
       text-align: center;
       padding: 20px;
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -6897,7 +6913,7 @@ function generateMobileHTML(serverURL) {
     }
     .staff-info p {
       font-weight: bold;
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -6907,12 +6923,12 @@ function generateMobileHTML(serverURL) {
       text-align: center;
       margin-bottom: 15px;
       padding: 12px;
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%);
       border-radius: 12px;
       color: white;
       font-weight: bold;
       font-size: 16px;
-      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
+      box-shadow: 0 4px 12px ${primary}4D;
     }
     .back-btn {
       display: flex;
@@ -6921,11 +6937,11 @@ function generateMobileHTML(serverURL) {
       gap: 10px;
       padding: 12px 20px;
       background: white;
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
-      color: #f97316;
+      color: ${primary};
       border: 2px solid #e5e7eb;
       border-radius: 12px;
       font-size: 15px;
@@ -6936,13 +6952,13 @@ function generateMobileHTML(serverURL) {
     }
     .back-btn:hover {
       background: #f9fafb;
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
-      border-color: #f97316;
+      border-color: ${primary};
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.2);
+      box-shadow: 0 4px 12px ${primary}33;
     }
     .back-btn:active {
       transform: translateY(0) scale(0.98);
@@ -7054,7 +7070,7 @@ function generateMobileHTML(serverURL) {
     .logout-modal-staff-name {
       font-weight: 600;
       color: #a855f7;
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -7240,7 +7256,7 @@ function generateMobileHTML(serverURL) {
       width: 100px;
       height: 100px;
       margin: 0 auto 32px;
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #fed7aa 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryLight}CC 100%);
       border-radius: 50%;
       display: flex;
       align-items: center;
@@ -7255,7 +7271,7 @@ function generateMobileHTML(serverURL) {
       position: absolute;
       inset: -4px;
       border-radius: 50%;
-      background: linear-gradient(135deg, #f97316, #fb923c);
+      background: linear-gradient(135deg, ${primary}, ${primaryLight});
       opacity: 0.2;
       filter: blur(12px);
       z-index: -1;
@@ -7289,7 +7305,7 @@ function generateMobileHTML(serverURL) {
     }
     .splash-loader-bar {
       height: 100%;
-      background: linear-gradient(90deg, #f97316 0%, #fb923c 50%, #f97316 100%);
+      background: linear-gradient(90deg, ${primary} 0%, ${primaryLight} 50%, ${primary} 100%);
       background-size: 200% 100%;
       border-radius: 8px;
       width: 0%;
@@ -7484,7 +7500,7 @@ function generateMobileHTML(serverURL) {
     .order-total-amount {
       font-size: 18px;
       font-weight: 800;
-      background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%);
+      background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -7540,10 +7556,11 @@ function generateMobileHTML(serverURL) {
         <span>Çıkış Yap</span>
       </button>
       
-      <!-- Masa Tipi Seçim Ekranı -->
-      <div id="tableTypeSelection" style="display: block; position: fixed; inset: 0; background: white; z-index: 1000; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px;">
+      <!-- Masa Tipi Seçim Ekranı - Sadece Normal Mod için -->
+      ${!isSultanSomati ? `
+      <div id="tableTypeSelection" style="display: block; position: fixed; inset: 0; background: white; z-index: 1000; overflow-y: auto; display: flex; flex-direction: column; padding: 20px;">
         <!-- Çıkış Yap Butonu - Sadece bu ekranda görünsün -->
-        <div style="position: absolute; top: 20px; right: 20px;">
+        <div style="position: fixed; top: 20px; right: 20px; z-index: 1001;">
           <button onclick="showLogoutModal()" style="display: flex; align-items: center; gap: 8px; padding: 10px 20px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 12px; font-size: 14px; font-weight: 700; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3); transition: all 0.3s; cursor: pointer;" onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 6px 16px rgba(239, 68, 68, 0.4)'" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(239, 68, 68, 0.3)'">
             <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
@@ -7552,27 +7569,84 @@ function generateMobileHTML(serverURL) {
           </button>
         </div>
         
-        <div style="display: flex; flex-direction: column; gap: 32px; width: 100%; max-width: 500px; flex: 1; justify-content: center; padding: 20px;">
+        <!-- Normal Mod - İçeri/Dışarı Seçim Ekranı -->
+        <div style="display: flex; flex-direction: column; gap: 32px; width: 100%; max-width: 500px; margin: 80px auto 40px; flex: 1; justify-content: center; padding: 20px;">
           <!-- İçeri Butonu -->
-          <button onclick="selectTableTypeScreen('inside')" style="width: 100%; min-height: 280px; background: #fdf2f8; border: 3px solid #fed7aa; border-radius: 20px; color: #111827; font-size: 24px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; position: relative; box-shadow: 0 4px 16px rgba(244, 114, 182, 0.25);" onmouseover="this.style.borderColor='#fb923c'; this.style.boxShadow='0 12px 32px rgba(244, 114, 182, 0.35)'; this.style.transform='translateY(-6px)'" onmouseout="this.style.borderColor='#fed7aa'; this.style.boxShadow='0 4px 16px rgba(244, 114, 182, 0.25)'; this.style.transform='translateY(0)'">
-            <svg width="80" height="80" fill="none" stroke="#fb923c" viewBox="0 0 24 24" stroke-width="1.5" style="transition: all 0.2s;">
+          <button onclick="selectTableTypeScreen('inside')" style="width: 100%; min-height: 280px; background: #fdf2f8; border: 3px solid #fed7aa; border-radius: 20px; color: #111827; font-size: 24px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; position: relative; box-shadow: 0 4px 16px rgba(244, 114, 182, 0.25);" onmouseover="this.style.borderColor='${primaryLight}'; this.style.boxShadow='0 12px 32px ${primary}40'; this.style.transform='translateY(-6px)'" onmouseout="this.style.borderColor='#fed7aa'; this.style.boxShadow='0 4px 16px rgba(244, 114, 182, 0.25)'; this.style.transform='translateY(0)'">
+            <svg width="80" height="80" fill="none" stroke="${primaryLight}" viewBox="0 0 24 24" stroke-width="1.5" style="transition: all 0.2s;">
               <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"/>
             </svg>
             <div style="font-size: 32px; font-weight: 800; color: #111827; letter-spacing: 1px;">İÇERİ</div>
           </button>
           
           <!-- Dışarı Butonu -->
-          <button onclick="selectTableTypeScreen('outside')" style="width: 100%; min-height: 280px; background: #fffbeb; border: 3px solid #fde68a; border-radius: 20px; color: #111827; font-size: 24px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; position: relative; box-shadow: 0 4px 16px rgba(250, 204, 21, 0.25);" onmouseover="this.style.borderColor='#facc15'; this.style.boxShadow='0 12px 32px rgba(250, 204, 21, 0.35)'; this.style.transform='translateY(-6px)'" onmouseout="this.style.borderColor='#fde68a'; this.style.boxShadow='0 4px 16px rgba(250, 204, 21, 0.25)'; this.style.transform='translateY(0)'">
-            <svg width="80" height="80" fill="none" stroke="#facc15" viewBox="0 0 24 24" stroke-width="1.5" style="transition: all 0.2s;">
+          <button onclick="selectTableTypeScreen('outside')" style="width: 100%; min-height: 280px; background: ${primaryLight}15; border: 3px solid ${primaryLight}80; border-radius: 20px; color: #111827; font-size: 24px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; position: relative; box-shadow: 0 4px 16px ${primary}40;" onmouseover="this.style.borderColor='${primary}'; this.style.boxShadow='0 12px 32px ${primary}60'; this.style.transform='translateY(-6px)'" onmouseout="this.style.borderColor='${primaryLight}80'; this.style.boxShadow='0 4px 16px ${primary}40'; this.style.transform='translateY(0)'">
+            <svg width="80" height="80" fill="none" stroke="${primary}" viewBox="0 0 24 24" stroke-width="1.5" style="transition: all 0.2s;">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.944 11.944 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418"/>
             </svg>
             <div style="font-size: 32px; font-weight: 800; color: #111827; letter-spacing: 1px;">DIŞARI</div>
           </button>
         </div>
       </div>
+      ` : ''}
       
-      <div id="tableSelection" style="display: none;">
-        <!-- Geri Dönüş Butonu -->
+      <div id="tableSelection" style="display: ${isSultanSomati ? 'block' : 'none'};">
+        ${isSultanSomati ? `
+        <!-- Sultan Somatı - Üst Header (Koyu Gri) -->
+        <div style="position: fixed; top: 0; left: 0; right: 0; height: 50px; background: #2d2d2d; z-index: 1000; display: flex; align-items: center; justify-content: space-between; padding: 0 15px;">
+          <!-- Sol: Headphone İkonu -->
+          <div style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">
+            <svg width="20" height="20" fill="none" stroke="white" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+            </svg>
+          </div>
+          
+          <!-- Sağ: Refresh ve Menu İkonları -->
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <button onclick="loadData()" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; cursor: pointer; border-radius: 50%; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+              <svg width="20" height="20" fill="none" stroke="white" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+            </button>
+            <button onclick="showLogoutModal()" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; cursor: pointer; border-radius: 50%; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+              <svg width="20" height="20" fill="none" stroke="white" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        
+        <!-- Salon Sekmeleri (Beyaz, Yuvarlatılmış) -->
+        <div id="salonTabsContainer" style="position: fixed; top: 50px; left: 0; right: 0; background: white; z-index: 999; padding: 12px 15px; overflow-x: auto; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+          <div style="display: flex; gap: 8px; min-width: max-content;">
+            ${sultanSomatiSalons.map((salon, index) => `
+            <button 
+              id="salonTab_${salon.id}" 
+              onclick="selectSalon('${salon.id}')" 
+              class="salon-tab"
+              style="
+                padding: 10px 16px; 
+                border: none; 
+                border-radius: 20px; 
+                background: ${index === 0 ? '#e5e5e5' : 'white'}; 
+                color: #333; 
+                font-size: 14px; 
+                font-weight: 600; 
+                cursor: pointer; 
+                transition: all 0.2s; 
+                white-space: nowrap;
+                box-shadow: ${index === 0 ? '0 2px 4px rgba(0,0,0,0.1)' : 'none'};
+              "
+              onmouseover="if(!this.classList.contains('active')) { this.style.background='#f5f5f5'; }"
+              onmouseout="if(!this.classList.contains('active')) { this.style.background='white'; }"
+            >
+              ${salon.name} (<span id="salonCount_${salon.id}">0</span>)
+            </button>
+            `).join('')}
+          </div>
+        </div>
+        ` : `
+        <!-- Normal Mod - Geri Dönüş Butonu -->
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <button onclick="goBackToTypeSelection()" style="display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); color: white; border: none; border-radius: 12px; font-size: 14px; font-weight: 700; box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3); transition: all 0.3s; cursor: pointer;" onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 6px 16px rgba(107, 114, 128, 0.4)'" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(107, 114, 128, 0.3)'">
             <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
@@ -7590,24 +7664,134 @@ function generateMobileHTML(serverURL) {
           </button>
         </div>
         
-        <!-- İç/Dış Tab'leri (Gizli - sadece geri dönüş için) -->
-        <div class="table-type-tabs" style="display: none;">
+        <!-- İç/Dış Tab'leri (Normal Mod için) -->
+        <div class="table-type-tabs" style="display: flex;">
           <button class="table-type-tab active" data-type="inside" onclick="selectTableType('inside')">🏠 İç</button>
           <button class="table-type-tab" data-type="outside" onclick="selectTableType('outside')">🌳 Dış</button>
         </div>
+        `}
         
         <!-- Masa Grid -->
-        <div class="table-grid" id="tablesGrid"></div>
+        <div class="table-grid" id="tablesGrid" style="margin-top: ${isSultanSomati ? '80px' : '0'}; margin-bottom: ${isSultanSomati ? '80px' : '20px'};"></div>
+        
+        ${isSultanSomati ? `
+        <!-- Alt Navigasyon Bar (Koyu Gri) -->
+        <div style="position: fixed; bottom: 0; left: 0; right: 0; height: 60px; background: #2d2d2d; z-index: 1000; display: flex; align-items: center; justify-content: space-around; padding: 0 10px; box-shadow: 0 -2px 10px rgba(0,0,0,0.2);">
+          <button onclick="showTablesView()" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: transparent; border: none; color: #fbbf24; cursor: pointer; padding: 8px; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/>
+            </svg>
+            <span style="font-size: 11px; font-weight: 600; color: white;">Masalar</span>
+          </button>
+          <button onclick="showOrdersView()" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: transparent; border: none; color: white; cursor: pointer; padding: 8px; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"/>
+            </svg>
+            <span style="font-size: 11px; font-weight: 600; color: white;">Siparişler</span>
+          </button>
+          <button onclick="showSalesView()" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: transparent; border: none; color: white; cursor: pointer; padding: 8px; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h11.25c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z"/>
+            </svg>
+            <span style="font-size: 11px; font-weight: 600; color: white;">Satışlar</span>
+          </button>
+          <button onclick="showSettingsView()" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: transparent; border: none; color: white; cursor: pointer; padding: 8px; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+            <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>
+            </svg>
+            <span style="font-size: 11px; font-weight: 600; color: white;">Ayarlar</span>
+          </button>
+        </div>
+        ` : ''}
       </div>
       
       <div id="orderSection" style="display: none;">
+        ${isSultanSomati ? `
+        <!-- Sultan Somatı - Görseldeki Tasarım -->
+        <!-- Üst Header (Koyu Gri) -->
+        <div style="position: fixed; top: 0; left: 0; right: 0; height: 60px; background: #2d2d2d; z-index: 1000; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);">
+          <!-- Sol: Geri Ok -->
+          <button onclick="goBackToTables()" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; cursor: pointer; border-radius: 50%; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+            <svg width="24" height="24" fill="none" stroke="white" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
+            </svg>
+          </button>
+          
+          <!-- Ortada: Masa Adı -->
+          <div style="flex: 1; text-align: center;">
+            <span id="selectedTableInfoHeader" style="color: white; font-size: 18px; font-weight: 600;">Masa 2</span>
+          </div>
+          
+          <!-- Sağ: İkonlar -->
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <button onclick="showNoteModal()" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; cursor: pointer; border-radius: 50%; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+              <svg width="20" height="20" fill="none" stroke="white" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/>
+              </svg>
+            </button>
+            <button onclick="toggleCart()" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; cursor: pointer; border-radius: 50%; transition: background 0.2s; position: relative;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+              <svg width="20" height="20" fill="none" stroke="white" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a2.25 2.25 0 00-2.25 2.25m15 0a2.25 2.25 0 00-2.25-2.25m-15 0a2.25 2.25 0 012.25-2.25m15 0a2.25 2.25 0 012.25 2.25m-1.386-4.836c.504.054 1.011.21 1.5.386m-4.75 0a24.301 24.301 0 00-4.5 0m4.75 0a24.301 24.301 0 01-4.5 0M8.25 3.75H4.875c-.621 0-1.125.504-1.125 1.125v12.75c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125V4.875c0-.621-.504-1.125-1.125-1.125H8.25zM12 10.5a.75.75 0 01-.75-.75V7.5a.75.75 0 011.5 0v2.25a.75.75 0 01-.75.75zm4.5 0a.75.75 0 00-.75-.75V7.5a.75.75 0 001.5 0v2.25a.75.75 0 00-.75.75z"/>
+              </svg>
+              <span id="cartBadgeHeader" style="position: absolute; top: 4px; right: 4px; background: #ef4444; color: white; font-size: 10px; font-weight: 700; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; display: none;">0</span>
+            </button>
+            <button onclick="showLogoutModal()" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; cursor: pointer; border-radius: 50%; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+              <svg width="20" height="20" fill="none" stroke="white" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        
+        <!-- Arama Çubuğu (Barkod İkonu ile) -->
+        <div style="position: fixed; top: 60px; left: 0; right: 0; background: white; z-index: 999; padding: 12px 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+          <div style="position: relative;">
+            <input type="text" id="searchInput" placeholder="Ürün Adı veya Barkod ile Arama Yap" oninput="filterProducts()" style="width: 100%; padding: 12px 16px 12px 50px; border: 1px solid #e0e0e0; border-radius: 8px; font-size: 15px; background: #f5f5f5; outline: none;" onfocus="this.style.borderColor='#2d2d2d'; this.style.background='white';" onblur="this.style.borderColor='#e0e0e0'; this.style.background='#f5f5f5';">
+            <div style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 8px;">
+              <svg width="18" height="18" fill="none" stroke="#666" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+              <svg width="18" height="18" fill="none" stroke="#666" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 4.5h16.5m-16.5 4.5h16.5m-16.5 4.5h16.5m-16.5 4.5h16.5"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Kategoriler (Yatay Scroll) -->
+        <div id="categoryTabsContainer" style="position: fixed; top: 128px; left: 0; right: 0; background: white; z-index: 998; padding: 12px 15px; overflow-x: auto; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.05); min-height: 50px;">
+          <div id="categoryTabs" style="display: flex; gap: 10px; min-width: max-content;">
+            <!-- Kategoriler buraya dinamik olarak eklenecek -->
+          </div>
+        </div>
+        
+        <!-- Ürünler Grid (2 Sütun) -->
+        <div style="margin-top: 150px; padding: 15px; padding-bottom: 80px;">
+          <div id="existingOrders" style="display: none; margin-bottom: 20px;">
+            <div style="font-size: 16px; font-weight: 700; color: #333; margin-bottom: 12px;">Mevcut Siparişler</div>
+            <div id="existingOrdersList"></div>
+          </div>
+          <div class="products-grid" id="productsGrid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;"></div>
+        </div>
+        
+        <!-- Alt Kaydet Butonu -->
+        <div style="position: fixed; bottom: 0; left: 0; right: 0; background: white; z-index: 1000; padding: 12px 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.1);">
+          <button onclick="sendOrder()" style="width: 100%; padding: 16px; background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%); color: white; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.3s; box-shadow: 0 4px 12px ${primary}4D;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 16px ${primary}66';" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px ${primary}4D';">
+            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+            </svg>
+            <span>Kaydet</span>
+          </button>
+        </div>
+        ` : `
+        <!-- Normal Mod - Eski Tasarım -->
         <!-- En Üst: Geri Dön Butonu -->
         <div style="position: sticky; top: 0; z-index: 100; background: white; padding: 8px 15px 15px 15px; margin: -15px -15px 0 -15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-radius: 0 0 20px 20px;">
           <button class="back-btn" onclick="goBackToTables()" style="position: relative; top: 0; left: 0; margin-bottom: 0; width: 100%; max-width: none; animation: none;">
             <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/>
             </svg>
-            <span style="background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; color: #f97316;">Masalara Dön</span>
+            <span style="background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; color: ${primary};">Masalara Dön</span>
           </button>
         </div>
         
@@ -7647,6 +7831,7 @@ function generateMobileHTML(serverURL) {
         <div style="overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; max-height: calc(100vh - 320px); padding-bottom: 100px; padding-right: 5px;">
           <div class="products-grid" id="productsGrid"></div>
         </div>
+        `}
       </div>
     </div>
   </div>
@@ -7658,7 +7843,7 @@ function generateMobileHTML(serverURL) {
         <span id="cartItemCount">0 ürün</span>
       </div>
       <div style="display: flex; align-items: center; gap: 12px;">
-        <span style="font-size: 20px; font-weight: 800; background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"><span id="cartTotal">0.00</span> ₺</span>
+        <span style="font-size: 20px; font-weight: 800; background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"><span id="cartTotal">0.00</span> ₺</span>
         <div class="cart-header-icon" id="cartToggleIcon">
           <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5"/>
@@ -7726,7 +7911,7 @@ function generateMobileHTML(serverURL) {
       </div>
       <div style="border-top: 1px solid #e5e7eb; padding: 16px; display: flex; justify-content: flex-end; gap: 12px;">
         <button onclick="hideNoteModal()" style="padding: 12px 24px; background: #f3f4f6; color: #374151; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">İptal</button>
-        <button onclick="saveNote()" style="padding: 12px 24px; background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);" onmouseover="this.style.transform='scale(1.02)'; this.style.boxShadow='0 6px 16px rgba(249, 115, 22, 0.4)';" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(249, 115, 22, 0.3)';">Kaydet</button>
+        <button onclick="saveNote()" style="padding: 12px 24px; background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 12px ${rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)` : 'rgba(249, 115, 22, 0.3)'};" onmouseover="this.style.transform='scale(1.02)'; this.style.boxShadow='0 6px 16px ${rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.4)` : 'rgba(249, 115, 22, 0.4)'}';" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px ${rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)` : 'rgba(249, 115, 22, 0.3)'}';">Kaydet</button>
       </div>
     </div>
   </div>
@@ -7935,6 +8120,8 @@ function generateMobileHTML(serverURL) {
     const insideTablesCount = ${insideTablesCount};
     const outsideTablesCount = ${outsideTablesCount};
     const packageTablesCount = ${packageTablesCount};
+    const isSultanSomatiMode = ${isSultanSomati ? 'true' : 'false'};
+    const sultanSomatiSalons = ${isSultanSomati ? JSON.stringify(sultanSomatiSalons) : '[]'};
     let selectedTable = null;
     let categories = [];
     let products = [];
@@ -7943,7 +8130,7 @@ function generateMobileHTML(serverURL) {
     let currentStaff = null;
     let socket = null;
     let tables = [];
-    let currentTableType = 'inside';
+    let currentTableType = ${isSultanSomati ? `'disari'` : `'inside'`};
     let orderNote = '';
     
     // PIN oturum yönetimi (1 saat)
@@ -7997,16 +8184,31 @@ function generateMobileHTML(serverURL) {
         if (staffInfoEl) {
           staffInfoEl.style.display = 'none';
         }
-        document.getElementById('tableTypeSelection').style.display = 'flex';
-        // Sipariş gönder modalını gizle
-        document.getElementById('cart').style.display = 'none';
+        // Sultan Somatı için direkt masa ekranını göster, normal mod için seçim ekranını göster
+        if (isSultanSomatiMode) {
+          document.getElementById('tableSelection').style.display = 'block';
+          document.getElementById('cart').style.display = 'block';
+          // İlk salonu otomatik seç
+          if (sultanSomatiSalons.length > 0) {
+            currentTableType = sultanSomatiSalons[0].id;
+            const firstTab = document.getElementById('salonTab_' + sultanSomatiSalons[0].id);
+            if (firstTab) {
+              firstTab.classList.add('active');
+              firstTab.style.background = '#e5e5e5';
+              firstTab.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+            }
+          }
+        } else {
+          document.getElementById('tableTypeSelection').style.display = 'flex';
+          document.getElementById('cart').style.display = 'none';
+        }
         loadData();
         initWebSocket();
       }
     });
     
     // PIN doğrulama
-    async function verifyStaffPin() {
+    window.verifyStaffPin = async function verifyStaffPin() {
       const pinInput = document.getElementById('pinInput');
       const pin = pinInput.value;
       const errorDiv = document.getElementById('pinError');
@@ -8049,9 +8251,24 @@ function generateMobileHTML(serverURL) {
             if (staffInfoEl) {
               staffInfoEl.style.display = 'none';
             }
-            document.getElementById('tableTypeSelection').style.display = 'flex';
-            // Sipariş gönder modalını gizle
-            document.getElementById('cart').style.display = 'none';
+            // Sultan Somatı için direkt masa ekranını göster, normal mod için seçim ekranını göster
+            if (isSultanSomatiMode) {
+              document.getElementById('tableSelection').style.display = 'block';
+              document.getElementById('cart').style.display = 'block';
+              // İlk salonu otomatik seç
+              if (sultanSomatiSalons.length > 0) {
+                currentTableType = sultanSomatiSalons[0].id;
+                const firstTab = document.getElementById('salonTab_' + sultanSomatiSalons[0].id);
+                if (firstTab) {
+                  firstTab.classList.add('active');
+                  firstTab.style.background = '#e5e5e5';
+                  firstTab.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+                }
+              }
+            } else {
+              document.getElementById('tableTypeSelection').style.display = 'flex';
+              document.getElementById('cart').style.display = 'none';
+            }
             loadData();
             initWebSocket();
           }, 2000);
@@ -8085,6 +8302,10 @@ function generateMobileHTML(serverURL) {
             if (tableIndex !== -1) {
               tables[tableIndex].hasOrder = data.hasOrder;
               renderTables(); // Anında render et
+              // Sultan Somatı için salon sayılarını güncelle
+              if (isSultanSomatiMode) {
+                updateSalonCounts();
+              }
             }
           }
           
@@ -8100,6 +8321,10 @@ function generateMobileHTML(serverURL) {
               if (updatedTables) {
                 tables = updatedTables;
                 renderTables();
+                // Sultan Somatı için salon sayılarını güncelle
+                if (isSultanSomatiMode) {
+                  updateSalonCounts();
+                }
               }
             })
             .catch(error => {
@@ -8174,8 +8399,9 @@ function generateMobileHTML(serverURL) {
       }
     }
     
-    // Masa tipi seçim ekranından seçim
+    // Masa tipi seçim ekranından seçim (Normal Mod için)
     function selectTableTypeScreen(type) {
+      if (isSultanSomatiMode) return; // Sultan Somatı için bu fonksiyon kullanılmaz
       currentTableType = type;
       document.getElementById('tableTypeSelection').style.display = 'none';
       document.getElementById('tableSelection').style.display = 'block';
@@ -8193,8 +8419,9 @@ function generateMobileHTML(serverURL) {
       renderTables();
     }
     
-    // Geri dönüş butonu
+    // Geri dönüş butonu (Normal Mod için)
     function goBackToTypeSelection() {
+      if (isSultanSomatiMode) return; // Sultan Somatı için bu fonksiyon kullanılmaz
       document.getElementById('tableSelection').style.display = 'none';
       document.getElementById('tableTypeSelection').style.display = 'flex';
       // staffInfo elementi kaldırıldı, null kontrolü yap
@@ -8212,8 +8439,42 @@ function generateMobileHTML(serverURL) {
       renderTables();
     }
     
-    // Masa tipi seçimi (masalar ekranında)
+    // Sultan Somatı için salon seçimi
+    function selectSalon(salonId) {
+      if (!isSultanSomatiMode) return;
+      currentTableType = salonId;
+      // Tüm salon sekmelerini güncelle
+      document.querySelectorAll('.salon-tab').forEach(tab => {
+        tab.classList.remove('active');
+        tab.style.background = 'white';
+        tab.style.boxShadow = 'none';
+      });
+      const selectedTab = document.getElementById('salonTab_' + salonId);
+      if (selectedTab) {
+        selectedTab.classList.add('active');
+        selectedTab.style.background = '#e5e5e5';
+        selectedTab.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+      }
+      renderTables();
+      updateSalonCounts();
+    }
+    
+    // Salon sekmelerindeki sipariş sayılarını güncelle
+    function updateSalonCounts() {
+      if (!isSultanSomatiMode) return;
+      sultanSomatiSalons.forEach(salon => {
+        const salonTables = tables.filter(t => t.id && t.id.startsWith('salon-' + salon.id + '-'));
+        const occupiedCount = salonTables.filter(t => t.hasOrder).length;
+        const countEl = document.getElementById('salonCount_' + salon.id);
+        if (countEl) {
+          countEl.textContent = occupiedCount;
+        }
+      });
+    }
+    
+    // Masa tipi seçimi (masalar ekranında - Normal Mod için)
     function selectTableType(type) {
+      if (isSultanSomatiMode) return; // Sultan Somatı için bu fonksiyon kullanılmaz
       currentTableType = type;
       document.querySelectorAll('.table-type-tab').forEach(tab => {
         tab.classList.remove('active');
@@ -8236,6 +8497,10 @@ function generateMobileHTML(serverURL) {
         tables = await tablesRes.json();
         renderTables();
         renderCategories();
+        // Sultan Somatı için salon sayılarını güncelle
+        if (isSultanSomatiMode) {
+          updateSalonCounts();
+        }
       } catch (error) {
         console.error('Veri yükleme hatası:', error);
         document.getElementById('tablesGrid').innerHTML = '<div class="loading">❌ Bağlantı hatası</div>';
@@ -8244,7 +8509,12 @@ function generateMobileHTML(serverURL) {
     
     function renderTables() {
       const grid = document.getElementById('tablesGrid');
-      const filteredTables = tables.filter(t => t.type === currentTableType);
+      if (!grid) return;
+      
+      // Sultan Somatı için salon ID'sine göre filtrele, normal mod için type'a göre filtrele
+      const filteredTables = isSultanSomatiMode 
+        ? tables.filter(t => t.id && t.id.startsWith('salon-') && t.id.includes('-' + currentTableType + '-'))
+        : tables.filter(t => t.type === currentTableType);
       
       // Normal masalar (paket olmayanlar)
       const normalTables = filteredTables.filter(t => !t.id.startsWith('package-'));
@@ -8263,6 +8533,37 @@ function generateMobileHTML(serverURL) {
           const selectedClass = selectedTable && selectedTable.id === table.id ? ' selected' : '';
           const outsideEmptyClass = (table.type === 'outside' && !table.hasOrder) ? ' outside-empty' : '';
           
+          // Sultan Somatı için görseldeki gibi basit masa kartları (sadece numara)
+          if (isSultanSomatiMode && table.id && table.id.startsWith('salon-')) {
+            // Görseldeki gibi: Beyaz kart, ortada sadece harf ve numara (D 1, D 2 gibi)
+            const salonId = table.id.split('-').slice(1, -1).join('-');
+            const salon = sultanSomatiSalons.find(s => s.id === salonId);
+            // Salon adının ilk harfini al (Dışarı -> D, Kış Bahçesi -> K)
+            let tableLetter = 'M';
+            if (salon) {
+              if (salon.name === 'Dışarı') tableLetter = 'D';
+              else if (salon.name === 'Kış Bahçesi') tableLetter = 'K';
+              else if (salon.name === 'Osmanlı Odası') tableLetter = 'O';
+              else if (salon.name === 'Selçuklu Odası') tableLetter = 'S';
+              else if (salon.name === 'Mevlevi Odası') tableLetter = 'M';
+              else if (salon.name === 'Aşk Odası') tableLetter = 'A';
+              else tableLetter = salon.name.charAt(0).toUpperCase();
+            }
+            const tableNumber = table.number;
+            const displayText = tableLetter + ' ' + tableNumber;
+            
+            // Görseldeki gibi: Beyaz arka plan, dolu ise kırmızı border, seçili ise mavi border
+            const bgColor = table.hasOrder ? '#fee2e2' : 'white';
+            const borderColor = selectedClass ? '#3b82f6' : (table.hasOrder ? '#dc2626' : '#e0e0e0');
+            const borderWidth = selectedClass ? '2px' : '1px';
+            const textColor = table.hasOrder ? '#991b1b' : '#333';
+            
+            return '<button class="table-btn' + hasOrderClass + selectedClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')" style="background: ' + bgColor + '; border: ' + borderWidth + ' solid ' + borderColor + '; border-radius: 12px; padding: 20px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600; color: ' + textColor + '; min-height: 100px; transition: all 0.2s; cursor: pointer;" onmouseover="if(!this.classList.contains(\\'selected\\')) { this.style.transform=\\'scale(1.02)\\'; this.style.boxShadow=\\'0 4px 12px rgba(0,0,0,0.1)\\'; }" onmouseout="if(!this.classList.contains(\\'selected\\')) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }">' +
+              displayText +
+            '</button>';
+          }
+          
+          // Normal mod için eski tasarım
           // Masa numaralandırması: İç Masa 1, Dış Masa 1 gibi
           const tableTypeLabel = table.type === 'inside' ? 'İç Masa' : 'Dış Masa';
           const tableDisplayName = tableTypeLabel + ' ' + table.number;
@@ -8283,7 +8584,7 @@ function generateMobileHTML(serverURL) {
       // PAKET Başlığı - Premium ve Modern
       if (packageTables.length > 0) {
         html += '<div style="grid-column: 1 / -1; margin-top: 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center;">';
-        html += '<div style="display: flex; align-items: center; gap: 8px; padding: 10px 20px; background: linear-gradient(135deg, #f97316 0%, #fb923c 30%, #fbbf24 70%, #fcd34d 100%); border-radius: 16px; box-shadow: 0 4px 16px rgba(249, 115, 22, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.2) inset; position: relative; overflow: hidden;">';
+        html += '<div style="display: flex; align-items: center; gap: 8px; padding: 10px 20px; background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 30%, ${primaryLight}CC 70%, ${primaryLight}DD 100%); border-radius: 16px; box-shadow: 0 4px 16px ${rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.35)` : 'rgba(249, 115, 22, 0.35)'}, 0 0 0 1px rgba(255, 255, 255, 0.2) inset; position: relative; overflow: hidden;">';
         html += '<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%); pointer-events: none;"></div>';
         html += '<svg width="20" height="20" fill="none" stroke="white" viewBox="0 0 24 24" stroke-width="2.5" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2)); position: relative; z-index: 1;"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>';
         html += '<h3 style="font-size: 17px; font-weight: 900; color: white; margin: 0; letter-spacing: 1.2px; text-shadow: 0 2px 6px rgba(0,0,0,0.3); position: relative; z-index: 1;">PAKET</h3>';
@@ -8322,6 +8623,38 @@ function generateMobileHTML(serverURL) {
       }
       
       grid.innerHTML = html;
+      
+      // Sultan Somatı için salon sayılarını güncelle
+      if (isSultanSomatiMode) {
+        updateSalonCounts();
+      }
+    }
+    
+    // Alt navigasyon bar fonksiyonları (Sultan Somatı için)
+    function showTablesView() {
+      if (!isSultanSomatiMode) return;
+      document.getElementById('tableSelection').style.display = 'block';
+      document.getElementById('orderSection').style.display = 'none';
+      selectedTable = null;
+      renderTables();
+    }
+    
+    function showOrdersView() {
+      if (!isSultanSomatiMode) return;
+      // Siparişler görünümü - şimdilik masa görünümüne yönlendir
+      showTablesView();
+    }
+    
+    function showSalesView() {
+      if (!isSultanSomatiMode) return;
+      // Satışlar görünümü - şimdilik masa görünümüne yönlendir
+      showTablesView();
+    }
+    
+    function showSettingsView() {
+      if (!isSultanSomatiMode) return;
+      // Ayarlar görünümü - şimdilik çıkış yap modalını göster
+      showLogoutModal();
     }
     
     async function selectTable(id, name, type) {
@@ -8341,9 +8674,21 @@ function generateMobileHTML(serverURL) {
         cartEl.classList.remove('open'); // Başlangıçta kapalı
       }
       // Seçili masa bilgisini göster
-      document.getElementById('selectedTableInfo').textContent = name + ' için sipariş oluşturuluyor';
+      if (isSultanSomatiMode) {
+        const headerEl = document.getElementById('selectedTableInfoHeader');
+        if (headerEl) {
+          headerEl.textContent = name;
+        }
+      } else {
+        const infoEl = document.getElementById('selectedTableInfo');
+        if (infoEl) {
+          infoEl.textContent = name + ' için sipariş oluşturuluyor';
+        }
+      }
       // Arama çubuğunu temizle
       document.getElementById('searchInput').value = '';
+      // Kategorileri render et
+      renderCategories();
       // Mevcut siparişleri yükle
       await loadExistingOrders(id);
       if (categories.length > 0) selectCategory(categories[0].id);
@@ -8421,9 +8766,14 @@ function generateMobileHTML(serverURL) {
     
     function goBackToTables() {
       selectedTable = null;
-      document.getElementById('tableSelection').style.display = 'none';
-      document.getElementById('tableTypeSelection').style.display = 'flex';
       document.getElementById('orderSection').style.display = 'none';
+      // Sultan Somatı için direkt masa ekranını göster, normal mod için seçim ekranını göster
+      if (isSultanSomatiMode) {
+        document.getElementById('tableSelection').style.display = 'block';
+      } else {
+        document.getElementById('tableSelection').style.display = 'none';
+        document.getElementById('tableTypeSelection').style.display = 'flex';
+      }
       const cartEl = document.getElementById('cart');
       if (cartEl) {
         cartEl.style.display = 'none';
@@ -8616,12 +8966,18 @@ function generateMobileHTML(serverURL) {
     }
     
     function renderCategories() {
-      const row1 = document.getElementById('categoryTabsRow1');
-      const row2 = document.getElementById('categoryTabsRow2');
-      if (!row1 || !row2) return;
-      
-      row1.innerHTML = '';
-      row2.innerHTML = '';
+      // Sultan Somatı modunda categoryTabs kullanılır, normal modda categoryTabsRow1 ve categoryTabsRow2
+      if (isSultanSomatiMode) {
+        const categoryTabsEl = document.getElementById('categoryTabs');
+        if (!categoryTabsEl) return;
+      } else {
+        const row1 = document.getElementById('categoryTabsRow1');
+        const row2 = document.getElementById('categoryTabsRow2');
+        if (!row1 || !row2) return;
+        // Normal modda önce temizle
+        row1.innerHTML = '';
+        row2.innerHTML = '';
+      }
       
       // Üst satır kategorileri (belirli sırayla)
       const topRowCategoryNames = [
@@ -8737,21 +9093,39 @@ function generateMobileHTML(serverURL) {
         return softColors[index];
       };
       
-      row1.innerHTML = firstRow.map((cat, index) => {
-        const colors = getCategoryColor(cat.id);
-        const isActive = selectedCategoryId === cat.id;
-        const activeBg = colors.hover;
-        const activeBorder = colors.border;
-        return '<button class="category-tab ' + (isActive ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')" style="background: ' + (isActive ? activeBg : colors.bg) + '; border-color: ' + (isActive ? activeBorder : colors.border) + '; color: ' + colors.text + '; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-weight: ' + (isActive ? '700' : '600') + ';" onmouseover="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.hover + '\\'; this.style.transform=\\'translateY(-2px)\\'; }" onmouseout="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.bg + '\\'; this.style.transform=\\'translateY(0)\\'; }">' + cat.name + '</button>';
-      }).join('');
-      
-      row2.innerHTML = secondRow.map((cat, index) => {
-        const colors = getCategoryColor(cat.id);
-        const isActive = selectedCategoryId === cat.id;
-        const activeBg = colors.hover;
-        const activeBorder = colors.border;
-        return '<button class="category-tab ' + (isActive ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')" style="background: ' + (isActive ? activeBg : colors.bg) + '; border-color: ' + (isActive ? activeBorder : colors.border) + '; color: ' + colors.text + '; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-weight: ' + (isActive ? '700' : '600') + ';" onmouseover="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.hover + '\\'; this.style.transform=\\'translateY(-2px)\\'; }" onmouseout="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.bg + '\\'; this.style.transform=\\'translateY(0)\\'; }">' + cat.name + '</button>';
-      }).join('');
+      // Sultan Somatı için yatay scroll kategori butonları
+      if (isSultanSomatiMode) {
+        const allCategories = [...firstRow, ...secondRow];
+        const categoryTabsEl = document.getElementById('categoryTabs');
+        if (categoryTabsEl) {
+          categoryTabsEl.innerHTML = allCategories.map((cat, index) => {
+            const colors = getCategoryColor(cat.id);
+            const isActive = selectedCategoryId === cat.id;
+            return '<button onclick="selectCategory(' + cat.id + ')" style="padding: 10px 18px; border: none; border-radius: 20px; background: ' + (isActive ? colors.hover : colors.bg) + '; color: ' + colors.text + '; font-size: 14px; font-weight: ' + (isActive ? '700' : '600') + '; cursor: pointer; transition: all 0.2s; white-space: nowrap; box-shadow: ' + (isActive ? '0 2px 8px rgba(0,0,0,0.15)' : 'none') + ';" onmouseover="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.hover + '\\'; this.style.transform=\\'scale(1.05)\\'; }" onmouseout="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.bg + '\\'; this.style.transform=\\'scale(1)\\'; }">' + cat.name + '</button>';
+          }).join('');
+        }
+      } else {
+        // Normal mod için eski 2 satırlık yapı
+        const row1 = document.getElementById('categoryTabsRow1');
+        const row2 = document.getElementById('categoryTabsRow2');
+        if (row1 && row2) {
+          row1.innerHTML = firstRow.map((cat, index) => {
+            const colors = getCategoryColor(cat.id);
+            const isActive = selectedCategoryId === cat.id;
+            const activeBg = colors.hover;
+            const activeBorder = colors.border;
+            return '<button class="category-tab ' + (isActive ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')" style="background: ' + (isActive ? activeBg : colors.bg) + '; border-color: ' + (isActive ? activeBorder : colors.border) + '; color: ' + colors.text + '; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-weight: ' + (isActive ? '700' : '600') + ';" onmouseover="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.hover + '\\'; this.style.transform=\\'translateY(-2px)\\'; }" onmouseout="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.bg + '\\'; this.style.transform=\\'translateY(0)\\'; }">' + cat.name + '</button>';
+          }).join('');
+          
+          row2.innerHTML = secondRow.map((cat, index) => {
+            const colors = getCategoryColor(cat.id);
+            const isActive = selectedCategoryId === cat.id;
+            const activeBg = colors.hover;
+            const activeBorder = colors.border;
+            return '<button class="category-tab ' + (isActive ? 'active' : '') + '" onclick="selectCategory(' + cat.id + ')" style="background: ' + (isActive ? activeBg : colors.bg) + '; border-color: ' + (isActive ? activeBorder : colors.border) + '; color: ' + colors.text + '; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-weight: ' + (isActive ? '700' : '600') + ';" onmouseover="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.hover + '\\'; this.style.transform=\\'translateY(-2px)\\'; }" onmouseout="if(!this.classList.contains(\\'active\\')) { this.style.background=\\'' + colors.bg + '\\'; this.style.transform=\\'translateY(0)\\'; }">' + cat.name + '</button>';
+          }).join('');
+        }
+      }
     }
     
     function selectCategory(categoryId) {
@@ -8922,6 +9296,17 @@ function generateMobileHTML(serverURL) {
           stockBadge = '<div style="position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(to top, rgba(245, 158, 11, 0.95) 0%, rgba(245, 158, 11, 0.85) 100%); color: white; padding: 8px; text-align: center; font-size: 12px; font-weight: 700; z-index: 10; border-radius: 0 0 12px 12px; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);">⚠️ ' + stockText + '</div>';
         }
         
+        // Sultan Somatı için görseldeki gibi basit kartlar (beyaz, sadece ad ve fiyat)
+        if (isSultanSomatiMode) {
+          return '<div id="' + cardId + '" ' + onClickHandler + ' style="background: white; border: 1px solid #e0e0e0; border-radius: 12px; padding: 16px; min-height: 120px; position: relative; cursor: ' + (isOutOfStock ? 'not-allowed' : 'pointer') + '; transition: all 0.2s; overflow: hidden;' + (isOutOfStock ? ' opacity: 0.6;' : '') + '" onmouseover="' + (isOutOfStock ? '' : 'this.style.borderColor=\\'#2d2d2d\\'; this.style.boxShadow=\\'0 4px 12px rgba(0,0,0,0.1)\\';') + '" onmouseout="' + (isOutOfStock ? '' : 'this.style.borderColor=\\'#e0e0e0\\'; this.style.boxShadow=\\'none\\';') + '">' +
+            lockIcon +
+            '<div style="position: absolute; top: 16px; left: 16px; font-size: 14px; font-weight: 700; color: #333; text-transform: uppercase; line-height: 1.3;">' + prod.name + '</div>' +
+            '<div style="position: absolute; bottom: 16px; right: 16px; font-size: 18px; font-weight: 800; color: #166534; background: rgba(34, 197, 94, 0.2); padding: 8px 14px; border-radius: 12px; backdrop-filter: blur(4px);">₺' + prod.price.toFixed(2) + '</div>' +
+            stockBadge +
+          '</div>';
+        }
+        
+        // Normal mod için eski tasarım
         return '<div id="' + cardId + '" class="product-card" ' + onClickHandler + ' style="' + cardStyle + ' position: relative; overflow: hidden;">' +
           lockIcon +
           '<div class="product-name" style="' + (isOutOfStock ? 'opacity: 0.7;' : '') + '">' + prod.name + '</div>' +
@@ -9084,6 +9469,19 @@ function generateMobileHTML(serverURL) {
       const cartItemCountEl = document.getElementById('cartItemCount');
       if (cartItemCountEl) {
         cartItemCountEl.textContent = totalItems + ' ürün';
+      }
+      
+      // Sultan Somatı için header'daki cart badge'i güncelle
+      if (isSultanSomatiMode) {
+        const cartBadgeEl = document.getElementById('cartBadgeHeader');
+        if (cartBadgeEl) {
+          if (totalItems > 0) {
+            cartBadgeEl.textContent = totalItems > 99 ? '99+' : totalItems;
+            cartBadgeEl.style.display = 'flex';
+          } else {
+            cartBadgeEl.style.display = 'none';
+          }
+        }
       }
     }
     
@@ -9938,72 +10336,110 @@ function startAPIServer() {
   appExpress.get('/api/tables', (req, res) => {
     // Tenant'tan masa sayılarını al (masaüstü uygulamadaki mantıkla aynı)
     const tenantInfo = tenantManager.getCurrentTenantInfo();
-    // 0 değeri geçerli olduğu için null/undefined kontrolü yapıyoruz
-    const insideTablesCount = tenantInfo?.insideTables !== undefined && tenantInfo?.insideTables !== null 
-      ? tenantInfo.insideTables 
-      : 20;
-    const outsideTablesCount = tenantInfo?.outsideTables !== undefined && tenantInfo?.outsideTables !== null 
-      ? tenantInfo.outsideTables 
-      : 20;
-    const packageTablesCount = tenantInfo?.packageTables !== undefined && tenantInfo?.packageTables !== null 
-      ? tenantInfo.packageTables 
-      : 5;
+    const tenantId = tenantInfo?.tenantId || null;
+    const isSultanSomati = tenantId === 'TENANT-1766611377865';
+    
+    // Sultan Somatı için salon yapısı
+    const sultanSomatiSalons = [
+      { id: 'disari', name: 'Dışarı', count: 4, icon: '☀️' },
+      { id: 'kis-bahcesi', name: 'Kış Bahçesi', count: 14, icon: '🌿' },
+      { id: 'osmanli-odasi', name: 'Osmanlı Odası', count: 8, icon: '🏛️' },
+      { id: 'selcuklu-odasi', name: 'Selçuklu Odası', count: 10, icon: '🕌' },
+      { id: 'mevlevi-odasi', name: 'Mevlevi Odası', count: 1, icon: '🕯️' },
+      { id: 'ask-odasi', name: 'Aşk Odası', count: 1, icon: '💕' }
+    ];
     
     const tables = [];
-    for (let i = 1; i <= insideTablesCount; i++) {
-      const tableId = `inside-${i}`;
-      const hasPendingOrder = (db.tableOrders || []).some(
-        o => o.table_id === tableId && o.status === 'pending'
-      );
-      tables.push({
-        id: tableId,
-        number: i,
-        type: 'inside',
-        name: `İçeri ${i}`,
-        hasOrder: hasPendingOrder
+    
+    if (isSultanSomati) {
+      // Sultan Somatı için salon bazlı masalar
+      sultanSomatiSalons.forEach(salon => {
+        for (let i = 1; i <= salon.count; i++) {
+          const tableId = `salon-${salon.id}-${i}`;
+          const hasPendingOrder = (db.tableOrders || []).some(
+            o => o.table_id === tableId && o.status === 'pending'
+          );
+          tables.push({
+            id: tableId,
+            number: i,
+            type: salon.id,
+            salonId: salon.id,
+            salonName: salon.name,
+            name: salon.count === 1 ? salon.name : `${salon.name} ${i}`,
+            icon: salon.icon,
+            hasOrder: hasPendingOrder
+          });
+        }
       });
+    } else {
+      // Normal mod için içeri/dışarı masalar
+      // 0 değeri geçerli olduğu için null/undefined kontrolü yapıyoruz
+      const insideTablesCount = tenantInfo?.insideTables !== undefined && tenantInfo?.insideTables !== null 
+        ? tenantInfo.insideTables 
+        : 20;
+      const outsideTablesCount = tenantInfo?.outsideTables !== undefined && tenantInfo?.outsideTables !== null 
+        ? tenantInfo.outsideTables 
+        : 20;
+      const packageTablesCount = tenantInfo?.packageTables !== undefined && tenantInfo?.packageTables !== null 
+        ? tenantInfo.packageTables 
+        : 5;
+      
+      for (let i = 1; i <= insideTablesCount; i++) {
+        const tableId = `inside-${i}`;
+        const hasPendingOrder = (db.tableOrders || []).some(
+          o => o.table_id === tableId && o.status === 'pending'
+        );
+        tables.push({
+          id: tableId,
+          number: i,
+          type: 'inside',
+          name: `İçeri ${i}`,
+          hasOrder: hasPendingOrder
+        });
+      }
+      for (let i = 1; i <= outsideTablesCount; i++) {
+        const tableId = `outside-${i}`;
+        const hasPendingOrder = (db.tableOrders || []).some(
+          o => o.table_id === tableId && o.status === 'pending'
+        );
+        tables.push({
+          id: tableId,
+          number: i,
+          type: 'outside',
+          name: `Dışarı ${i}`,
+          hasOrder: hasPendingOrder
+        });
+      }
+      // Paket masaları - İçeri
+      for (let i = 1; i <= packageTablesCount; i++) {
+        const tableId = `package-inside-${i}`;
+        const hasPendingOrder = (db.tableOrders || []).some(
+          o => o.table_id === tableId && o.status === 'pending'
+        );
+        tables.push({
+          id: tableId,
+          number: i,
+          type: 'inside',
+          name: `Paket ${i}`,
+          hasOrder: hasPendingOrder
+        });
+      }
+      // Paket masaları - Dışarı
+      for (let i = 1; i <= packageTablesCount; i++) {
+        const tableId = `package-outside-${i}`;
+        const hasPendingOrder = (db.tableOrders || []).some(
+          o => o.table_id === tableId && o.status === 'pending'
+        );
+        tables.push({
+          id: tableId,
+          number: i,
+          type: 'outside',
+          name: `Paket ${i}`,
+          hasOrder: hasPendingOrder
+        });
+      }
     }
-    for (let i = 1; i <= outsideTablesCount; i++) {
-      const tableId = `outside-${i}`;
-      const hasPendingOrder = (db.tableOrders || []).some(
-        o => o.table_id === tableId && o.status === 'pending'
-      );
-      tables.push({
-        id: tableId,
-        number: i,
-        type: 'outside',
-        name: `Dışarı ${i}`,
-        hasOrder: hasPendingOrder
-      });
-    }
-    // Paket masaları - İçeri
-    for (let i = 1; i <= packageTablesCount; i++) {
-      const tableId = `package-inside-${i}`;
-      const hasPendingOrder = (db.tableOrders || []).some(
-        o => o.table_id === tableId && o.status === 'pending'
-      );
-      tables.push({
-        id: tableId,
-        number: i,
-        type: 'inside',
-        name: `Paket ${i}`,
-        hasOrder: hasPendingOrder
-      });
-    }
-    // Paket masaları - Dışarı
-    for (let i = 1; i <= packageTablesCount; i++) {
-      const tableId = `package-outside-${i}`;
-      const hasPendingOrder = (db.tableOrders || []).some(
-        o => o.table_id === tableId && o.status === 'pending'
-      );
-      tables.push({
-        id: tableId,
-        number: i,
-        type: 'outside',
-        name: `Paket ${i}`,
-        hasOrder: hasPendingOrder
-      });
-    }
+    
     res.json(tables);
   });
 

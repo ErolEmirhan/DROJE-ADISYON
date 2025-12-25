@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { isSultanSomati, generateSultanSomatiTables } from '../utils/sultanSomatTables';
 
 const TableTransferModal = ({ 
   currentOrder, 
@@ -6,6 +7,7 @@ const TableTransferModal = ({
   currentTableType,
   onClose, 
   onTransfer,
+  tenantId,
   insideTablesCount = 20,
   outsideTablesCount = 20,
   packageTablesCount = 5
@@ -15,34 +17,55 @@ const TableTransferModal = ({
   const [selectedSourceTable, setSelectedSourceTable] = useState(null);
   const [selectedTargetTable, setSelectedTargetTable] = useState(null);
 
-  const insideTables = Array.from({ length: insideTablesCount }, (_, i) => ({
-    id: `inside-${i + 1}`,
-    number: i + 1,
-    type: 'inside',
-    name: `İçeri ${i + 1}`
-  }));
+  const isSultanSomatiMode = isSultanSomati(tenantId);
 
-  const outsideTables = Array.from({ length: outsideTablesCount }, (_, i) => ({
-    id: `outside-${i + 1}`,
-    number: i + 1,
-    type: 'outside',
-    name: `Dışarı ${i + 1}`
-  }));
+  // Sultan Somatı için salon bazlı masalar
+  const sultanSomatiTables = useMemo(() => {
+    if (!isSultanSomatiMode) return [];
+    return generateSultanSomatiTables();
+  }, [isSultanSomatiMode]);
 
-  // Paket masaları (hem içeri hem dışarı için)
-  const packageTablesInside = Array.from({ length: packageTablesCount }, (_, i) => ({
-    id: `package-inside-${i + 1}`,
-    number: i + 1,
-    type: 'inside',
-    name: `Paket ${i + 1}`
-  }));
+  // Normal mod için masalar
+  const insideTables = useMemo(() => {
+    if (isSultanSomatiMode) return [];
+    return Array.from({ length: insideTablesCount }, (_, i) => ({
+      id: `inside-${i + 1}`,
+      number: i + 1,
+      type: 'inside',
+      name: `İçeri ${i + 1}`
+    }));
+  }, [insideTablesCount, isSultanSomatiMode]);
 
-  const packageTablesOutside = Array.from({ length: packageTablesCount }, (_, i) => ({
-    id: `package-outside-${i + 1}`,
-    number: i + 1,
-    type: 'outside',
-    name: `Paket ${i + 1}`
-  }));
+  const outsideTables = useMemo(() => {
+    if (isSultanSomatiMode) return [];
+    return Array.from({ length: outsideTablesCount }, (_, i) => ({
+      id: `outside-${i + 1}`,
+      number: i + 1,
+      type: 'outside',
+      name: `Dışarı ${i + 1}`
+    }));
+  }, [outsideTablesCount, isSultanSomatiMode]);
+
+  // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı'nda yok
+  const packageTablesInside = useMemo(() => {
+    if (isSultanSomatiMode) return [];
+    return Array.from({ length: packageTablesCount }, (_, i) => ({
+      id: `package-inside-${i + 1}`,
+      number: i + 1,
+      type: 'inside',
+      name: `Paket ${i + 1}`
+    }));
+  }, [packageTablesCount, isSultanSomatiMode]);
+
+  const packageTablesOutside = useMemo(() => {
+    if (isSultanSomatiMode) return [];
+    return Array.from({ length: packageTablesCount }, (_, i) => ({
+      id: `package-outside-${i + 1}`,
+      number: i + 1,
+      type: 'outside',
+      name: `Paket ${i + 1}`
+    }));
+  }, [packageTablesCount, isSultanSomatiMode]);
 
   useEffect(() => {
     loadTableOrders();
@@ -104,8 +127,10 @@ const TableTransferModal = ({
     }
   };
 
-  // Tüm masaları göster (iç, dış ve paket masaları)
-  const allTables = [...insideTables, ...outsideTables, ...packageTablesInside, ...packageTablesOutside];
+  // Tüm masaları göster
+  const allTables = isSultanSomatiMode 
+    ? sultanSomatiTables 
+    : [...insideTables, ...outsideTables, ...packageTablesInside, ...packageTablesOutside];
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[2000]">
@@ -197,7 +222,8 @@ const TableTransferModal = ({
                   const tableHasOrder = hasOrder(table.id);
                   const isSelected = selectedTargetTable?.id === table.id;
                   const isSourceTable = selectedSourceTable?.id === table.id;
-                  const isOutside = table.type === 'outside';
+                  const isOutside = !isSultanSomatiMode && table.type === 'outside';
+                  const isSultanTable = isSultanSomatiMode && table.salonId;
 
                   if (tableHasOrder || isSourceTable) {
                     return (
@@ -224,10 +250,14 @@ const TableTransferModal = ({
                       onClick={() => handleTargetTableSelect(table)}
                       className={`rounded-md p-2 border-2 transition-all ${
                         isSelected
-                          ? isOutside
+                          ? isSultanTable
+                            ? 'bg-purple-100 border-purple-400 scale-105'
+                            : isOutside
                             ? 'bg-amber-100 border-amber-400 scale-105'
                             : 'bg-pink-100 border-pink-400 scale-105'
-                          : isOutside
+                          : isSultanTable
+                            ? 'bg-gradient-to-br from-purple-50 to-pink-100 border-purple-300 hover:border-purple-400 hover:scale-105'
+                            : isOutside
                             ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-300 hover:border-amber-400 hover:scale-105'
                             : 'bg-gradient-to-br from-pink-50 to-pink-100 border-pink-200 hover:border-pink-300 hover:scale-105'
                       }`}
@@ -235,23 +265,29 @@ const TableTransferModal = ({
                       <div className="flex flex-col items-center justify-center">
                         <div
                           className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                            isOutside
+                            isSultanTable
+                              ? 'bg-gradient-to-br from-purple-200 to-pink-300 text-purple-900'
+                              : isOutside
                               ? 'bg-gradient-to-br from-amber-200 to-amber-300 text-amber-900'
                               : 'bg-gradient-to-br from-pink-100 to-pink-200 text-pink-900'
                           }`}
                         >
-                          <span className="text-xs font-bold">{table.number}</span>
+                          {isSultanTable ? (
+                            <span className="text-sm">{table.icon}</span>
+                          ) : (
+                            <span className="text-xs font-bold">{table.number}</span>
+                          )}
                         </div>
                         <span
                           className={`text-xs mt-1 font-semibold ${
-                            isOutside ? 'text-amber-900' : 'text-pink-900'
+                            isSultanTable ? 'text-purple-900' : isOutside ? 'text-amber-900' : 'text-pink-900'
                           }`}
                         >
                           {table.name}
                         </span>
                         <span
                           className={`text-[10px] mt-0.5 ${
-                            isOutside ? 'text-amber-800' : 'text-pink-700'
+                            isSultanTable ? 'text-purple-800' : isOutside ? 'text-amber-800' : 'text-pink-700'
                           }`}
                         >
                           Boş

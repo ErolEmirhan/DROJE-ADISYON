@@ -731,6 +731,7 @@ function App() {
               setReceiptData(receiptData);
               setShowReceiptModal(true);
             }}
+            tenantId={tenantId}
             insideTablesCount={tenantInfo?.insideTables !== undefined && tenantInfo?.insideTables !== null ? tenantInfo.insideTables : 20}
             outsideTablesCount={tenantInfo?.outsideTables !== undefined && tenantInfo?.outsideTables !== null ? tenantInfo.outsideTables : 20}
             packageTablesCount={tenantInfo?.packageTables !== undefined && tenantInfo?.packageTables !== null ? tenantInfo.packageTables : 5}

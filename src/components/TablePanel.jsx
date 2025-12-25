@@ -2,9 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import TableOrderModal from './TableOrderModal';
 import TablePartialPaymentModal from './TablePartialPaymentModal';
 import TableTransferModal from './TableTransferModal';
+import { isSultanSomati, generateSultanSomatiTables, SULTAN_SOMATI_SALONS } from '../utils/sultanSomatTables';
 
-const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTablesCount = 20, outsideTablesCount = 20, packageTablesCount = 5 }) => {
-  const [selectedType, setSelectedType] = useState('inside'); // 'inside' or 'outside'
+const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, insideTablesCount = 20, outsideTablesCount = 20, packageTablesCount = 5 }) => {
+  const isSultanSomatiMode = isSultanSomati(tenantId);
+  const [selectedType, setSelectedType] = useState(isSultanSomatiMode ? 'disari' : 'inside'); // Salon ID veya 'inside'/'outside'
   const [tableOrders, setTableOrders] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [orderItems, setOrderItems] = useState([]);
@@ -24,7 +26,21 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTables
     });
   }, [insideTablesCount, outsideTablesCount, packageTablesCount]);
 
+  // Sultan Somatı için salon bazlı masalar
+  const sultanSomatiTables = useMemo(() => {
+    if (!isSultanSomatiMode) return [];
+    return generateSultanSomatiTables();
+  }, [isSultanSomatiMode]);
+
+  // Seçili salona göre masaları filtrele (Sultan Somatı için)
+  const currentSalonTables = useMemo(() => {
+    if (!isSultanSomatiMode) return [];
+    return sultanSomatiTables.filter(table => table.type === selectedType);
+  }, [isSultanSomatiMode, sultanSomatiTables, selectedType]);
+
+  // Normal mod için masalar
   const insideTables = useMemo(() => {
+    if (isSultanSomatiMode) return [];
     console.log('🔄 insideTables oluşturuluyor, count:', insideTablesCount);
     return Array.from({ length: insideTablesCount }, (_, i) => ({
       id: `inside-${i + 1}`,
@@ -32,9 +48,10 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTables
       type: 'inside',
       name: `İçeri ${i + 1}`
     }));
-  }, [insideTablesCount]);
+  }, [insideTablesCount, isSultanSomatiMode]);
 
   const outsideTables = useMemo(() => {
+    if (isSultanSomatiMode) return [];
     console.log('🔄 outsideTables oluşturuluyor, count:', outsideTablesCount);
     return Array.from({ length: outsideTablesCount }, (_, i) => ({
       id: `outside-${i + 1}`,
@@ -42,17 +59,18 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTables
       type: 'outside',
       name: `Dışarı ${i + 1}`
     }));
-  }, [outsideTablesCount]);
+  }, [outsideTablesCount, isSultanSomatiMode]);
 
-  // Paket masaları (hem içeri hem dışarı için)
+  // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı'nda yok
   const packageTables = useMemo(() => {
+    if (isSultanSomatiMode) return [];
     return Array.from({ length: packageTablesCount }, (_, i) => ({
       id: `package-${selectedType}-${i + 1}`,
       number: i + 1,
       type: selectedType,
       name: `Paket ${i + 1}`
     }));
-  }, [packageTablesCount, selectedType]);
+  }, [packageTablesCount, selectedType, isSultanSomatiMode]);
 
   // Masa siparişlerini yükle
   useEffect(() => {
@@ -151,50 +169,67 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTables
   const handleAddItems = () => {
     if (!selectedOrder) return;
     
-    // Tüm masaları birleştir
-    const allTables = [...insideTables, ...outsideTables, ...packageTables];
-    
-    // Masayı bul
-    const table = allTables.find(t => t.id === selectedOrder.table_id);
-    if (table) {
-      // Modal'ı kapat
-      setShowModal(false);
-      setSelectedOrder(null);
-      setOrderItems([]);
-      // Masayı seç ve sipariş ekleme moduna geç
-      onSelectTable(table);
-    } else {
-      // Eğer masa bulunamazsa, selectedOrder'dan masa bilgisini oluştur
-      const tableId = selectedOrder.table_id;
-      let table = null;
+      // Tüm masaları birleştir
+      const allTables = isSultanSomatiMode 
+        ? sultanSomatiTables 
+        : [...insideTables, ...outsideTables, ...packageTables];
       
-      if (tableId.startsWith('inside-')) {
-        const number = parseInt(tableId.replace('inside-', ''));
-        table = {
-          id: tableId,
-          number: number,
-          type: 'inside',
-          name: `İçeri ${number}`
-        };
-      } else if (tableId.startsWith('outside-')) {
-        const number = parseInt(tableId.replace('outside-', ''));
-        table = {
-          id: tableId,
-          number: number,
-          type: 'outside',
-          name: `Dışarı ${number}`
-        };
-      } else if (tableId.startsWith('package-')) {
-        const parts = tableId.split('-');
-        const number = parseInt(parts[parts.length - 1]);
-        const type = parts[1] || 'inside';
-        table = {
-          id: tableId,
-          number: number,
-          type: type,
-          name: `Paket ${number}`
-        };
-      }
+      // Masayı bul
+      const table = allTables.find(t => t.id === selectedOrder.table_id);
+      if (table) {
+        // Modal'ı kapat
+        setShowModal(false);
+        setSelectedOrder(null);
+        setOrderItems([]);
+        // Masayı seç ve sipariş ekleme moduna geç
+        onSelectTable(table);
+      } else {
+        // Eğer masa bulunamazsa, selectedOrder'dan masa bilgisini oluştur
+        const tableId = selectedOrder.table_id;
+        let table = null;
+        
+        if (tableId.startsWith('salon-')) {
+          // Sultan Somatı salon masası
+          const parts = tableId.split('-');
+          const salonId = parts.slice(1, -1).join('-');
+          const number = parseInt(parts[parts.length - 1]);
+          const salon = SULTAN_SOMATI_SALONS.find(s => s.id === salonId);
+          table = {
+            id: tableId,
+            number: number,
+            type: salonId,
+            salonId: salonId,
+            salonName: salon?.name || salonId,
+            name: salon?.count === 1 ? salon.name : `${salon?.name || salonId} ${number}`,
+            icon: salon?.icon
+          };
+        } else if (tableId.startsWith('inside-')) {
+          const number = parseInt(tableId.replace('inside-', ''));
+          table = {
+            id: tableId,
+            number: number,
+            type: 'inside',
+            name: `İçeri ${number}`
+          };
+        } else if (tableId.startsWith('outside-')) {
+          const number = parseInt(tableId.replace('outside-', ''));
+          table = {
+            id: tableId,
+            number: number,
+            type: 'outside',
+            name: `Dışarı ${number}`
+          };
+        } else if (tableId.startsWith('package-')) {
+          const parts = tableId.split('-');
+          const number = parseInt(parts[parts.length - 1]);
+          const type = parts[1] || 'inside';
+          table = {
+            id: tableId,
+            number: number,
+            type: type,
+            name: `Paket ${number}`
+          };
+        }
       
       if (table) {
         // Modal'ı kapat
@@ -420,58 +455,86 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTables
         </button>
       </div>
       
-      {/* Masa Tipi Seçimi - Büyük ve Ortalanmış */}
-      <div className="flex justify-center gap-4 mb-4">
-        <button
-          onClick={() => setSelectedType('inside')}
-          className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 text-lg ${
-            selectedType === 'inside'
-              ? 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-lg transform scale-105'
-              : 'bg-blue-50 text-blue-600 hover:bg-blue-100 hover:text-blue-700'
-          }`}
-        >
-          <div className="flex items-center space-x-3">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-            </svg>
-            <span>İçeri</span>
-          </div>
-        </button>
-        
-        <button
-          onClick={() => setSelectedType('outside')}
-          className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 text-lg ${
-            selectedType === 'outside'
-              ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg transform scale-105'
-              : 'bg-orange-50 text-orange-600 hover:bg-orange-100 hover:text-orange-700'
-          }`}
-        >
-          <div className="flex items-center space-x-3">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-            </svg>
-            <span>Dışarı</span>
-          </div>
-        </button>
-      </div>
+      {/* Sultan Somatı için Salon Seçimi */}
+      {isSultanSomatiMode ? (
+        <div className="flex flex-wrap justify-center gap-3 mb-4">
+          {SULTAN_SOMATI_SALONS.map((salon) => (
+            <button
+              key={salon.id}
+              onClick={() => setSelectedType(salon.id)}
+              className={`px-6 py-3 rounded-xl font-bold transition-all duration-300 text-base ${
+                selectedType === salon.id
+                  ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg transform scale-105'
+                  : 'bg-purple-50 text-purple-600 hover:bg-purple-100 hover:text-purple-700'
+              }`}
+            >
+              <div className="flex items-center space-x-2">
+                <span className="text-xl">{salon.icon}</span>
+                <span>{salon.name}</span>
+                <span className="text-xs opacity-75">({salon.count})</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : (
+        /* Normal Mod için Masa Tipi Seçimi */
+        <div className="flex justify-center gap-4 mb-4">
+          <button
+            onClick={() => setSelectedType('inside')}
+            className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 text-lg ${
+              selectedType === 'inside'
+                ? 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-lg transform scale-105'
+                : 'bg-blue-50 text-blue-600 hover:bg-blue-100 hover:text-blue-700'
+            }`}
+          >
+            <div className="flex items-center space-x-3">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              <span>İçeri</span>
+            </div>
+          </button>
+          
+          <button
+            onClick={() => setSelectedType('outside')}
+            className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 text-lg ${
+              selectedType === 'outside'
+                ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg transform scale-105'
+                : 'bg-orange-50 text-orange-600 hover:bg-orange-100 hover:text-orange-700'
+            }`}
+          >
+            <div className="flex items-center space-x-3">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+              <span>Dışarı</span>
+            </div>
+          </button>
+        </div>
+      )}
 
-      {/* Normal Masalar */}
+      {/* Masalar Grid */}
       <div className="grid grid-cols-10 gap-1 mb-6">
-        {(selectedType === 'inside' ? insideTables : outsideTables).map((table) => {
+        {(isSultanSomatiMode ? currentSalonTables : (selectedType === 'inside' ? insideTables : outsideTables)).map((table) => {
           const hasOrder = getTableOrder(table.id);
-          const isOutside = table.type === 'outside';
+          const isOutside = !isSultanSomatiMode && table.type === 'outside';
+          const isSultanTable = isSultanSomatiMode && table.salonId;
+          
           return (
             <button
               key={table.id}
               onClick={() => handleTableClick(table)}
               className={`table-btn group relative overflow-hidden rounded-md p-1 border transition-all duration-300 hover:shadow-sm hover:scale-105 active:scale-95 aspect-square ${
                 hasOrder
-                  // Dolu masalar (iç/dış) – mobil ile aynı: kan kırmızısı tonlar
+                  // Dolu masalar – kan kırmızısı tonlar
                   ? 'bg-gradient-to-br from-red-700 to-red-900 border-red-800 hover:border-red-900'
+                  : isSultanTable
+                  // Sultan Somatı salon masaları – mor/pembe tonlar
+                  ? 'bg-gradient-to-br from-purple-50 to-pink-100 border-purple-300 hover:border-purple-400'
                   : isOutside
                   // Dışarı boş masalar – soft sarı
                   ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-300 hover:border-amber-400'
-                  // İçeri boş masalar – soft pembe (İçeri butonuyla uyumlu)
+                  // İçeri boş masalar – soft pembe
                   : 'bg-gradient-to-br from-pink-50 to-pink-100 border-pink-200 hover:border-pink-300'
               }`}
             >
@@ -480,6 +543,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTables
                   hasOrder
                     // Dolu masalarda iç daire – yoğun kırmızı
                     ? 'bg-gradient-to-br from-red-600 to-red-900'
+                    : isSultanTable
+                    ? 'bg-gradient-to-br from-purple-200 to-pink-300'
                     : isOutside
                     ? 'bg-gradient-to-br from-amber-200 to-amber-300'
                     : 'bg-gradient-to-br from-pink-100 to-pink-200'
@@ -489,15 +554,19 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTables
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                     </svg>
+                  ) : isSultanTable ? (
+                    <span className="text-lg">{table.icon}</span>
                   ) : (
                     <svg className={`w-5 h-5 ${isOutside ? 'text-white' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                     </svg>
                   )}
                 </div>
-                <span className={`font-bold text-sm leading-tight ${
+                <span className={`font-bold text-xs leading-tight text-center ${
                   hasOrder
                     ? 'text-red-50'
+                    : isSultanTable
+                    ? 'text-purple-900'
                     : isOutside
                     ? 'text-amber-900'
                     : 'text-pink-900'
@@ -506,6 +575,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTables
                   className={`text-[10px] font-semibold mt-1 px-2 py-0.5 rounded-md ${
                     hasOrder
                       ? 'bg-red-900 text-red-100'
+                      : isSultanTable
+                      ? 'bg-purple-100 text-purple-800'
                       : isOutside
                       ? 'bg-amber-100 text-amber-800'
                       : 'bg-pink-100 text-pink-800'
@@ -522,20 +593,21 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTables
         })}
       </div>
 
-      {/* PAKET Başlığı */}
-      <div className="mb-6 mt-8">
-        <div className="flex items-center justify-center mb-4">
-          <div className="flex items-center space-x-3 px-8 py-3 bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 rounded-2xl shadow-xl transform hover:scale-105 transition-all duration-300">
-            <svg className="w-7 h-7 text-white drop-shadow-lg" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-            </svg>
-            <h3 className="text-2xl font-black text-white tracking-wider drop-shadow-lg">PAKET</h3>
+      {/* PAKET Başlığı - Sadece normal mod için */}
+      {!isSultanSomatiMode && (
+        <div className="mb-6 mt-8">
+          <div className="flex items-center justify-center mb-4">
+            <div className="flex items-center space-x-3 px-8 py-3 bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 rounded-2xl shadow-xl transform hover:scale-105 transition-all duration-300">
+              <svg className="w-7 h-7 text-white drop-shadow-lg" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+              </svg>
+              <h3 className="text-2xl font-black text-white tracking-wider drop-shadow-lg">PAKET</h3>
+            </div>
           </div>
-        </div>
 
-        {/* Paket Masaları Grid */}
-        <div className="grid grid-cols-5 gap-2">
-          {packageTables.map((table) => {
+          {/* Paket Masaları Grid */}
+          <div className="grid grid-cols-5 gap-2">
+            {packageTables.map((table) => {
             const hasOrder = getTableOrder(table.id);
             return (
               <button
@@ -582,8 +654,9 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTables
               </button>
             );
           })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Masa Sipariş Detay Modal */}
       {showModal && selectedOrder && (
@@ -638,6 +711,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, insideTables
             setShowTransferModal(false);
           }}
           onTransfer={handleTransferTable}
+          tenantId={tenantId}
           insideTablesCount={insideTablesCount}
           outsideTablesCount={outsideTablesCount}
           packageTablesCount={packageTablesCount}
