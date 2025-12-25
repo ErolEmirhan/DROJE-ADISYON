@@ -4389,6 +4389,11 @@ async function printToPrinter(printerName, printerType, receiptData, isProductio
 
 // Üretim fişi HTML içeriğini oluştur (fiyat yok, sadece ürün bilgileri)
 function generateProductionReceiptHTML(items, receiptData) {
+  // Yaka's Grill kontrolü
+  const tenantInfo = tenantManager.getCurrentTenantInfo();
+  const isYakasGrill = tenantInfo?.tenantId === 'TENANT-1766340222641';
+  const productNameFontSize = isYakasGrill ? '2em' : 'inherit';
+  
   const itemsHTML = items.map(item => {
     const isGift = item.isGift || false;
     
@@ -4397,7 +4402,7 @@ function generateProductionReceiptHTML(items, receiptData) {
       <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #ccc;">
         <div style="display: flex; justify-content: space-between; font-weight: 900; font-style: italic; margin-bottom: 4px; font-family: 'Montserrat', sans-serif;">
           <div style="display: flex; align-items: center; gap: 4px;">
-            <span style="text-decoration: line-through; color: #999;">${item.name}</span>
+            <span style="text-decoration: line-through; color: #999; font-size: ${productNameFontSize};">${item.name}</span>
             <span style="font-size: 8px; background: #dcfce7; color: #16a34a; padding: 2px 4px; border-radius: 3px; font-weight: 900;">İKRAM</span>
           </div>
         </div>
@@ -4416,7 +4421,7 @@ function generateProductionReceiptHTML(items, receiptData) {
     return `
       <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #ccc;">
         <div style="display: flex; justify-content: space-between; font-weight: 900; font-style: italic; margin-bottom: 4px; font-family: 'Montserrat', sans-serif; color: #000 !important;">
-          <span style="color: #000 !important;">${item.name}</span>
+          <span style="color: #000 !important; font-size: ${productNameFontSize};">${item.name}</span>
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 10px; color: #000; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">
           <span>${item.quantity} adet</span>
@@ -4605,6 +4610,11 @@ function generateReceiptHTML(receiptData) {
     const itemTotal = isGift ? 0 : (item.price * item.quantity);
     const originalTotal = item.price * item.quantity;
     
+    // Yaka's Grill için porsiyon bilgisi (sadece 1'den farklıysa)
+    const tenantInfo = tenantManager.getCurrentTenantInfo();
+    const isYakasGrill = tenantInfo?.tenantId === 'TENANT-1766340222641';
+    const portionInfo = (isYakasGrill && item.portion && item.portion !== 1) ? `<div style="font-size: 10px; color: #92400e; font-weight: 700; margin-top: 2px; font-family: 'Montserrat', sans-serif;">${item.portion} Porsiyon</div>` : '';
+    
     if (isGift) {
       return `
       <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #ccc;">
@@ -4621,6 +4631,7 @@ function generateReceiptHTML(receiptData) {
         <div style="display: flex; justify-content: space-between; font-size: 10px; color: #000; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">
           <span>${item.quantity} adet × <span style="text-decoration: line-through; color: #999;">₺${item.price.toFixed(2)}</span> <span style="color: #16a34a;">₺0.00</span></span>
         </div>
+        ${portionInfo}
       </div>
     `;
     }
@@ -4634,6 +4645,7 @@ function generateReceiptHTML(receiptData) {
         <div style="display: flex; justify-content: space-between; font-size: 10px; color: #000; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">
           <span>${item.quantity} adet × ₺${item.price.toFixed(2)}</span>
         </div>
+        ${portionInfo}
       </div>
     `;
   }).join('');
@@ -5691,6 +5703,12 @@ async function printAdisyonByCategory(items, adisyonData) {
 
 // Modern ve profesyonel adisyon HTML formatı
 function generateAdisyonHTML(items, adisyonData) {
+  // Yaka's Grill kontrolü
+  const tenantInfo = tenantManager.getCurrentTenantInfo();
+  const isYakasGrill = tenantInfo?.tenantId === 'TENANT-1766340222641';
+  const productNameFontSize = isYakasGrill ? '2em' : '12px';
+  const quantityFontSize = isYakasGrill ? '2em' : '10px';
+  
   // Garson ismini adisyonData'dan al (eğer yoksa items'dan al)
   const staffName = adisyonData.staff_name || (items.length > 0 && items[0].staff_name ? items[0].staff_name : null);
   
@@ -5720,12 +5738,12 @@ function generateAdisyonHTML(items, adisyonData) {
           <div style="margin-bottom: 8px; padding: 8px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 3px solid #16a34a; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
               <div style="display: flex; align-items: center; gap: 4px; flex: 1;">
-                <span style="font-weight: 900; font-size: 12px; color: #166534; font-family: 'Montserrat', sans-serif; text-decoration: line-through; opacity: 0.6;">${item.name}</span>
+                <span style="font-weight: 900; font-size: ${productNameFontSize}; color: #166534; font-family: 'Montserrat', sans-serif; text-decoration: line-through; opacity: 0.6;">${item.name}</span>
                 <span style="font-size: 7px; background: linear-gradient(135deg, #16a34a, #22c55e); color: white; padding: 2px 5px; border-radius: 10px; font-weight: 900; box-shadow: 0 1px 3px rgba(22,163,74,0.3);">İKRAM</span>
               </div>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="font-size: 10px; color: #166534; font-weight: 700; font-family: 'Montserrat', sans-serif;">${item.quantity} adet</span>
+              <span style="font-size: ${quantityFontSize}; color: #166534; font-weight: 700; font-family: 'Montserrat', sans-serif;">${item.quantity} adet</span>
             </div>
             ${item.extraNote ? `
             <div style="margin-top: 4px; padding: 4px; background: white; border-radius: 3px; border-left: 2px solid #fbbf24;">
@@ -5735,14 +5753,29 @@ function generateAdisyonHTML(items, adisyonData) {
           </div>
         `;
         } else {
+          // Yaka's Grill için porsiyon bilgisi varsa büyük yazı ile göster
+          const portionInfo = (isYakasGrill && item.portion) ? `
+            <div style="margin-top: 6px; padding: 6px 10px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 8px; border: 2px solid #f59e0b; text-align: center;">
+              <span style="font-size: ${isYakasGrill ? '1.8em' : '14px'}; font-weight: 900; color: #92400e; font-family: 'Montserrat', sans-serif;">${item.portion} PORSIYON</span>
+            </div>
+          ` : '';
+          // Yaka's Grill için soğan bilgisi varsa büyük yazı ile göster
+          const onionInfo = (isYakasGrill && item.onionOption) ? `
+            <div style="margin-top: 6px; padding: 6px 10px; background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border-radius: 8px; border: 2px solid #3b82f6; text-align: center;">
+              <span style="font-size: ${isYakasGrill ? '1.8em' : '14px'}; font-weight: 900; color: #1e40af; font-family: 'Montserrat', sans-serif;">${item.onionOption.toUpperCase()}</span>
+            </div>
+          ` : '';
+          
           itemsHTML += `
           <div style="margin-bottom: 8px; padding: 8px; background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border-left: 3px solid #3b82f6; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <span style="font-weight: 900; font-size: 12px; color: #1e293b; font-family: 'Montserrat', sans-serif;">${item.name}</span>
+              <span style="font-weight: 900; font-size: ${productNameFontSize}; color: #1e293b; font-family: 'Montserrat', sans-serif;">${item.name}</span>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="font-size: 10px; color: #475569; font-weight: 700; font-family: 'Montserrat', sans-serif;">${item.quantity} adet</span>
+              <span style="font-size: ${quantityFontSize}; color: #475569; font-weight: 700; font-family: 'Montserrat', sans-serif;">${item.quantity} adet</span>
             </div>
+            ${portionInfo}
+            ${onionInfo}
             ${item.extraNote ? `
             <div style="margin-top: 4px; padding: 4px; background: #fef3c7; border-radius: 3px; border-left: 2px solid #f59e0b;">
               <p style="font-size: 8px; color: #92400e; font-weight: 700; margin: 0; font-family: 'Montserrat', sans-serif;">📝 ${item.extraNote}</p>
@@ -5763,7 +5796,7 @@ function generateAdisyonHTML(items, adisyonData) {
         <div style="margin-bottom: 8px; padding: 8px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 3px solid #16a34a; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
             <div style="display: flex; align-items: center; gap: 4px; flex: 1;">
-              <span style="font-weight: 900; font-size: 12px; color: #166534; font-family: 'Montserrat', sans-serif; text-decoration: line-through; opacity: 0.6;">${item.name}</span>
+              <span style="font-weight: 900; font-size: ${productNameFontSize}; color: #166534; font-family: 'Montserrat', sans-serif; text-decoration: line-through; opacity: 0.6;">${item.name}</span>
               <span style="font-size: 7px; background: linear-gradient(135deg, #16a34a, #22c55e); color: white; padding: 2px 5px; border-radius: 10px; font-weight: 900; box-shadow: 0 1px 3px rgba(22,163,74,0.3);">İKRAM</span>
             </div>
           </div>
@@ -5779,14 +5812,22 @@ function generateAdisyonHTML(items, adisyonData) {
       `;
       }
       
+      // Yaka's Grill için porsiyon bilgisi varsa büyük yazı ile göster
+      const portionInfo = (isYakasGrill && item.portion) ? `
+        <div style="margin-top: 6px; padding: 6px 10px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 8px; border: 2px solid #f59e0b; text-align: center;">
+          <span style="font-size: ${isYakasGrill ? '1.8em' : '14px'}; font-weight: 900; color: #92400e; font-family: 'Montserrat', sans-serif;">${item.portion} PORSIYON</span>
+        </div>
+      ` : '';
+      
       return `
         <div style="margin-bottom: 8px; padding: 8px; background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border-left: 3px solid #3b82f6; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-            <span style="font-weight: 900; font-size: 12px; color: #1e293b; font-family: 'Montserrat', sans-serif;">${item.name}</span>
+            <span style="font-weight: 900; font-size: ${productNameFontSize}; color: #1e293b; font-family: 'Montserrat', sans-serif;">${item.name}</span>
           </div>
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <span style="font-size: 10px; color: #475569; font-weight: 700; font-family: 'Montserrat', sans-serif;">${item.quantity} adet</span>
           </div>
+          ${portionInfo}
           ${item.extraNote ? `
           <div style="margin-top: 4px; padding: 4px; background: #fef3c7; border-radius: 3px; border-left: 2px solid #f59e0b;">
             <p style="font-size: 8px; color: #92400e; font-weight: 700; margin: 0; font-family: 'Montserrat', sans-serif;">📝 ${item.extraNote}</p>
@@ -6213,6 +6254,7 @@ function generateMobileHTML(serverURL) {
   const tenantInfo = tenantManager.getCurrentTenantInfo();
   const tenantId = tenantInfo?.tenantId || null;
   const isSultanSomati = tenantId === 'TENANT-1766611377865';
+  const isYakasGrill = tenantId === 'TENANT-1766340222641';
   const themeColor = tenantInfo?.themeColor || '#f97316';
   
   // Sultan Somatı için salon yapısı
@@ -6331,17 +6373,18 @@ function generateMobileHTML(serverURL) {
     }
     .table-grid {
       display: grid;
-      grid-template-columns: ${isSultanSomati ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)'};
-      gap: ${isSultanSomati ? '12px' : '8px'};
+      grid-template-columns: ${isSultanSomati ? 'repeat(2, 1fr)' : (isYakasGrill ? 'repeat(6, 1fr)' : 'repeat(4, 1fr)')};
+      gap: ${isSultanSomati ? '12px' : (isYakasGrill ? '6px' : '8px')};
       margin-bottom: 20px;
       ${isSultanSomati ? 'padding-top: 10px;' : ''}
+      ${isYakasGrill ? 'padding: 8px; max-height: calc(100vh - 120px); overflow-y: auto;' : ''}
     }
     .table-btn {
-      ${isSultanSomati ? 'min-height: 120px;' : 'aspect-ratio: 1;'}
-      border: ${isSultanSomati ? '1px' : '2px'} solid #e0e0e0;
-      border-radius: 12px;
+      ${isSultanSomati ? 'min-height: 120px;' : (isYakasGrill ? 'aspect-ratio: 1; min-height: 60px;' : 'aspect-ratio: 1;')}
+      border: ${isSultanSomati ? '1px' : (isYakasGrill ? '1px' : '2px')} solid #e0e0e0;
+      border-radius: ${isYakasGrill ? '8px' : '12px'};
       background: white;
-      font-size: ${isSultanSomati ? '18px' : '14px'};
+      font-size: ${isSultanSomati ? '18px' : (isYakasGrill ? '11px' : '14px')};
       font-weight: bold;
       color: #333;
       cursor: pointer;
@@ -6351,7 +6394,7 @@ function generateMobileHTML(serverURL) {
       align-items: center;
       justify-content: center;
       flex-direction: column;
-      padding: ${isSultanSomati ? '20px' : '5px'};
+      padding: ${isSultanSomati ? '20px' : (isYakasGrill ? '8px 4px' : '5px')};
     }
     .table-btn.outside-empty {
       background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
@@ -7557,7 +7600,7 @@ function generateMobileHTML(serverURL) {
       </button>
       
       <!-- Masa Tipi Seçim Ekranı - Sadece Normal Mod için -->
-      ${!isSultanSomati ? `
+      ${!isSultanSomati && !isYakasGrill ? `
       <div id="tableTypeSelection" style="display: block; position: fixed; inset: 0; background: white; z-index: 1000; overflow-y: auto; display: flex; flex-direction: column; padding: 20px;">
         <!-- Çıkış Yap Butonu - Sadece bu ekranda görünsün -->
         <div style="position: fixed; top: 20px; right: 20px; z-index: 1001;">
@@ -7590,9 +7633,9 @@ function generateMobileHTML(serverURL) {
       </div>
       ` : ''}
       
-      <div id="tableSelection" style="display: ${isSultanSomati ? 'block' : 'none'};">
-        ${isSultanSomati ? `
-        <!-- Sultan Somatı - Üst Header (Koyu Gri) -->
+      <div id="tableSelection" style="display: ${isSultanSomati || isYakasGrill ? 'block' : 'none'};">
+        ${isSultanSomati || isYakasGrill ? `
+        <!-- Sultan Somatı / Yaka's Grill - Üst Header (Koyu Gri) -->
         <div style="position: fixed; top: 0; left: 0; right: 0; height: 50px; background: #2d2d2d; z-index: 1000; display: flex; align-items: center; justify-content: space-between; padding: 0 15px;">
           <!-- Sol: Headphone İkonu -->
           <div style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">
@@ -7616,7 +7659,8 @@ function generateMobileHTML(serverURL) {
           </div>
         </div>
         
-        <!-- Salon Sekmeleri (Beyaz, Yuvarlatılmış) -->
+        ${isSultanSomati ? `
+        <!-- Salon Sekmeleri (Beyaz, Yuvarlatılmış) - Sadece Sultan Somatı için -->
         <div id="salonTabsContainer" style="position: fixed; top: 50px; left: 0; right: 0; background: white; z-index: 999; padding: 12px 15px; overflow-x: auto; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
           <div style="display: flex; gap: 8px; min-width: max-content;">
             ${sultanSomatiSalons.map((salon, index) => `
@@ -7645,6 +7689,7 @@ function generateMobileHTML(serverURL) {
             `).join('')}
           </div>
         </div>
+        ` : ''}
         ` : `
         <!-- Normal Mod - Geri Dönüş Butonu -->
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
@@ -7672,9 +7717,9 @@ function generateMobileHTML(serverURL) {
         `}
         
         <!-- Masa Grid -->
-        <div class="table-grid" id="tablesGrid" style="margin-top: ${isSultanSomati ? '80px' : '0'}; margin-bottom: ${isSultanSomati ? '80px' : '20px'};"></div>
+        <div class="table-grid" id="tablesGrid" style="margin-top: ${isSultanSomati ? '80px' : isYakasGrill ? '50px' : '0'}; margin-bottom: ${isSultanSomati || isYakasGrill ? '80px' : '20px'};"></div>
         
-        ${isSultanSomati ? `
+        ${isSultanSomati || isYakasGrill ? `
         <!-- Alt Navigasyon Bar (Koyu Gri) -->
         <div id="bottomNavBar" style="position: fixed; bottom: 0; left: 0; right: 0; height: 60px; background: #2d2d2d; z-index: 1000; display: flex; align-items: center; justify-content: space-around; padding: 0 10px; box-shadow: 0 -2px 10px rgba(0,0,0,0.2);">
           <button onclick="showTablesView()" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: transparent; border: none; color: #fbbf24; cursor: pointer; padding: 8px; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
@@ -8021,6 +8066,68 @@ function generateMobileHTML(serverURL) {
   </div>
   
   <!-- Türk Kahvesi Seçenek Modal -->
+  <!-- Soğan Seçici Modal (Yaka's Grill için) -->
+  <div id="onionModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px);" onclick="if(event.target === this) hideOnionModal()">
+    <div style="background: white; border-radius: 24px; width: 100%; max-width: 420px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 25px 70px rgba(0,0,0,0.4); animation: slideUp 0.3s ease;">
+      <div style="background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 100%); color: white; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="margin: 0; font-size: 22px; font-weight: 900;">Soğan Seçimi</h2>
+          <button onclick="hideOnionModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 36px; height: 36px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; transition: all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.3)';" onmouseout="this.style.background='rgba(255,255,255,0.2)';">×</button>
+        </div>
+      </div>
+      <div style="padding: 24px;">
+        <p style="margin: 0 0 20px 0; font-size: 15px; color: #6b7280; font-weight: 600; text-align: center;" id="onionProductName"></p>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <button onclick="selectOnionOption('Soğanlı')" class="onion-option" style="padding: 18px 24px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 17px; font-weight: 700; color: #1f2937; cursor: pointer; transition: all 0.3s; text-align: center; display: flex; align-items: center; justify-content: center; gap: 12px;" onmouseover="this.style.background='linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)'; this.style.borderColor='${primary}'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 20px ${primary}40';" onmouseout="this.style.background='linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'; this.style.borderColor='#e5e7eb'; this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            <span style="font-size: 24px;">🧅</span>
+            <span>Soğanlı</span>
+          </button>
+          <button onclick="selectOnionOption('Soğansız')" class="onion-option" style="padding: 18px 24px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 17px; font-weight: 700; color: #1f2937; cursor: pointer; transition: all 0.3s; text-align: center; display: flex; align-items: center; justify-content: center; gap: 12px;" onmouseover="this.style.background='linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)'; this.style.borderColor='${primary}'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 20px ${primary}40';" onmouseout="this.style.background='linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'; this.style.borderColor='#e5e7eb'; this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            <span style="font-size: 24px;">🚫</span>
+            <span>Soğansız</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Porsiyon Seçici Modal (Yaka's Grill için) -->
+  <div id="portionModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px);" onclick="if(event.target === this) hidePortionModal()">
+    <div style="background: white; border-radius: 24px; width: 100%; max-width: 420px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 25px 70px rgba(0,0,0,0.4); animation: slideUp 0.3s ease;">
+      <div style="background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 100%); color: white; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="margin: 0; font-size: 22px; font-weight: 900;">Porsiyon Seçimi</h2>
+          <button onclick="hidePortionModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 36px; height: 36px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; transition: all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.3)';" onmouseout="this.style.background='rgba(255,255,255,0.2)';">×</button>
+        </div>
+      </div>
+      <div style="padding: 24px;">
+        <p style="margin: 0 0 20px 0; font-size: 15px; color: #6b7280; font-weight: 600; text-align: center;" id="portionProductName"></p>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+          <button onclick="selectPortion(0.5)" class="portion-option" style="padding: 18px 24px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 17px; font-weight: 700; color: #1f2937; cursor: pointer; transition: all 0.3s; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;" onmouseover="this.style.background='linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)'; this.style.borderColor='${primary}'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 20px ${primary}40';" onmouseout="this.style.background='linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'; this.style.borderColor='#e5e7eb'; this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            <span style="font-size: 24px; font-weight: 900;">0.5</span>
+            <span style="font-size: 13px; color: #6b7280;">Porsiyon</span>
+            <span style="font-size: 14px; color: ${primary}; font-weight: 800;" id="portionPrice0.5"></span>
+          </button>
+          <button onclick="selectPortion(1)" class="portion-option" style="padding: 18px 24px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 17px; font-weight: 700; color: #1f2937; cursor: pointer; transition: all 0.3s; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;" onmouseover="this.style.background='linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)'; this.style.borderColor='${primary}'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 20px ${primary}40';" onmouseout="this.style.background='linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'; this.style.borderColor='#e5e7eb'; this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            <span style="font-size: 24px; font-weight: 900;">1</span>
+            <span style="font-size: 13px; color: #6b7280;">Porsiyon</span>
+            <span style="font-size: 14px; color: ${primary}; font-weight: 800;" id="portionPrice1"></span>
+          </button>
+          <button onclick="selectPortion(1.5)" class="portion-option" style="padding: 18px 24px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 17px; font-weight: 700; color: #1f2937; cursor: pointer; transition: all 0.3s; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;" onmouseover="this.style.background='linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)'; this.style.borderColor='${primary}'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 20px ${primary}40';" onmouseout="this.style.background='linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'; this.style.borderColor='#e5e7eb'; this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            <span style="font-size: 24px; font-weight: 900;">1.5</span>
+            <span style="font-size: 13px; color: #6b7280;">Porsiyon</span>
+            <span style="font-size: 14px; color: ${primary}; font-weight: 800;" id="portionPrice1.5"></span>
+          </button>
+          <button onclick="selectPortion(2)" class="portion-option" style="padding: 18px 24px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 17px; font-weight: 700; color: #1f2937; cursor: pointer; transition: all 0.3s; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;" onmouseover="this.style.background='linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)'; this.style.borderColor='${primary}'; this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 20px ${primary}40';" onmouseout="this.style.background='linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'; this.style.borderColor='#e5e7eb'; this.style.transform='translateY(0)'; this.style.boxShadow='none';">
+            <span style="font-size: 24px; font-weight: 900;">2</span>
+            <span style="font-size: 13px; color: #6b7280;">Porsiyon</span>
+            <span style="font-size: 14px; color: ${primary}; font-weight: 800;" id="portionPrice2"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
   <div id="turkishCoffeeModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px);" onclick="if(event.target === this) hideTurkishCoffeeModal()">
     <div style="background: white; border-radius: 24px; width: 100%; max-width: 420px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 25px 70px rgba(0,0,0,0.4); animation: slideUp 0.3s ease;">
       <div style="background: linear-gradient(135deg, #92400e 0%, #78350f 100%); color: white; padding: 24px;">
@@ -8185,6 +8292,7 @@ function generateMobileHTML(serverURL) {
     const outsideTablesCount = ${outsideTablesCount};
     const packageTablesCount = ${packageTablesCount};
     const isSultanSomatiMode = ${isSultanSomati ? 'true' : 'false'};
+    const isYakasGrillMode = ${isYakasGrill ? 'true' : 'false'};
     const sultanSomatiSalons = ${isSultanSomati ? JSON.stringify(sultanSomatiSalons) : '[]'};
     let selectedTable = null;
     let categories = [];
@@ -8194,7 +8302,7 @@ function generateMobileHTML(serverURL) {
     let currentStaff = null;
     let socket = null;
     let tables = [];
-    let currentTableType = ${isSultanSomati ? `'disari'` : `'inside'`};
+    let currentTableType = ${isSultanSomati ? `'disari'` : isYakasGrill ? `'masa'` : `'inside'`};
     let orderNote = '';
     
     // PIN oturum yönetimi (1 saat)
@@ -8248,7 +8356,7 @@ function generateMobileHTML(serverURL) {
         if (staffInfoEl) {
           staffInfoEl.style.display = 'none';
         }
-        // Sultan Somatı için direkt masa ekranını göster, normal mod için seçim ekranını göster
+        // Sultan Somatı ve Yaka's Grill için direkt masa ekranını göster, normal mod için seçim ekranını göster
         if (isSultanSomatiMode) {
           document.getElementById('tableSelection').style.display = 'block';
           document.getElementById('cart').style.display = 'none'; // Ana sayfada cart gizli
@@ -8262,6 +8370,9 @@ function generateMobileHTML(serverURL) {
               firstTab.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
             }
           }
+        } else if (isYakasGrillMode) {
+          document.getElementById('tableSelection').style.display = 'block';
+          document.getElementById('cart').style.display = 'block';
         } else {
           document.getElementById('tableTypeSelection').style.display = 'flex';
           document.getElementById('cart').style.display = 'none';
@@ -8315,7 +8426,7 @@ function generateMobileHTML(serverURL) {
             if (staffInfoEl) {
               staffInfoEl.style.display = 'none';
             }
-            // Sultan Somatı için direkt masa ekranını göster, normal mod için seçim ekranını göster
+            // Sultan Somatı ve Yaka's Grill için direkt masa ekranını göster, normal mod için seçim ekranını göster
             if (isSultanSomatiMode) {
               document.getElementById('tableSelection').style.display = 'block';
               document.getElementById('cart').style.display = 'block';
@@ -8329,6 +8440,9 @@ function generateMobileHTML(serverURL) {
                   firstTab.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
                 }
               }
+            } else if (isYakasGrillMode) {
+              document.getElementById('tableSelection').style.display = 'block';
+              document.getElementById('cart').style.display = 'block';
             } else {
               document.getElementById('tableTypeSelection').style.display = 'flex';
               document.getElementById('cart').style.display = 'none';
@@ -8465,7 +8579,7 @@ function generateMobileHTML(serverURL) {
     
     // Masa tipi seçim ekranından seçim (Normal Mod için)
     function selectTableTypeScreen(type) {
-      if (isSultanSomatiMode) return; // Sultan Somatı için bu fonksiyon kullanılmaz
+      if (isSultanSomatiMode || isYakasGrillMode) return; // Sultan Somatı ve Yaka's Grill için bu fonksiyon kullanılmaz
       currentTableType = type;
       document.getElementById('tableTypeSelection').style.display = 'none';
       document.getElementById('tableSelection').style.display = 'block';
@@ -8485,7 +8599,7 @@ function generateMobileHTML(serverURL) {
     
     // Geri dönüş butonu (Normal Mod için)
     function goBackToTypeSelection() {
-      if (isSultanSomatiMode) return; // Sultan Somatı için bu fonksiyon kullanılmaz
+      if (isSultanSomatiMode || isYakasGrillMode) return; // Sultan Somatı ve Yaka's Grill için bu fonksiyon kullanılmaz
       document.getElementById('tableSelection').style.display = 'none';
       document.getElementById('tableTypeSelection').style.display = 'flex';
       // staffInfo elementi kaldırıldı, null kontrolü yap
@@ -8538,7 +8652,7 @@ function generateMobileHTML(serverURL) {
     
     // Masa tipi seçimi (masalar ekranında - Normal Mod için)
     function selectTableType(type) {
-      if (isSultanSomatiMode) return; // Sultan Somatı için bu fonksiyon kullanılmaz
+      if (isSultanSomatiMode || isYakasGrillMode) return; // Sultan Somatı ve Yaka's Grill için bu fonksiyon kullanılmaz
       currentTableType = type;
       document.querySelectorAll('.table-type-tab').forEach(tab => {
         tab.classList.remove('active');
@@ -8565,6 +8679,7 @@ function generateMobileHTML(serverURL) {
         if (isSultanSomatiMode) {
           updateSalonCounts();
         }
+        // Yaka's Grill için özel işlem yok, direkt masalar gösterilecek
       } catch (error) {
         console.error('Veri yükleme hatası:', error);
         document.getElementById('tablesGrid').innerHTML = '<div class="loading">❌ Bağlantı hatası</div>';
@@ -8575,9 +8690,11 @@ function generateMobileHTML(serverURL) {
       const grid = document.getElementById('tablesGrid');
       if (!grid) return;
       
-      // Sultan Somatı için salon ID'sine göre filtrele, normal mod için type'a göre filtrele
+      // Sultan Somatı için salon ID'sine göre filtrele, Yaka's Grill için masa ID'sine göre filtrele, normal mod için type'a göre filtrele
       const filteredTables = isSultanSomatiMode 
         ? tables.filter(t => t.id && t.id.startsWith('salon-') && t.id.includes('-' + currentTableType + '-'))
+        : isYakasGrillMode
+        ? tables.filter(t => t.id && t.id.startsWith('masa-'))
         : tables.filter(t => t.type === currentTableType);
       
       // Normal masalar (paket olmayanlar)
@@ -8627,6 +8744,22 @@ function generateMobileHTML(serverURL) {
             '</button>';
           }
           
+          // Yaka's Grill için MASA-1, MASA-2 formatında masalar - Kompakt tasarım (30 masa tek ekrana sığsın)
+          if (isYakasGrillMode && table.id && table.id.startsWith('masa-')) {
+            const tableNumber = table.number;
+            const displayText = 'MASA-' + tableNumber;
+            
+            // Kompakt tasarım: Beyaz arka plan, dolu ise kırmızı border, seçili ise mavi border
+            const bgColor = table.hasOrder ? '#fee2e2' : 'white';
+            const borderColor = selectedClass ? '#3b82f6' : (table.hasOrder ? '#dc2626' : '#e0e0e0');
+            const borderWidth = selectedClass ? '2px' : '1px';
+            const textColor = table.hasOrder ? '#991b1b' : '#333';
+            
+            return '<button class="table-btn' + hasOrderClass + selectedClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')" style="background: ' + bgColor + '; border: ' + borderWidth + ' solid ' + borderColor + '; border-radius: 8px; padding: 8px 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: ' + textColor + '; aspect-ratio: 1; min-height: 60px; transition: all 0.2s; cursor: pointer;" onmouseover="if(!this.classList.contains(\\'selected\\')) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 2px 8px rgba(0,0,0,0.15)\\'; }" onmouseout="if(!this.classList.contains(\\'selected\\')) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'none\\'; }">' +
+              '<div style="text-align: center; line-height: 1.2;">' + displayText + '</div>' +
+            '</button>';
+          }
+          
           // Normal mod için eski tasarım
           // Masa numaralandırması: İç Masa 1, Dış Masa 1 gibi
           const tableTypeLabel = table.type === 'inside' ? 'İç Masa' : 'Dış Masa';
@@ -8645,8 +8778,8 @@ function generateMobileHTML(serverURL) {
         }).join('');
       }
       
-      // PAKET Başlığı - Premium ve Modern
-      if (packageTables.length > 0) {
+      // PAKET Başlığı - Premium ve Modern (Sadece normal mod için)
+      if (packageTables.length > 0 && !isSultanSomatiMode && !isYakasGrillMode) {
         html += '<div style="grid-column: 1 / -1; margin-top: 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center;">';
         html += '<div style="display: flex; align-items: center; gap: 8px; padding: 10px 20px; background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 30%, ${primaryLight}CC 70%, ${primaryLight}DD 100%); border-radius: 16px; box-shadow: 0 4px 16px ${rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.35)` : 'rgba(249, 115, 22, 0.35)'}, 0 0 0 1px rgba(255, 255, 255, 0.2) inset; position: relative; overflow: hidden;">';
         html += '<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%); pointer-events: none;"></div>';
@@ -8694,9 +8827,9 @@ function generateMobileHTML(serverURL) {
       }
     }
     
-    // Alt navigasyon bar fonksiyonları (Sultan Somatı için)
+    // Alt navigasyon bar fonksiyonları (Sultan Somatı ve Yaka's Grill için)
     function showTablesView() {
-      if (!isSultanSomatiMode) return;
+      if (!isSultanSomatiMode && !isYakasGrillMode) return;
       document.getElementById('tableSelection').style.display = 'block';
       document.getElementById('orderSection').style.display = 'none';
       document.getElementById('ordersView').style.display = 'none';
@@ -8710,6 +8843,7 @@ function generateMobileHTML(serverURL) {
       updateBottomNavActive('tables');
     }
     
+<<<<<<< Updated upstream
     async function showOrdersView() {
       if (!isSultanSomatiMode) return;
       document.getElementById('tableSelection').style.display = 'none';
@@ -8751,10 +8885,22 @@ function generateMobileHTML(serverURL) {
           btn.style.color = 'white';
         }
       });
+=======
+    function showOrdersView() {
+      if (!isSultanSomatiMode && !isYakasGrillMode) return;
+      // Siparişler görünümü - şimdilik masa görünümüne yönlendir
+      showTablesView();
+    }
+    
+    function showSalesView() {
+      if (!isSultanSomatiMode && !isYakasGrillMode) return;
+      // Satışlar görünümü - şimdilik masa görünümüne yönlendir
+      showTablesView();
+>>>>>>> Stashed changes
     }
     
     function showSettingsView() {
-      if (!isSultanSomatiMode) return;
+      if (!isSultanSomatiMode && !isYakasGrillMode) return;
       // Ayarlar görünümü - şimdilik çıkış yap modalını göster
       showLogoutModal();
     }
@@ -8781,7 +8927,7 @@ function generateMobileHTML(serverURL) {
         cartEl.classList.remove('open'); // Başlangıçta kapalı
       }
       // Seçili masa bilgisini göster
-      if (isSultanSomatiMode) {
+      if (isSultanSomatiMode || isYakasGrillMode) {
         const headerEl = document.getElementById('selectedTableInfoHeader');
         if (headerEl) {
           headerEl.textContent = name;
@@ -8874,6 +9020,7 @@ function generateMobileHTML(serverURL) {
     function goBackToTables() {
       selectedTable = null;
       document.getElementById('orderSection').style.display = 'none';
+<<<<<<< Updated upstream
       document.getElementById('ordersView').style.display = 'none';
       document.getElementById('salesView').style.display = 'none';
       // Alt navigasyon bar'ı göster (masa görünümüne dönüldüğünde)
@@ -8883,6 +9030,15 @@ function generateMobileHTML(serverURL) {
       if (isSultanSomatiMode) {
         document.getElementById('tableSelection').style.display = 'block';
         updateBottomNavActive('tables');
+=======
+      // Sultan Somatı ve Yaka's Grill için direkt masa ekranını göster, normal mod için seçim ekranını göster
+      if (isSultanSomatiMode || isYakasGrillMode) {
+        document.getElementById('tableSelection').style.display = 'block';
+        // Yaka's Grill için masaları yeniden render et
+        if (isYakasGrillMode) {
+          renderTables();
+        }
+>>>>>>> Stashed changes
       } else {
         document.getElementById('tableSelection').style.display = 'none';
         document.getElementById('tableTypeSelection').style.display = 'flex';
@@ -9608,6 +9764,137 @@ function generateMobileHTML(serverURL) {
       }
     }
     
+    // Soğan Seçici Modal Fonksiyonları (Yaka's Grill için)
+    let pendingOnionProduct = null;
+    
+    function showOnionModal(productId, name, price) {
+      pendingOnionProduct = { id: productId, name: name, price: price };
+      document.getElementById('onionProductName').textContent = name;
+      document.getElementById('onionModal').style.display = 'flex';
+    }
+    
+    function hideOnionModal() {
+      document.getElementById('onionModal').style.display = 'none';
+      pendingOnionProduct = null;
+    }
+    
+    function selectOnionOption(option) {
+      if (!pendingOnionProduct) {
+        hideOnionModal();
+        return;
+      }
+      
+      // Stok kontrolü
+      const product = products.find(p => p.id === pendingOnionProduct.id);
+      if (product) {
+        const trackStock = product.trackStock === true;
+        const stock = trackStock && product.stock !== undefined ? (product.stock || 0) : null;
+        const isOutOfStock = trackStock && stock !== null && stock === 0;
+        
+        if (isOutOfStock) {
+          showToast('error', 'Stok Yok', pendingOnionProduct.name + ' için stok kalmadı');
+          hideOnionModal();
+          return;
+        }
+      }
+      
+      // Sepete ekle (soğan bilgisi ile)
+      const existing = cart.find(item => item.id === pendingOnionProduct.id && item.onionOption === option);
+      if (existing) {
+        existing.quantity++;
+      } else {
+        cart.push({ 
+          id: pendingOnionProduct.id, 
+          name: pendingOnionProduct.name, 
+          price: pendingOnionProduct.price,
+          onionOption: option, // Soğan seçeneği
+          quantity: 1 
+        });
+      }
+      
+      updateCart();
+      hideOnionModal();
+      
+      // Arama input'unu temizle ve ürünleri yeniden render et
+      const searchInputEl = document.getElementById('searchInput');
+      if (searchInputEl) {
+        searchInputEl.value = '';
+        searchQuery = '';
+        renderProducts();
+      }
+    }
+    
+    // Porsiyon Seçici Modal Fonksiyonları (Yaka's Grill için)
+    let pendingPortionProduct = null;
+    
+    function showPortionModal(productId, name, price) {
+      pendingPortionProduct = { id: productId, name: name, price: price };
+      document.getElementById('portionProductName').textContent = name;
+      
+      // Fiyatları hesapla ve göster
+      document.getElementById('portionPrice0.5').textContent = '₺' + (price * 0.5).toFixed(2);
+      document.getElementById('portionPrice1').textContent = '₺' + (price * 1).toFixed(2);
+      document.getElementById('portionPrice1.5').textContent = '₺' + (price * 1.5).toFixed(2);
+      document.getElementById('portionPrice2').textContent = '₺' + (price * 2).toFixed(2);
+      
+      document.getElementById('portionModal').style.display = 'flex';
+    }
+    
+    function hidePortionModal() {
+      document.getElementById('portionModal').style.display = 'none';
+      pendingPortionProduct = null;
+    }
+    
+    function selectPortion(portion) {
+      if (!pendingPortionProduct) {
+        hidePortionModal();
+        return;
+      }
+      
+      // Stok kontrolü
+      const product = products.find(p => p.id === pendingPortionProduct.id);
+      if (product) {
+        const trackStock = product.trackStock === true;
+        const stock = trackStock && product.stock !== undefined ? (product.stock || 0) : null;
+        const isOutOfStock = trackStock && stock !== null && stock === 0;
+        
+        if (isOutOfStock) {
+          showToast('error', 'Stok Yok', pendingPortionProduct.name + ' için stok kalmadı');
+          hidePortionModal();
+          return;
+        }
+      }
+      
+      // Porsiyona göre fiyat hesapla
+      const calculatedPrice = pendingPortionProduct.price * portion;
+      
+      // Sepete ekle (porsiyon bilgisi ile)
+      const existing = cart.find(item => item.id === pendingPortionProduct.id && item.portion === portion);
+      if (existing) {
+        existing.quantity++;
+      } else {
+        cart.push({ 
+          id: pendingPortionProduct.id, 
+          name: pendingPortionProduct.name, 
+          price: calculatedPrice, // Hesaplanmış fiyat
+          originalPrice: pendingPortionProduct.price, // Orijinal fiyat (1 porsiyon)
+          portion: portion, // Porsiyon bilgisi
+          quantity: 1 
+        });
+      }
+      
+      updateCart();
+      hidePortionModal();
+      
+      // Arama input'unu temizle ve ürünleri yeniden render et
+      const searchInputEl = document.getElementById('searchInput');
+      if (searchInputEl) {
+        searchInputEl.value = '';
+        searchQuery = '';
+        renderProducts();
+      }
+    }
+    
     // Türk Kahvesi Modal Fonksiyonları
     let pendingTurkishCoffeeProduct = null;
     
@@ -9669,6 +9956,29 @@ function generateMobileHTML(serverURL) {
     }
     
     function addToCart(productId, name, price) {
+      // Yaka's Grill için özel kategoriler kontrolü
+      if (isYakasGrillMode) {
+        const product = products.find(p => p.id === productId);
+        if (product) {
+          const category = categories.find(c => c.id === product.category_id);
+          if (category && category.name) {
+            const categoryNameLower = category.name.toLowerCase();
+            
+            // Porsiyon kategorisi için porsiyon seçici modal
+            if (categoryNameLower === 'porsiyon') {
+              showPortionModal(productId, name, price);
+              return;
+            }
+            
+            // Dürümler, Ekmek Arası, Balık kategorileri için soğan seçici modal
+            if (categoryNameLower === 'dürümler' || categoryNameLower === 'ekmek arası' || categoryNameLower === 'balık') {
+              showOnionModal(productId, name, price);
+              return;
+            }
+          }
+        }
+      }
+      
       // Stok kontrolü
       const product = products.find(p => p.id === productId);
       if (product) {
@@ -9682,7 +9992,7 @@ function generateMobileHTML(serverURL) {
         }
       }
       
-      const existing = cart.find(item => item.id === productId);
+      const existing = cart.find(item => item.id === productId && !item.portion);
       if (existing) existing.quantity++;
       else cart.push({ id: productId, name, price, quantity: 1 });
       updateCart();
@@ -9706,20 +10016,27 @@ function generateMobileHTML(serverURL) {
       if (cart.length === 0) {
         itemsDiv.innerHTML = '<div style="text-align: center; padding: 40px 20px; color: #9ca3af; font-size: 14px;">Sepetiniz boş</div>';
       } else {
-        itemsDiv.innerHTML = cart.map(item => 
-          '<div class="cart-item">' +
+        itemsDiv.innerHTML = cart.map((item, index) => {
+          // Yaka's Grill için porsiyon bilgisi varsa göster
+          const portionInfo = (isYakasGrillMode && item.portion) ? '<div style="color: ' + themePrimary + '; font-size: 12px; font-weight: 700; margin-top: 2px;">' + item.portion + ' Porsiyon</div>' : '';
+          // Yaka's Grill için soğan bilgisi varsa göster
+          const onionInfo = (isYakasGrillMode && item.onionOption) ? '<div style="color: ' + themePrimary + '; font-size: 12px; font-weight: 700; margin-top: 2px;">' + item.onionOption + '</div>' : '';
+          const itemKey = item.portion ? item.id + '_' + item.portion : (item.onionOption ? item.id + '_' + item.onionOption : item.id);
+          return '<div class="cart-item" data-item-key="' + itemKey + '">' +
             '<div style="flex: 1;">' +
               '<div style="font-weight: 700; font-size: 15px; color: #1f2937; margin-bottom: 4px;">' + item.name + '</div>' +
+              portionInfo +
+              onionInfo +
               '<div style="color: #6b7280; font-size: 13px; font-weight: 600;">' + item.price.toFixed(2) + ' ₺ × ' + item.quantity + ' = ' + (item.price * item.quantity).toFixed(2) + ' ₺</div>' +
             '</div>' +
             '<div class="cart-item-controls">' +
-              '<button class="qty-btn" onclick="changeQuantity(' + item.id + ', -1)" title="Azalt">-</button>' +
+              '<button class="qty-btn" onclick="changeQuantity(' + index + ', -1)" title="Azalt">-</button>' +
               '<span style="min-width: 36px; text-align: center; font-weight: 700; color: #1f2937; font-size: 15px;">' + item.quantity + '</span>' +
-              '<button class="qty-btn" onclick="changeQuantity(' + item.id + ', 1)" title="Artır">+</button>' +
-              '<button class="qty-btn" onclick="removeFromCart(' + item.id + ')" style="background: #ef4444; color: white; border-color: #ef4444; font-size: 18px;" title="Sil">×</button>' +
+              '<button class="qty-btn" onclick="changeQuantity(' + index + ', 1)" title="Artır">+</button>' +
+              '<button class="qty-btn" onclick="removeFromCart(' + index + ')" style="background: #ef4444; color: white; border-color: #ef4444; font-size: 18px;" title="Sil">×</button>' +
             '</div>' +
-          '</div>'
-        ).join('');
+          '</div>';
+        }).join('');
       }
       
       document.getElementById('cartTotal').textContent = total.toFixed(2);
@@ -9742,12 +10059,22 @@ function generateMobileHTML(serverURL) {
       }
     }
     
-    function changeQuantity(productId, delta) {
-      const item = cart.find(item => item.id === productId);
-      if (item) { item.quantity += delta; if (item.quantity <= 0) removeFromCart(productId); else updateCart(); }
+    function changeQuantity(itemIndex, delta) {
+      if (itemIndex < 0 || itemIndex >= cart.length) return;
+      const item = cart[itemIndex];
+      item.quantity += delta;
+      if (item.quantity <= 0) {
+        removeFromCart(itemIndex);
+      } else {
+        updateCart();
+      }
     }
     
-    function removeFromCart(productId) { cart = cart.filter(item => item.id !== productId); updateCart(); }
+    function removeFromCart(itemIndex) {
+      if (itemIndex < 0 || itemIndex >= cart.length) return;
+      cart.splice(itemIndex, 1);
+      updateCart();
+    }
     
     function toggleCart() {
       const cartEl = document.getElementById('cart');
@@ -10595,6 +10922,7 @@ function startAPIServer() {
     const tenantInfo = tenantManager.getCurrentTenantInfo();
     const tenantId = tenantInfo?.tenantId || null;
     const isSultanSomati = tenantId === 'TENANT-1766611377865';
+    const isYakasGrill = tenantId === 'TENANT-1766340222641';
     
     // Sultan Somatı için salon yapısı
     const sultanSomatiSalons = [
@@ -10628,6 +10956,35 @@ function startAPIServer() {
           });
         }
       });
+    } else if (isYakasGrill) {
+      // Yaka's Grill için direkt masalar (MASA-1, MASA-2, ...) - Salon
+      for (let i = 1; i <= 30; i++) {
+        const tableId = `masa-${i}`;
+        const hasPendingOrder = (db.tableOrders || []).some(
+          o => o.table_id === tableId && o.status === 'pending'
+        );
+        tables.push({
+          id: tableId,
+          number: i,
+          type: 'masa',
+          name: `MASA-${i}`,
+          hasOrder: hasPendingOrder
+        });
+      }
+      // Yaka's Grill için paket masaları
+      for (let i = 1; i <= 25; i++) {
+        const tableId = `package-masa-${i}`;
+        const hasPendingOrder = (db.tableOrders || []).some(
+          o => o.table_id === tableId && o.status === 'pending'
+        );
+        tables.push({
+          id: tableId,
+          number: i,
+          type: 'package',
+          name: `Paket ${i}`,
+          hasOrder: hasPendingOrder
+        });
+      }
     } else {
       // Normal mod için içeri/dışarı masalar
       // 0 değeri geçerli olduğu için null/undefined kontrolü yapıyoruz
@@ -11318,6 +11675,9 @@ function startAPIServer() {
             product_name: newItem.name,
             quantity: newItem.quantity,
             price: newItem.price,
+            originalPrice: newItem.originalPrice || null, // Yaka's Grill için orijinal fiyat (1 porsiyon)
+            portion: newItem.portion || null, // Yaka's Grill için porsiyon bilgisi
+            onionOption: newItem.onionOption || null, // Yaka's Grill için soğan seçeneği
             isGift: newItem.isGift || false,
             staff_id: staffId || null,
             staff_name: itemStaffName,
@@ -11368,6 +11728,9 @@ function startAPIServer() {
             product_name: item.name,
             quantity: item.quantity,
             price: item.price,
+            originalPrice: item.originalPrice || null, // Yaka's Grill için orijinal fiyat (1 porsiyon)
+            portion: item.portion || null, // Yaka's Grill için porsiyon bilgisi
+            onionOption: item.onionOption || null, // Yaka's Grill için soğan seçeneği
             isGift: item.isGift || false,
             staff_id: staffId || null,
             staff_name: staffName || null,

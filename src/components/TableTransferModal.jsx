@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { isSultanSomati, generateSultanSomatiTables } from '../utils/sultanSomatTables';
+import { isSultanSomati, generateSultanSomatiTables, isYakasGrill, generateYakasGrillTables } from '../utils/sultanSomatTables';
 
 const TableTransferModal = ({ 
   currentOrder, 
@@ -18,6 +18,7 @@ const TableTransferModal = ({
   const [selectedTargetTable, setSelectedTargetTable] = useState(null);
 
   const isSultanSomatiMode = isSultanSomati(tenantId);
+  const isYakasGrillMode = isYakasGrill(tenantId);
 
   // Sultan Somatı için salon bazlı masalar
   const sultanSomatiTables = useMemo(() => {
@@ -25,9 +26,26 @@ const TableTransferModal = ({
     return generateSultanSomatiTables();
   }, [isSultanSomatiMode]);
 
+  // Yaka's Grill için direkt masalar (Salon)
+  const yakasGrillTables = useMemo(() => {
+    if (!isYakasGrillMode) return [];
+    return generateYakasGrillTables();
+  }, [isYakasGrillMode]);
+
+  // Yaka's Grill için paket masaları
+  const yakasGrillPackageTables = useMemo(() => {
+    if (!isYakasGrillMode) return [];
+    return Array.from({ length: 25 }, (_, i) => ({
+      id: `package-masa-${i + 1}`,
+      number: i + 1,
+      type: 'package',
+      name: `Paket ${i + 1}`
+    }));
+  }, [isYakasGrillMode]);
+
   // Normal mod için masalar
   const insideTables = useMemo(() => {
-    if (isSultanSomatiMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode) return [];
     return Array.from({ length: insideTablesCount }, (_, i) => ({
       id: `inside-${i + 1}`,
       number: i + 1,
@@ -37,7 +55,7 @@ const TableTransferModal = ({
   }, [insideTablesCount, isSultanSomatiMode]);
 
   const outsideTables = useMemo(() => {
-    if (isSultanSomatiMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode) return [];
     return Array.from({ length: outsideTablesCount }, (_, i) => ({
       id: `outside-${i + 1}`,
       number: i + 1,
@@ -46,9 +64,9 @@ const TableTransferModal = ({
     }));
   }, [outsideTablesCount, isSultanSomatiMode]);
 
-  // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı'nda yok
+  // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı ve Yaka's Grill'de yok
   const packageTablesInside = useMemo(() => {
-    if (isSultanSomatiMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode) return [];
     return Array.from({ length: packageTablesCount }, (_, i) => ({
       id: `package-inside-${i + 1}`,
       number: i + 1,
@@ -58,7 +76,7 @@ const TableTransferModal = ({
   }, [packageTablesCount, isSultanSomatiMode]);
 
   const packageTablesOutside = useMemo(() => {
-    if (isSultanSomatiMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode) return [];
     return Array.from({ length: packageTablesCount }, (_, i) => ({
       id: `package-outside-${i + 1}`,
       number: i + 1,
@@ -130,6 +148,8 @@ const TableTransferModal = ({
   // Tüm masaları göster
   const allTables = isSultanSomatiMode 
     ? sultanSomatiTables 
+    : isYakasGrillMode
+    ? [...yakasGrillTables, ...yakasGrillPackageTables]
     : [...insideTables, ...outsideTables, ...packageTablesInside, ...packageTablesOutside];
 
   return (

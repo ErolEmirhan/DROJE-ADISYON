@@ -301,7 +301,7 @@ const LauncherClient = ({ onLogin }) => {
               </div>
             </div>
           ) : (
-            <div className="brand-section">
+          <div className="brand-section">
             <div className="logo-container">
               <div className="logo-glow"></div>
               <div className="logo-orb"></div>
@@ -548,14 +548,14 @@ const LauncherClient = ({ onLogin }) => {
                     strokeDashoffset="534"
                     className="ring-circle"
                   />
-                  <defs>
+                    <defs>
                     <linearGradient id="elegantGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#6366f1" />
+                        <stop offset="0%" stopColor="#6366f1" />
                       <stop offset="100%" stopColor="#8b5cf6" />
-                    </linearGradient>
-                  </defs>
-                </svg>
-              </div>
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                </div>
               <div className="logo-center-elegant">
                 <div className="logo-letter-elegant">D</div>
                 <div className="logo-glow-subtle"></div>
@@ -567,7 +567,7 @@ const LauncherClient = ({ onLogin }) => {
               <div className="welcome-status-badge">
                 <div className="status-dot-elegant"></div>
                 <span className="status-text-elegant">Initializing System</span>
-              </div>
+            </div>
               <h1 className="welcome-title-corporate">
                 <span className="welcome-line-1">Welcome to</span>
                 <span className="welcome-line-2">{loadingBusinessName || 'DROJE POS'}</span>
@@ -590,7 +590,7 @@ const LauncherClient = ({ onLogin }) => {
                     style={{ width: `${loadingProgress}%` }}
                   ></div>
                 </div>
-              </div>
+                </div>
               <div className="progress-steps">
                 {['Connect', 'Authenticate', 'Load Data', 'Ready'].map((step, i) => (
                   <div 
@@ -599,7 +599,7 @@ const LauncherClient = ({ onLogin }) => {
                   >
                     <div className="step-indicator"></div>
                     <span className="step-label">{step}</span>
-                  </div>
+              </div>
                 ))}
               </div>
             </div>
@@ -642,7 +642,7 @@ const LauncherClient = ({ onLogin }) => {
                   <span className="status-name-corporate">Security</span>
                   <span className="status-value-corporate">Active</span>
                 </div>
-              </div>
+            </div>
             </div>
           </div>
         </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { getThemeColors } from './utils/themeUtils';
+import { isYakasGrill } from './utils/sultanSomatTables';
 import Navbar from './components/Navbar';
 import CategoryPanel from './components/CategoryPanel';
 import TablePanel from './components/TablePanel';
@@ -38,6 +39,7 @@ function App() {
   const [activeRoleSplash, setActiveRoleSplash] = useState(null);
   const [saleSuccessInfo, setSaleSuccessInfo] = useState(null);
   const [printToast, setPrintToast] = useState(null); // { status: 'printing' | 'success' | 'error', message: string }
+  const [errorToast, setErrorToast] = useState(null); // { message: string }
   const [updateInfo, setUpdateInfo] = useState(null);
   const [updateDownloadProgress, setUpdateDownloadProgress] = useState(null);
   const [tableRefreshTrigger, setTableRefreshTrigger] = useState(0);
@@ -45,6 +47,10 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [suspendedInfo, setSuspendedInfo] = useState(null); // { message, businessName }
+  const [showOnionModal, setShowOnionModal] = useState(false);
+  const [pendingOnionProduct, setPendingOnionProduct] = useState(null);
+  const [showPortionModal, setShowPortionModal] = useState(false);
+  const [pendingPortionProduct, setPendingPortionProduct] = useState(null);
   const searchInputRef = useRef(null);
   const triggerRoleSplash = (role) => {
     setActiveRoleSplash(role);
@@ -240,11 +246,33 @@ function App() {
   };
 
   const addToCart = (product) => {
+    // Yaka's Grill için özel kategoriler kontrolü
+    if (tenantId && isYakasGrill(tenantId)) {
+      const category = categories.find(c => c.id === product.category_id);
+      if (category && category.name) {
+        const categoryNameLower = category.name.toLowerCase();
+        
+        // Porsiyon kategorisi için porsiyon seçici modal
+        if (categoryNameLower === 'porsiyon') {
+          setPendingPortionProduct(product);
+          setShowPortionModal(true);
+          return;
+        }
+        
+        // Dürümler, Ekmek Arası, Balık kategorileri için soğan seçici modal
+        if (categoryNameLower === 'dürümler' || categoryNameLower === 'ekmek arası' || categoryNameLower === 'balık') {
+          setPendingOnionProduct(product);
+          setShowOnionModal(true);
+          return;
+        }
+      }
+    }
+    
     setCart(prevCart => {
-      const existingItem = prevCart.find(item => item.id === product.id);
+      const existingItem = prevCart.find(item => item.id === product.id && !item.onionOption && !item.portion);
       if (existingItem) {
         return prevCart.map(item =>
-          item.id === product.id
+          item.id === product.id && !item.onionOption && !item.portion
             ? { ...item, quantity: item.quantity + 1 }
             : item
         );
@@ -252,21 +280,97 @@ function App() {
       return [...prevCart, { ...product, quantity: 1 }];
     });
   };
+  
+  const handleOnionSelect = (option) => {
+    if (!pendingOnionProduct) {
+      setShowOnionModal(false);
+      return;
+    }
+    
+    setCart(prevCart => {
+      const existingItem = prevCart.find(item => item.id === pendingOnionProduct.id && item.onionOption === option);
+      if (existingItem) {
+        return prevCart.map(item =>
+          item.id === pendingOnionProduct.id && item.onionOption === option
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        );
+      }
+      return [...prevCart, { ...pendingOnionProduct, quantity: 1, onionOption: option }];
+    });
+    
+    setShowOnionModal(false);
+    setPendingOnionProduct(null);
+  };
 
-  const updateCartItemQuantity = (productId, newQuantity) => {
+  const handlePortionSelect = (portion) => {
+    if (!pendingPortionProduct) {
+      setShowPortionModal(false);
+      return;
+    }
+    
+    // Porsiyona göre fiyat hesapla
+    const originalPrice = pendingPortionProduct.price;
+    const newPrice = originalPrice * portion;
+    
+    setCart(prevCart => {
+      // Aynı ürün ve aynı porsiyon varsa miktarı artır
+      const existingItem = prevCart.find(item => 
+        item.id === pendingPortionProduct.id && item.portion === portion
+      );
+      if (existingItem) {
+        return prevCart.map(item =>
+          item.id === pendingPortionProduct.id && item.portion === portion
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        );
+      }
+      // Yeni ürün olarak ekle (porsiyon bilgisi ve hesaplanmış fiyat ile)
+      return [...prevCart, { 
+        ...pendingPortionProduct, 
+        quantity: 1, 
+        portion: portion,
+        originalPrice: originalPrice, // Orijinal fiyat (1 porsiyon)
+        price: newPrice // Hesaplanmış fiyat
+      }];
+    });
+    
+    setShowPortionModal(false);
+    setPendingPortionProduct(null);
+  };
+
+  const updateCartItemQuantity = (productId, newQuantity, onionOption = null, portion = null) => {
     if (newQuantity <= 0) {
-      removeFromCart(productId);
+      removeFromCart(productId, onionOption, portion);
       return;
     }
     setCart(prevCart =>
-      prevCart.map(item =>
-        item.id === productId ? { ...item, quantity: newQuantity } : item
-      )
+      prevCart.map(item => {
+        // Eşleşme kontrolü: hem ID, hem onionOption (varsa), hem de portion (varsa) eşleşmeli
+        const matchesId = item.id === productId;
+        const matchesOnion = onionOption ? item.onionOption === onionOption : !item.onionOption;
+        const matchesPortion = portion !== null ? item.portion === portion : !item.portion;
+        
+        if (matchesId && matchesOnion && matchesPortion) {
+          return { ...item, quantity: newQuantity };
+        }
+        return item;
+      })
     );
   };
 
-  const removeFromCart = (productId) => {
-    setCart(prevCart => prevCart.filter(item => item.id !== productId));
+  const removeFromCart = (productId, onionOption = null, portion = null) => {
+    setCart(prevCart => {
+      return prevCart.filter(item => {
+        // Eşleşme kontrolü: hem ID, hem onionOption (varsa), hem de portion (varsa) eşleşmemeli
+        const matchesId = item.id === productId;
+        const matchesOnion = onionOption ? item.onionOption === onionOption : !item.onionOption;
+        const matchesPortion = portion !== null ? item.portion === portion : !item.portion;
+        
+        // Eğer tüm kriterler eşleşiyorsa, bu item'ı filtrele (sil)
+        return !(matchesId && matchesOnion && matchesPortion);
+      });
+    });
   };
 
   const toggleGift = (productId) => {
@@ -297,7 +401,8 @@ function App() {
     
     if (!window.electronAPI || !window.electronAPI.printAdisyon) {
       console.error('printAdisyon API mevcut değil. Lütfen uygulamayı yeniden başlatın.');
-      alert('Hata: Adisyon yazdırma API\'si yüklenemedi. Lütfen uygulamayı yeniden başlatın.');
+      setErrorToast({ message: 'Hata: Adisyon yazdırma API\'si yüklenemedi. Lütfen uygulamayı yeniden başlatın.' });
+      setTimeout(() => setErrorToast(null), 4000);
       return;
     }
     
@@ -342,7 +447,8 @@ function App() {
     
     if (!window.electronAPI || !window.electronAPI.createTableOrder) {
       console.error('createTableOrder API mevcut değil. Lütfen uygulamayı yeniden başlatın.');
-      alert('Hata: Masa siparişi API\'si yüklenemedi. Lütfen uygulamayı yeniden başlatın.');
+      setErrorToast({ message: 'Hata: Masa siparişi API\'si yüklenemedi. Lütfen uygulamayı yeniden başlatın.' });
+      setTimeout(() => setErrorToast(null), 4000);
       return;
     }
     
@@ -423,7 +529,8 @@ function App() {
       }
     } catch (error) {
       console.error('Masa siparişi kaydedilirken hata:', error);
-      alert('Masa siparişi kaydedilemedi: ' + error.message);
+      setErrorToast({ message: 'Masa siparişi kaydedilemedi: ' + error.message });
+      setTimeout(() => setErrorToast(null), 4000);
     }
   };
 
@@ -837,6 +944,7 @@ function App() {
             <ProductGrid
               products={filteredProducts}
               onAddToCart={addToCart}
+              tenantId={tenantId}
             />
           </div>
 
@@ -856,6 +964,7 @@ function App() {
               onOrderNoteChange={setOrderNote}
               onToggleGift={toggleGift}
               themeColor={themeColor}
+              tenantId={tenantId}
             />
           </div>
         </div>
@@ -889,6 +998,142 @@ function App() {
         />
       )}
 
+      {/* Soğan Seçici Modal (Yaka's Grill için) */}
+      {showOnionModal && pendingOnionProduct && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-5 backdrop-blur-sm"
+          onClick={(e) => e.target === e.currentTarget && setShowOnionModal(false)}
+        >
+          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-slide-up">
+            <div className={`bg-gradient-to-r ${theme.primary} to-${theme.primaryLight} text-white p-6`} style={{ background: `linear-gradient(135deg, ${themeColor} 0%, ${theme.primaryLight} 100%)` }}>
+              <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-black m-0">Soğan Seçimi</h2>
+                <button 
+                  onClick={() => setShowOnionModal(false)}
+                  className="bg-white bg-opacity-20 border-none text-white w-9 h-9 rounded-xl cursor-pointer flex items-center justify-center text-2xl font-bold transition-all hover:bg-opacity-30"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="p-6">
+              <p className="m-0 mb-5 text-base text-gray-600 font-semibold text-center">
+                {pendingOnionProduct.name}
+              </p>
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => handleOnionSelect('Soğanlı')}
+                  className="p-5 bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 rounded-2xl text-lg font-bold text-gray-800 cursor-pointer transition-all text-center flex items-center justify-center gap-3 hover:bg-gradient-to-br hover:from-gray-100 hover:to-gray-200 hover:-translate-y-0.5 hover:shadow-lg"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = themeColor;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#e5e7eb';
+                  }}
+                >
+                  <span className="text-2xl">🧅</span>
+                  <span>Soğanlı</span>
+                </button>
+                <button
+                  onClick={() => handleOnionSelect('Soğansız')}
+                  className="p-5 bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 rounded-2xl text-lg font-bold text-gray-800 cursor-pointer transition-all text-center flex items-center justify-center gap-3 hover:bg-gradient-to-br hover:from-gray-100 hover:to-gray-200 hover:-translate-y-0.5 hover:shadow-lg"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = themeColor;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#e5e7eb';
+                  }}
+                >
+                  <span className="text-2xl">🚫</span>
+                  <span>Soğansız</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Porsiyon Seçici Modal (Yaka's Grill için) */}
+      {showPortionModal && pendingPortionProduct && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-5 backdrop-blur-sm"
+          onClick={(e) => e.target === e.currentTarget && setShowPortionModal(false)}
+        >
+          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-slide-up">
+            <div className={`bg-gradient-to-r ${theme.primary} to-${theme.primaryLight} text-white p-6`} style={{ background: `linear-gradient(135deg, ${themeColor} 0%, ${theme.primaryLight} 100%)` }}>
+              <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-black m-0">Porsiyon Seçimi</h2>
+                <button 
+                  onClick={() => setShowPortionModal(false)}
+                  className="bg-white bg-opacity-20 border-none text-white w-9 h-9 rounded-xl cursor-pointer flex items-center justify-center text-2xl font-bold transition-all hover:bg-opacity-30"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="p-6">
+              <p className="m-0 mb-5 text-base text-gray-600 font-semibold text-center">
+                {pendingPortionProduct.name}
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => handlePortionSelect(0.5)}
+                  className="p-5 bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 rounded-2xl text-lg font-bold text-gray-800 cursor-pointer transition-all text-center flex flex-col items-center justify-center gap-2 hover:bg-gradient-to-br hover:from-gray-100 hover:to-gray-200 hover:-translate-y-0.5 hover:shadow-lg"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = themeColor;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#e5e7eb';
+                  }}
+                >
+                  <span className="text-2xl font-black">0.5</span>
+                  <span className="text-sm text-gray-500">Porsiyon</span>
+                </button>
+                <button
+                  onClick={() => handlePortionSelect(1)}
+                  className="p-5 bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 rounded-2xl text-lg font-bold text-gray-800 cursor-pointer transition-all text-center flex flex-col items-center justify-center gap-2 hover:bg-gradient-to-br hover:from-gray-100 hover:to-gray-200 hover:-translate-y-0.5 hover:shadow-lg"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = themeColor;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#e5e7eb';
+                  }}
+                >
+                  <span className="text-2xl font-black">1</span>
+                  <span className="text-sm text-gray-500">Porsiyon</span>
+                </button>
+                <button
+                  onClick={() => handlePortionSelect(1.5)}
+                  className="p-5 bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 rounded-2xl text-lg font-bold text-gray-800 cursor-pointer transition-all text-center flex flex-col items-center justify-center gap-2 hover:bg-gradient-to-br hover:from-gray-100 hover:to-gray-200 hover:-translate-y-0.5 hover:shadow-lg"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = themeColor;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#e5e7eb';
+                  }}
+                >
+                  <span className="text-2xl font-black">1.5</span>
+                  <span className="text-sm text-gray-500">Porsiyon</span>
+                </button>
+                <button
+                  onClick={() => handlePortionSelect(2)}
+                  className="p-5 bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 rounded-2xl text-lg font-bold text-gray-800 cursor-pointer transition-all text-center flex flex-col items-center justify-center gap-2 hover:bg-gradient-to-br hover:from-gray-100 hover:to-gray-200 hover:-translate-y-0.5 hover:shadow-lg"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = themeColor;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#e5e7eb';
+                  }}
+                >
+                  <span className="text-2xl font-black">2</span>
+                  <span className="text-sm text-gray-500">Porsiyon</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeRoleSplash && <RoleSplash role={activeRoleSplash} />}
       <SaleSuccessToast
         info={saleSuccessInfo}
@@ -900,6 +1145,33 @@ function App() {
         onClose={() => setPrintToast(null)}
         autoHideDuration={printToast?.status === 'printing' ? null : 2500}
       />
+
+      {/* Error Toast */}
+      {errorToast && (
+        <div className="fixed inset-x-0 top-0 z-[2000] flex justify-center pointer-events-none pt-6">
+          <div className="bg-white/95 backdrop-blur-xl border-2 border-red-300 rounded-2xl shadow-2xl px-6 py-4 pointer-events-auto animate-toast-slide-down max-w-md mx-4">
+            <div className="flex items-center space-x-4">
+              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center shadow-lg ring-4 ring-red-100 flex-shrink-0 animate-scale-in">
+                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-1">Hata</p>
+                <p className="text-lg font-bold text-gray-900">{errorToast.message}</p>
+              </div>
+              <button
+                onClick={() => setErrorToast(null)}
+                className="text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {updateInfo && (
         <UpdateModal
           updateInfo={updateInfo}

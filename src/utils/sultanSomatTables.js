@@ -1,6 +1,9 @@
 // SULTAN SOMATI (TENANT-1766611377865) için özel salon bazlı masa yapısı
+// YAKA'S GRILL (TENANT-1766340222641) için özel direkt masa yapısı
 
 export const SULTAN_SOMATI_TENANT_ID = 'TENANT-1766611377865';
+export const YAKAS_GRILL_TENANT_ID = 'TENANT-1766340222641';
+export const YAKAS_GRILL_TABLE_COUNT = 30;
 
 // Salon yapısı tanımı
 export const SULTAN_SOMATI_SALONS = [
@@ -77,4 +80,30 @@ export function getTableNumberFromTableId(tableId) {
 export function getSalonById(salonId) {
   return SULTAN_SOMATI_SALONS.find(s => s.id === salonId) || null;
 }
+
+/**
+ * Tenant ID'nin Yaka's Grill olup olmadığını kontrol eder
+ */
+export function isYakasGrill(tenantId) {
+  return tenantId === YAKAS_GRILL_TENANT_ID;
+}
+
+/**
+ * Yaka's Grill için direkt masaları oluşturur (MASA-1, MASA-2, ...)
+ */
+export function generateYakasGrillTables() {
+  const tables = [];
+  
+  for (let i = 1; i <= YAKAS_GRILL_TABLE_COUNT; i++) {
+    tables.push({
+      id: `masa-${i}`,
+      number: i,
+      type: 'masa',
+      name: `MASA-${i}`
+    });
+  }
+  
+  return tables;
+}
+
 

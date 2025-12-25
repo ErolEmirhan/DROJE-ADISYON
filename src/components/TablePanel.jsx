@@ -2,11 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import TableOrderModal from './TableOrderModal';
 import TablePartialPaymentModal from './TablePartialPaymentModal';
 import TableTransferModal from './TableTransferModal';
-import { isSultanSomati, generateSultanSomatiTables, SULTAN_SOMATI_SALONS } from '../utils/sultanSomatTables';
+import { isSultanSomati, generateSultanSomatiTables, SULTAN_SOMATI_SALONS, isYakasGrill, generateYakasGrillTables } from '../utils/sultanSomatTables';
 
 const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, insideTablesCount = 20, outsideTablesCount = 20, packageTablesCount = 5 }) => {
   const isSultanSomatiMode = isSultanSomati(tenantId);
-  const [selectedType, setSelectedType] = useState(isSultanSomatiMode ? 'disari' : 'inside'); // Salon ID veya 'inside'/'outside'
+  const isYakasGrillMode = isYakasGrill(tenantId);
+  const [selectedType, setSelectedType] = useState(isSultanSomatiMode ? 'disari' : isYakasGrillMode ? 'salon' : 'inside'); // Salon ID, 'salon'/'package', veya 'inside'/'outside'
   const [tableOrders, setTableOrders] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [orderItems, setOrderItems] = useState([]);
@@ -14,6 +15,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
   const [showPartialPaymentModal, setShowPartialPaymentModal] = useState(false);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [errorToast, setErrorToast] = useState(null);
 
   // Debug: Masa sayılarını logla
   useEffect(() => {
@@ -38,9 +40,26 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
     return sultanSomatiTables.filter(table => table.type === selectedType);
   }, [isSultanSomatiMode, sultanSomatiTables, selectedType]);
 
+  // Yaka's Grill için direkt masalar (Salon)
+  const yakasGrillTables = useMemo(() => {
+    if (!isYakasGrillMode) return [];
+    return generateYakasGrillTables();
+  }, [isYakasGrillMode]);
+
+  // Yaka's Grill için paket masaları
+  const yakasGrillPackageTables = useMemo(() => {
+    if (!isYakasGrillMode) return [];
+    return Array.from({ length: 25 }, (_, i) => ({
+      id: `package-masa-${i + 1}`,
+      number: i + 1,
+      type: 'package',
+      name: `Paket ${i + 1}`
+    }));
+  }, [isYakasGrillMode]);
+
   // Normal mod için masalar
   const insideTables = useMemo(() => {
-    if (isSultanSomatiMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode) return [];
     console.log('🔄 insideTables oluşturuluyor, count:', insideTablesCount);
     return Array.from({ length: insideTablesCount }, (_, i) => ({
       id: `inside-${i + 1}`,
@@ -51,7 +70,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
   }, [insideTablesCount, isSultanSomatiMode]);
 
   const outsideTables = useMemo(() => {
-    if (isSultanSomatiMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode) return [];
     console.log('🔄 outsideTables oluşturuluyor, count:', outsideTablesCount);
     return Array.from({ length: outsideTablesCount }, (_, i) => ({
       id: `outside-${i + 1}`,
@@ -61,9 +80,9 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
     }));
   }, [outsideTablesCount, isSultanSomatiMode]);
 
-  // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı'nda yok
+  // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı ve Yaka's Grill'de yok
   const packageTables = useMemo(() => {
-    if (isSultanSomatiMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode) return [];
     return Array.from({ length: packageTablesCount }, (_, i) => ({
       id: `package-${selectedType}-${i + 1}`,
       number: i + 1,
@@ -172,6 +191,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       // Tüm masaları birleştir
       const allTables = isSultanSomatiMode 
         ? sultanSomatiTables 
+        : isYakasGrillMode
+        ? [...yakasGrillTables, ...yakasGrillPackageTables]
         : [...insideTables, ...outsideTables, ...packageTables];
       
       // Masayı bul
@@ -202,6 +223,24 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
             salonName: salon?.name || salonId,
             name: salon?.count === 1 ? salon.name : `${salon?.name || salonId} ${number}`,
             icon: salon?.icon
+          };
+        } else if (tableId.startsWith('masa-')) {
+          // Yaka's Grill masası
+          const number = parseInt(tableId.replace('masa-', ''));
+          table = {
+            id: tableId,
+            number: number,
+            type: 'masa',
+            name: `MASA-${number}`
+          };
+        } else if (tableId.startsWith('package-masa-')) {
+          // Yaka's Grill paket masası
+          const number = parseInt(tableId.replace('package-masa-', ''));
+          table = {
+            id: tableId,
+            number: number,
+            type: 'package',
+            name: `Paket ${number}`
           };
         } else if (tableId.startsWith('inside-')) {
           const number = parseInt(tableId.replace('inside-', ''));
@@ -319,11 +358,13 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
           setShowSuccessToast(false);
         }, 1000);
       } else {
-        alert('Masa sonlandırılamadı: ' + (result.error || 'Bilinmeyen hata'));
+        setErrorToast({ message: 'Masa sonlandırılamadı: ' + (result.error || 'Bilinmeyen hata') });
+        setTimeout(() => setErrorToast(null), 4000);
       }
     } catch (error) {
       console.error('Masa sonlandırılırken hata:', error);
-      alert('Masa sonlandırılamadı: ' + error.message);
+      setErrorToast({ message: 'Masa sonlandırılamadı: ' + error.message });
+      setTimeout(() => setErrorToast(null), 4000);
     }
   };
 
@@ -339,7 +380,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
     
     if (!window.electronAPI || !window.electronAPI.printAdisyon) {
       console.error('printAdisyon API mevcut değil. Lütfen uygulamayı yeniden başlatın.');
-      alert('Hata: Adisyon yazdırma API\'si yüklenemedi. Lütfen uygulamayı yeniden başlatın.');
+      setErrorToast({ message: 'Hata: Adisyon yazdırma API\'si yüklenemedi. Lütfen uygulamayı yeniden başlatın.' });
+      setTimeout(() => setErrorToast(null), 4000);
       return;
     }
     
@@ -376,18 +418,21 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
         // Başarı mesajı gösterilebilir
       } else {
         console.error('Adisyon yazdırılamadı:', result.error);
-        alert('Adisyon yazdırılamadı: ' + (result.error || 'Bilinmeyen hata'));
+        setErrorToast({ message: 'Adisyon yazdırılamadı: ' + (result.error || 'Bilinmeyen hata') });
+        setTimeout(() => setErrorToast(null), 4000);
       }
     } catch (error) {
       console.error('Adisyon yazdırılırken hata:', error);
-      alert('Adisyon yazdırılamadı: ' + error.message);
+      setErrorToast({ message: 'Adisyon yazdırılamadı: ' + error.message });
+      setTimeout(() => setErrorToast(null), 4000);
     }
   };
 
   // Masa aktar
   const handleTransferTable = async (sourceTableId, targetTableId) => {
     if (!window.electronAPI || !window.electronAPI.transferTableOrder) {
-      alert('Masa aktarımı şu anda kullanılamıyor');
+      setErrorToast({ message: 'Masa aktarımı şu anda kullanılamıyor' });
+      setTimeout(() => setErrorToast(null), 4000);
       return;
     }
 
@@ -407,11 +452,13 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
           setShowSuccessToast(false);
         }, 2000);
       } else {
-        alert('Masa aktarılamadı: ' + (result.error || 'Bilinmeyen hata'));
+        setErrorToast({ message: 'Masa aktarılamadı: ' + (result.error || 'Bilinmeyen hata') });
+        setTimeout(() => setErrorToast(null), 4000);
       }
     } catch (error) {
       console.error('Masa aktarılırken hata:', error);
-      alert('Masa aktarılamadı: ' + error.message);
+      setErrorToast({ message: 'Masa aktarılamadı: ' + error.message });
+      setTimeout(() => setErrorToast(null), 4000);
     }
   };
 
@@ -476,6 +523,41 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
             </button>
           ))}
         </div>
+      ) : isYakasGrillMode ? (
+        /* Yaka's Grill için Salon/Paket Seçimi */
+        <div className="flex justify-center gap-4 mb-4">
+          <button
+            onClick={() => setSelectedType('salon')}
+            className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 text-lg ${
+              selectedType === 'salon'
+                ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-lg transform scale-105'
+                : 'bg-blue-50 text-blue-600 hover:bg-blue-100 hover:text-blue-700'
+            }`}
+          >
+            <div className="flex items-center space-x-3">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+              </svg>
+              <span>Salon</span>
+            </div>
+          </button>
+          
+          <button
+            onClick={() => setSelectedType('package')}
+            className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 text-lg ${
+              selectedType === 'package'
+                ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-lg transform scale-105'
+                : 'bg-orange-50 text-orange-600 hover:bg-orange-100 hover:text-orange-700'
+            }`}
+          >
+            <div className="flex items-center space-x-3">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+              </svg>
+              <span>Paket</span>
+            </div>
+          </button>
+        </div>
       ) : (
         /* Normal Mod için Masa Tipi Seçimi */
         <div className="flex justify-center gap-4 mb-4">
@@ -515,10 +597,12 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
 
       {/* Masalar Grid */}
       <div className="grid grid-cols-10 gap-1 mb-6">
-        {(isSultanSomatiMode ? currentSalonTables : (selectedType === 'inside' ? insideTables : outsideTables)).map((table) => {
+        {(isSultanSomatiMode ? currentSalonTables : isYakasGrillMode ? (selectedType === 'salon' ? yakasGrillTables : yakasGrillPackageTables) : (selectedType === 'inside' ? insideTables : outsideTables)).map((table) => {
           const hasOrder = getTableOrder(table.id);
-          const isOutside = !isSultanSomatiMode && table.type === 'outside';
+          const isOutside = !isSultanSomatiMode && !isYakasGrillMode && table.type === 'outside';
           const isSultanTable = isSultanSomatiMode && table.salonId;
+          const isYakasGrillTable = isYakasGrillMode && table.type === 'masa';
+          const isYakasGrillPackageTable = isYakasGrillMode && table.type === 'package';
           
           return (
             <button
@@ -531,6 +615,12 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                   : isSultanTable
                   // Sultan Somatı salon masaları – mor/pembe tonlar
                   ? 'bg-gradient-to-br from-purple-50 to-pink-100 border-purple-300 hover:border-purple-400'
+                  : isYakasGrillTable
+                  // Yaka's Grill masaları – mavi/cyan tonlar
+                  ? 'bg-gradient-to-br from-blue-50 to-cyan-100 border-blue-300 hover:border-blue-400'
+                  : isYakasGrillPackageTable
+                  // Yaka's Grill paket masaları – turuncu/amber tonlar
+                  ? 'bg-gradient-to-br from-orange-50 to-amber-100 border-orange-300 hover:border-orange-400'
                   : isOutside
                   // Dışarı boş masalar – soft sarı
                   ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-300 hover:border-amber-400'
@@ -545,6 +635,10 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                     ? 'bg-gradient-to-br from-red-600 to-red-900'
                     : isSultanTable
                     ? 'bg-gradient-to-br from-purple-200 to-pink-300'
+                    : isYakasGrillTable
+                    ? 'bg-gradient-to-br from-blue-200 to-cyan-300'
+                    : isYakasGrillPackageTable
+                    ? 'bg-gradient-to-br from-orange-200 to-amber-300'
                     : isOutside
                     ? 'bg-gradient-to-br from-amber-200 to-amber-300'
                     : 'bg-gradient-to-br from-pink-100 to-pink-200'
@@ -556,6 +650,14 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                     </svg>
                   ) : isSultanTable ? (
                     <span className="text-lg">{table.icon}</span>
+                  ) : isYakasGrillTable ? (
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                    </svg>
+                  ) : isYakasGrillPackageTable ? (
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                    </svg>
                   ) : (
                     <svg className={`w-5 h-5 ${isOutside ? 'text-white' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
@@ -567,6 +669,10 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                     ? 'text-red-50'
                     : isSultanTable
                     ? 'text-purple-900'
+                    : isYakasGrillTable
+                    ? 'text-blue-900'
+                    : isYakasGrillPackageTable
+                    ? 'text-orange-900'
                     : isOutside
                     ? 'text-amber-900'
                     : 'text-pink-900'
@@ -577,6 +683,10 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                       ? 'bg-red-900 text-red-100'
                       : isSultanTable
                       ? 'bg-purple-100 text-purple-800'
+                      : isYakasGrillTable
+                      ? 'bg-blue-100 text-blue-800'
+                      : isYakasGrillPackageTable
+                      ? 'bg-orange-100 text-orange-800'
                       : isOutside
                       ? 'bg-amber-100 text-amber-800'
                       : 'bg-pink-100 text-pink-800'
@@ -594,7 +704,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       </div>
 
       {/* PAKET Başlığı - Sadece normal mod için */}
-      {!isSultanSomatiMode && (
+      {!isSultanSomatiMode && !isYakasGrillMode && (
         <div className="mb-6 mt-8">
           <div className="flex items-center justify-center mb-4">
             <div className="flex items-center space-x-3 px-8 py-3 bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 rounded-2xl shadow-xl transform hover:scale-105 transition-all duration-300">
@@ -743,6 +853,33 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                 </svg>
               </div>
               <p className="text-xl font-bold text-gray-900">Masa başarıyla sonlandırıldı</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error Toast */}
+      {errorToast && (
+        <div className="fixed inset-x-0 top-0 z-[1400] flex justify-center pointer-events-none pt-8">
+          <div className="bg-white/98 backdrop-blur-xl border-2 border-red-300 rounded-3xl shadow-2xl px-8 py-5 pointer-events-auto animate-fade-in transform transition-all duration-300 scale-100 max-w-md mx-4">
+            <div className="flex items-center space-x-4">
+              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center shadow-xl ring-4 ring-red-100 flex-shrink-0">
+                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-1">Hata</p>
+                <p className="text-lg font-bold text-gray-900">{errorToast.message}</p>
+              </div>
+              <button
+                onClick={() => setErrorToast(null)}
+                className="text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
           </div>
         </div>

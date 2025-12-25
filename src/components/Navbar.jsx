@@ -31,6 +31,10 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
   const [newPassword, setNewPassword] = useState('');
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [showErrorToast, setShowErrorToast] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState({ message: '', onConfirm: null, onCancel: null });
   const [showStaffAccountsModal, setShowStaffAccountsModal] = useState(false);
   const [staffAccounts, setStaffAccounts] = useState([]);
   const [editingAccount, setEditingAccount] = useState(null);
@@ -85,11 +89,11 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
         setQrCode(result.qrCode);
         setServerURL(result.url);
       } else {
-        alert('QR kod oluşturulamadı: ' + (result?.error || 'Bilinmeyen hata'));
+        showToast('QR kod oluşturulamadı: ' + (result?.error || 'Bilinmeyen hata'), 'error');
       }
     } catch (error) {
       console.error('QR kod oluşturma hatası:', error);
-      alert('QR kod oluşturulamadı');
+      showToast('QR kod oluşturulamadı', 'error');
     }
   };
 
@@ -100,6 +104,34 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
     } catch (error) {
       console.error('Personel yükleme hatası:', error);
     }
+  };
+
+  // Uygulama içi toast ve modal helper fonksiyonları
+  const showToast = (message, type = 'success') => {
+    if (type === 'success') {
+      setSuccessMessage(message);
+      setShowSuccessToast(true);
+      setTimeout(() => setShowSuccessToast(false), 3000);
+    } else {
+      setErrorMessage(message);
+      setShowErrorToast(true);
+      setTimeout(() => setShowErrorToast(false), 4000);
+    }
+  };
+
+  const showConfirm = (message, onConfirm, onCancel = null) => {
+    setConfirmConfig({
+      message,
+      onConfirm: () => {
+        setShowConfirmModal(false);
+        if (onConfirm) onConfirm();
+      },
+      onCancel: () => {
+        setShowConfirmModal(false);
+        if (onCancel) onCancel();
+      }
+    });
+    setShowConfirmModal(true);
   };
 
   const loadStaffAccounts = async () => {
@@ -132,7 +164,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
 
   const handleAddAccountTransaction = async () => {
     if (!editingAccount || !accountAmount || parseFloat(accountAmount) <= 0) {
-      alert('Lütfen geçerli bir tutar girin');
+      showToast('Lütfen geçerli bir tutar girin', 'error');
       return;
     }
 
@@ -166,7 +198,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
           setShowSuccessToast(true);
           setTimeout(() => setShowSuccessToast(false), 3000);
         } else {
-          alert('Hata: ' + (result.error || 'Bilinmeyen hata'));
+          showToast('Hata: ' + (result.error || 'Bilinmeyen hata'), 'error');
         }
       } else {
         // Fallback: Local state güncelle
@@ -190,13 +222,13 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
       }
     } catch (error) {
       console.error('Hesap işlemi ekleme hatası:', error);
-      alert('İşlem eklenemedi: ' + error.message);
+      showToast('İşlem eklenemedi: ' + error.message, 'error');
     }
   };
 
   const handleAddStaff = async () => {
     if (!newStaff.name || !newStaff.surname || !newStaff.password) {
-      alert('Lütfen tüm alanları doldurun');
+      showToast('Lütfen tüm alanları doldurun', 'error');
       return;
     }
 
@@ -213,11 +245,11 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
           setShowSuccessToast(false);
         }, 3000);
       } else {
-        alert('Personel eklenemedi: ' + (result?.error || 'Bilinmeyen hata'));
+        showToast('Personel eklenemedi: ' + (result?.error || 'Bilinmeyen hata'), 'error');
       }
     } catch (error) {
       console.error('Personel ekleme hatası:', error);
-      alert('Personel eklenemedi');
+      showToast('Personel eklenemedi', 'error');
     }
   };
 
@@ -227,24 +259,24 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
       if (result && result.success) {
         loadStaff();
         setDeleteConfirm(null);
-        alert('Personel başarıyla silindi');
+        showToast('Personel başarıyla silindi', 'success');
       } else {
-        alert('Personel silinemedi: ' + (result?.error || 'Bilinmeyen hata'));
+        showToast('Personel silinemedi: ' + (result?.error || 'Bilinmeyen hata'), 'error');
       }
     } catch (error) {
       console.error('Personel silme hatası:', error);
-      alert('Personel silinemedi');
+      showToast('Personel silinemedi', 'error');
     }
   };
 
   const handleUpdatePassword = async () => {
     if (!editingStaff) {
-      alert('Personel seçilmedi');
+      showToast('Personel seçilmedi', 'error');
       return;
     }
 
     if (!newPassword || newPassword.trim().length < 4) {
-      alert('Şifre en az 4 karakter olmalıdır');
+      showToast('Şifre en az 4 karakter olmalıdır', 'error');
       return;
     }
 
@@ -266,11 +298,11 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
       } else {
         const errorMsg = result?.error || 'Bilinmeyen hata';
         console.error('Şifre güncelleme başarısız:', errorMsg);
-        alert('Şifre güncellenemedi: ' + errorMsg);
+        showToast('Şifre güncellenemedi: ' + errorMsg, 'error');
       }
     } catch (error) {
       console.error('Şifre güncelleme hatası:', error);
-      alert('Şifre güncellenemedi: ' + (error.message || 'Bilinmeyen hata'));
+      showToast('Şifre güncellenemedi: ' + (error.message || 'Bilinmeyen hata'), 'error');
     }
   };
 
@@ -293,7 +325,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
         </div>
         <div>
           <h1 className="text-lg font-bold bg-clip-text text-transparent" style={{ backgroundImage: theme.gradient.main }}>{businessName} Satış Sistemi</h1>
-          <p className="text-xs text-gray-500 font-medium">v2.4.5 DROJE SYSTEMS</p>
+          <p className="text-xs text-gray-500 font-medium">v2.4.6 DROJE SYSTEMS</p>
         </div>
         <div className="ml-4 pl-4 border-l border-gray-300">
           <DateTimeDisplay />
@@ -676,13 +708,13 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
                                   const result = await window.electronAPI.setStaffManager(staff.id, !staff.is_manager);
                                   if (result.success) {
                                     await loadStaff();
-                                    alert(staff.is_manager ? 'Müdürlük kaldırıldı' : 'Müdür olarak atandı');
+                                    showToast(staff.is_manager ? 'Müdürlük kaldırıldı' : 'Müdür olarak atandı', 'success');
                                   } else {
-                                    alert('Hata: ' + (result.error || 'Bilinmeyen hata'));
+                                    showToast('Hata: ' + (result.error || 'Bilinmeyen hata'), 'error');
                                   }
                                 } catch (error) {
                                   console.error('Müdür atama hatası:', error);
-                                  alert('Müdür atanamadı: ' + error.message);
+                                  showToast('Müdür atanamadı: ' + error.message, 'error');
                                 }
                               }}
                               className={`flex-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 min-w-[80px] ${
@@ -1122,27 +1154,28 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
                               </div>
                             </button>
                             <button
-                              onClick={async () => {
-                                if (window.confirm(`${account.staffName} için bakiyeyi sıfırlamak istediğinize emin misiniz? Tüm işlem geçmişi silinecektir.`)) {
-                                  try {
-                                    if (window.electronAPI && window.electronAPI.resetStaffAccount) {
-                                      const result = await window.electronAPI.resetStaffAccount(account.staffId);
-                                      if (result.success) {
-                                        await loadStaffAccounts();
-                                        setSuccessMessage(`${account.staffName} için bakiye sıfırlandı`);
-                                        setShowSuccessToast(true);
-                                        setTimeout(() => setShowSuccessToast(false), 3000);
+                              onClick={() => {
+                                showConfirm(
+                                  `${account.staffName} için bakiyeyi sıfırlamak istediğinize emin misiniz? Tüm işlem geçmişi silinecektir.`,
+                                  async () => {
+                                    try {
+                                      if (window.electronAPI && window.electronAPI.resetStaffAccount) {
+                                        const result = await window.electronAPI.resetStaffAccount(account.staffId);
+                                        if (result.success) {
+                                          await loadStaffAccounts();
+                                          showToast(`${account.staffName} için bakiye sıfırlandı`, 'success');
+                                        } else {
+                                          showToast('Hata: ' + (result.error || 'Bilinmeyen hata'), 'error');
+                                        }
                                       } else {
-                                        alert('Hata: ' + (result.error || 'Bilinmeyen hata'));
+                                        showToast('Sıfırlama özelliği mevcut değil', 'error');
                                       }
-                                    } else {
-                                      alert('Sıfırlama özelliği mevcut değil');
+                                    } catch (error) {
+                                      console.error('Bakiye sıfırlama hatası:', error);
+                                      showToast('Bakiye sıfırlanamadı: ' + error.message, 'error');
                                     }
-                                  } catch (error) {
-                                    console.error('Bakiye sıfırlama hatası:', error);
-                                    alert('Bakiye sıfırlanamadı: ' + error.message);
                                   }
-                                }
+                                );
                               }}
                               className="px-4 py-2.5 bg-gradient-to-r from-gray-600 to-gray-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 text-sm"
                             >
@@ -1189,6 +1222,73 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )
+      )}
+
+      {/* Modern Error Toast */}
+      {showErrorToast && (
+        createPortal(
+          <div className="fixed inset-x-0 top-0 z-[2000] flex justify-center pointer-events-none pt-6">
+            <div className="bg-white/95 backdrop-blur-xl border-2 border-red-300 rounded-2xl shadow-2xl px-6 py-4 pointer-events-auto animate-toast-slide-down max-w-md mx-4">
+              <div className="flex items-center space-x-4">
+                <div className="w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center shadow-lg ring-4 ring-red-100 flex-shrink-0 animate-scale-in">
+                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-1">Hata</p>
+                  <p className="text-lg font-bold text-gray-900">{errorMessage}</p>
+                </div>
+                <button
+                  onClick={() => setShowErrorToast(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )
+      )}
+
+      {/* Confirm Modal */}
+      {showConfirmModal && (
+        createPortal(
+          <div className="fixed inset-0 z-[2000] flex items-center justify-center pointer-events-none">
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm pointer-events-auto" onClick={() => setShowConfirmModal(false)}></div>
+            <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 pointer-events-auto animate-scale-in">
+              <div className="p-6">
+                <div className="flex items-center justify-center mb-4">
+                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg">
+                    <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 text-center mb-3">Onay Gerekli</h3>
+                <p className="text-gray-700 text-center mb-6">{confirmConfig.message}</p>
+                <div className="flex space-x-3">
+                  <button
+                    onClick={confirmConfig.onCancel || (() => setShowConfirmModal(false))}
+                    className="flex-1 px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-semibold transition-all duration-200"
+                  >
+                    İptal
+                  </button>
+                  <button
+                    onClick={confirmConfig.onConfirm}
+                    className="flex-1 px-6 py-3 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-xl font-semibold transition-all duration-200 shadow-md"
+                  >
+                    Onayla
+                  </button>
+                </div>
               </div>
             </div>
           </div>,

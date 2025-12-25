@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { getThemeColors } from '../utils/themeUtils';
+import { isYakasGrill } from '../utils/sultanSomatTables';
 
-const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, onSaveToTable, totalAmount, selectedTable, orderNote, onOrderNoteChange, onToggleGift, onRequestAdisyon, themeColor = '#f97316' }) => {
+const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, onSaveToTable, totalAmount, selectedTable, orderNote, onOrderNoteChange, onToggleGift, onRequestAdisyon, themeColor = '#f97316', tenantId = null }) => {
   // Tema renklerini hesapla
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
+  const isYakasGrillMode = tenantId && isYakasGrill(tenantId);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [noteText, setNoteText] = useState(orderNote || '');
   const textareaRef = useRef(null);
@@ -81,6 +83,19 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                       </span>
                     )}
                   </div>
+                  {/* Yaka's Grill için soğan bilgisi */}
+                  {isYakasGrillMode && item.onionOption && (
+                    <div className="text-xs font-bold mb-1" style={{ color: themeColor }}>
+                      {item.onionOption}
+                    </div>
+                  )}
+                  
+                  {/* Yaka's Grill için porsiyon bilgisi */}
+                  {isYakasGrillMode && item.portion && (
+                    <div className="text-xs font-bold mb-1" style={{ color: themeColor }}>
+                      {item.portion} Porsiyon
+                    </div>
+                  )}
                   
                   {/* Alt Satır - Birim Fiyat ve Miktar */}
                   <div className="flex items-center gap-4">
@@ -89,7 +104,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                     {/* Miktar Kontrolü */}
                     <div className="flex items-center gap-1 bg-gray-50 rounded-md p-0.5 border border-gray-200/60">
                       <button
-                        onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
+                        onClick={() => onUpdateQuantity(item.id, item.quantity - 1, item.onionOption, item.portion)}
                         className="w-7 h-7 bg-white hover:bg-gray-100 active:bg-gray-200 border border-gray-200 hover:border-gray-300 rounded flex items-center justify-center transition-all duration-150 active:scale-95"
                         title="Azalt"
                       >
@@ -105,7 +120,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                       </div>
                       
                       <button
-                        onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
+                        onClick={() => onUpdateQuantity(item.id, item.quantity + 1, item.onionOption, item.portion)}
                         className="w-7 h-7 bg-white hover:bg-gray-100 active:bg-gray-200 border border-gray-200 hover:border-gray-300 rounded flex items-center justify-center transition-all duration-150 active:scale-95"
                         title="Artır"
                       >
@@ -143,7 +158,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
 
                   {/* Sil Butonu */}
                   <button
-                    onClick={() => onRemoveItem(item.id)}
+                    onClick={() => onRemoveItem(item.id, item.onionOption, item.portion)}
                     className="w-8 h-8 bg-red-50 hover:bg-red-100 active:bg-red-200 border border-red-200 hover:border-red-300 rounded-md flex items-center justify-center transition-all duration-150 active:scale-95 shadow-sm"
                     title="Ürünü Kaldır"
                   >
