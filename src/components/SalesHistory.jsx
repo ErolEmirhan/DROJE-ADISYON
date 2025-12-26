@@ -1069,16 +1069,7 @@ const SalesHistory = ({ themeColor = '#f97316' }) => {
             <div>
               <h2 className="text-3xl font-bold text-gray-900 mb-4">Satış Detayları</h2>
               <p className="text-lg text-gray-700 leading-relaxed mb-6">
-                Detaylı satış raporları, gelişmiş analizler ve kapsamlı raporlar için lütfen{' '}
-                <a 
-                  href="https://makara-16344.web.app" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="font-semibold text-blue-600 hover:text-blue-700 underline decoration-2 underline-offset-2 transition-colors"
-                >
-                  admin dashboard
-                </a>
-                {' '}üzerinden giriş yapınız.
+                Detaylı satış raporları, gelişmiş analizler ve kapsamlı raporlar için lütfen admin dashboard üzerinden giriş yapınız.
               </p>
               <p className="text-base text-gray-600 mb-6">
                 Dashboard'da tarih bazlı filtreleme, ödeme yöntemi analizleri, personel performans raporları ve daha fazlasını bulabilirsiniz.

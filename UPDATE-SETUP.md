@@ -59,6 +59,8 @@ npm run build:win
 ```
 
 #### c) GitHub'a Publish Edin
+
+**Otomatik Publish (Önerilen):**
 ```bash
 npm run build:win -- --publish always
 ```
@@ -67,6 +69,27 @@ Bu komut:
 - Build alır
 - GitHub Release oluşturur
 - `.exe` ve `latest.yml` dosyalarını yükler
+
+**Manuel Publish:**
+Eğer manuel olarak GitHub releases'a yüklüyorsanız:
+
+1. Build aldıktan sonra `release` klasöründe şu dosyalar oluşur:
+   - `DROJE-POS-Setup-${version}.exe` (örn: `DROJE-POS-Setup-2.4.7.exe`)
+   - `latest.yml` (⚠️ **ÇOK ÖNEMLİ - Bu dosya mutlaka yüklenmeli!**)
+
+2. GitHub'da yeni bir release oluşturun:
+   - https://github.com/ErolEmirhan/DROJE-ADISYON/releases/new
+   - Tag: `v${version}` (örn: `v2.4.7`)
+   - Title: `v${version}` veya release notları
+   - Description: Release notlarınızı yazın
+
+3. **MUTLAKA şu 2 dosyayı yükleyin:**
+   - ✅ `DROJE-POS-Setup-${version}.exe`
+   - ✅ `latest.yml` (Bu dosya olmadan güncelleme kontrolü çalışmaz!)
+
+4. "Publish release" butonuna tıklayın
+
+**⚠️ ÖNEMLİ:** `latest.yml` dosyası olmadan electron-updater güncelleme kontrolü yapamaz!
 
 ### 5. Sonraki Güncellemeler İçin
 

@@ -3774,15 +3774,21 @@ autoUpdater.on('checking-for-update', () => {
 autoUpdater.on('update-available', (info) => {
   const msg = `Yeni güncelleme mevcut: ${info.version} - Kullanıcıdan indirme onayı bekleniyor...`;
   writeLog(msg);
-  console.log('📥 Yeni güncelleme bulundu:', info.version);
+  console.log('📥 Yeni güncelleme bulundu:', info);
+  console.log('📥 Güncelleme detayları:', JSON.stringify(info, null, 2));
+  
   // Tüm pencerelere bildir (launcher dahil)
   if (mainWindow) {
     mainWindow.webContents.send('update-available', info);
+    console.log('✅ Ana pencereye güncelleme bildirimi gönderildi');
   }
   // Tüm BrowserWindow'lara gönder (launcher için)
-  BrowserWindow.getAllWindows().forEach(win => {
+  const windows = BrowserWindow.getAllWindows();
+  console.log(`📤 ${windows.length} pencere bulundu, güncelleme bildirimi gönderiliyor...`);
+  windows.forEach((win, index) => {
     if (win && !win.isDestroyed()) {
       win.webContents.send('update-available', info);
+      console.log(`✅ Pencere ${index + 1}'e güncelleme bildirimi gönderildi`);
     }
   });
 });
@@ -3792,10 +3798,15 @@ autoUpdater.on('update-not-available', (info) => {
   const msg = `Güncelleme yok - Mevcut versiyon: ${currentVersion}, En son sürüm: ${info.version || currentVersion}`;
   writeLog(msg);
   console.log('✅ En güncel versiyonu kullanıyorsunuz:', currentVersion);
+  console.log('📋 Güncelleme bilgisi:', JSON.stringify(info, null, 2));
+  
   // Tüm pencerelere bildir (launcher dahil)
-  BrowserWindow.getAllWindows().forEach(win => {
+  const windows = BrowserWindow.getAllWindows();
+  console.log(`📤 ${windows.length} pencere bulundu, güncelleme yok bildirimi gönderiliyor...`);
+  windows.forEach((win, index) => {
     if (win && !win.isDestroyed()) {
       win.webContents.send('update-not-available', info);
+      console.log(`✅ Pencere ${index + 1}'e güncelleme yok bildirimi gönderildi`);
     }
   });
 });
@@ -3803,9 +3814,18 @@ autoUpdater.on('update-not-available', (info) => {
 autoUpdater.on('error', (err) => {
   const msg = `Güncelleme hatası: ${err.message || err}`;
   writeLog(msg);
+  console.error('❌ Güncelleme hatası:', err);
+  
+  // Tüm pencerelere bildir (launcher dahil)
   if (mainWindow) {
-    mainWindow.webContents.send('update-error', err.message);
+    mainWindow.webContents.send('update-error', err.message || err.toString());
   }
+  // Tüm BrowserWindow'lara gönder (launcher için)
+  BrowserWindow.getAllWindows().forEach(win => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('update-error', err.message || err.toString());
+    }
+  });
 });
 
 autoUpdater.on('download-progress', (progressObj) => {
@@ -3842,13 +3862,19 @@ autoUpdater.on('update-downloaded', (info) => {
 // IPC Handlers for update
 ipcMain.handle('check-for-updates', async () => {
   if (!app.isPackaged) {
+    writeLog('Development modunda güncelleme kontrol edilemez');
     return { available: false, message: 'Development modunda güncelleme kontrol edilemez' };
   }
   try {
-    await autoUpdater.checkForUpdates();
+    writeLog('Güncelleme kontrolü başlatılıyor...');
+    const result = await autoUpdater.checkForUpdates();
+    writeLog(`Güncelleme kontrolü tamamlandı. Result: ${JSON.stringify(result)}`);
     return { success: true };
   } catch (error) {
-    return { success: false, error: error.message };
+    const errorMsg = error.message || error.toString();
+    writeLog(`Güncelleme kontrolü hatası: ${errorMsg}`);
+    console.error('Güncelleme kontrolü hatası:', error);
+    return { success: false, error: errorMsg };
   }
 });
 

@@ -38,17 +38,32 @@ const LauncherClient = ({ onLogin }) => {
 
   // Güncelleme kontrolü ve event listener'ları
   useEffect(() => {
+    // Her durumda güncelleme kontrolü başlat (developer modunda da)
+    setIsCheckingUpdate(true);
+    
+    // Fallback timeout - eğer event listener'lar tetiklenmezse 5 saniye sonra kontrolü bitir
+    const fallbackTimeout = setTimeout(() => {
+      console.log('Güncelleme kontrolü timeout - kontrol bitiriliyor');
+      setIsCheckingUpdate(false);
+    }, 5000); // 5 saniye maksimum bekleme süresi
+    
     if (window.electronAPI) {
-      // Güncelleme kontrolü yap
-      setIsCheckingUpdate(true);
+      // Electron API varsa gerçek güncelleme kontrolü yap
       window.electronAPI.checkForUpdates().then(() => {
-        setIsCheckingUpdate(false);
-      }).catch(() => {
+        // Promise resolve olsa bile event listener'lar sonucu bildirecek
+        // Burada direkt false yapmıyoruz, event listener'lar yapacak
+        console.log('Güncelleme kontrolü başlatıldı, event listener\'lar bekleniyor...');
+      }).catch((error) => {
+        console.error('Güncelleme kontrolü hatası:', error);
+        // Hata durumunda kontrolü bitir ve timeout'u temizle
+        clearTimeout(fallbackTimeout);
         setIsCheckingUpdate(false);
       });
 
       // Güncelleme event listener'ları
       window.electronAPI.onUpdateAvailable((info) => {
+        clearTimeout(fallbackTimeout);
+        console.log('✅ Güncelleme mevcut!', info);
         setUpdateInfo({ ...info, downloaded: false });
         setIsCheckingUpdate(false);
       });
@@ -64,6 +79,7 @@ const LauncherClient = ({ onLogin }) => {
       });
 
       window.electronAPI.onUpdateError((error) => {
+        clearTimeout(fallbackTimeout);
         console.error('Güncelleme hatası:', error);
         setIsCheckingUpdate(false);
         setIsDownloading(false);
@@ -71,10 +87,30 @@ const LauncherClient = ({ onLogin }) => {
 
       // Güncelleme yoksa kontrolü bitir
       window.electronAPI.onUpdateNotAvailable((info) => {
+        clearTimeout(fallbackTimeout);
+        console.log('Güncelleme yok - En güncel versiyon kullanılıyor:', info);
         setIsCheckingUpdate(false);
         setUpdateInfo(null);
       });
+    } else {
+      // Developer modunda veya electronAPI yoksa, kısa bir süre sonra kontrolü bitir
+      // Bu, developer modunda da butonun bir süre disabled kalmasını sağlar
+      clearTimeout(fallbackTimeout);
+      const devTimeout = setTimeout(() => {
+        setIsCheckingUpdate(false);
+        console.log('Developer modu: Güncelleme kontrolü atlandı');
+      }, 2000); // 2 saniye bekle
+      
+      return () => {
+        clearTimeout(devTimeout);
+        clearTimeout(fallbackTimeout);
+      };
     }
+    
+    // Cleanup function
+    return () => {
+      clearTimeout(fallbackTimeout);
+    };
   }, []);
 
   const handleDownloadUpdate = async () => {
@@ -241,15 +277,25 @@ const LauncherClient = ({ onLogin }) => {
 
                 {updateDownloadProgress && !updateInfo.downloaded && (
                   <div className="update-progress-container">
+                    <div className="update-progress-header">
+                      <span className="update-progress-label">İndiriliyor...</span>
+                      <span className="update-progress-percent">{Math.round(updateDownloadProgress.percent)}%</span>
+                    </div>
                     <div className="update-progress-bar">
                       <div 
                         className="update-progress-fill"
                         style={{ width: `${updateDownloadProgress.percent}%` }}
-                      ></div>
+                      >
+                        <div className="update-progress-shine"></div>
+                      </div>
                     </div>
-                    <div className="update-progress-info">
-                      <span>{Math.round(updateDownloadProgress.percent)}%</span>
-                      <span>{Math.round(updateDownloadProgress.transferred / 1024 / 1024)} MB / {Math.round(updateDownloadProgress.total / 1024 / 1024)} MB</span>
+                    <div className="update-progress-details">
+                      <span className="update-progress-size">
+                        {Math.round(updateDownloadProgress.transferred / 1024 / 1024 * 10) / 10} MB / {Math.round(updateDownloadProgress.total / 1024 / 1024 * 10) / 10} MB
+                      </span>
+                      <span className="update-progress-speed">
+                        {updateDownloadProgress.bytesPerSecond ? `${Math.round(updateDownloadProgress.bytesPerSecond / 1024)} KB/s` : ''}
+                      </span>
                     </div>
                   </div>
                 )}
@@ -472,11 +518,16 @@ const LauncherClient = ({ onLogin }) => {
 
               <button
                 type="submit"
-                className={`login-button ${isLoading ? 'loading' : ''}`}
+                className={`login-button ${isLoading ? 'loading' : ''} ${isCheckingUpdate ? 'checking-update' : ''}`}
                 disabled={isLoading || !tenantId.trim() || isCheckingUpdate || (updateInfo && !updateInfo.downloaded) || (updateInfo && updateInfo.downloaded)}
               >
                 <div className="button-content">
-                  {isLoading ? (
+                  {isCheckingUpdate ? (
+                    <>
+                      <span className="button-spinner"></span>
+                      <span>Güncelleme denetleniyor...</span>
+                    </>
+                  ) : isLoading ? (
                     <>
                       <span className="button-spinner"></span>
                       <span>Bağlanıyor...</span>
@@ -504,6 +555,7 @@ const LauncherClient = ({ onLogin }) => {
                   )}
                 </div>
                 <div className="button-shine"></div>
+                {isCheckingUpdate && <div className="button-pulse"></div>}
               </button>
             </form>
 

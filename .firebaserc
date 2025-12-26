@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "makara-16344"
-  }
+  },
+  "targets": {
+    "makara-16344": {
+      "hosting": {
+        "yakasgrll": [
+          "yakasgrll"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
