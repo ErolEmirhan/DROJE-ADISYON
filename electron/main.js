@@ -8345,8 +8345,10 @@ function generateMobileHTML(serverURL) {
       const savedStaff = getStaffSession();
       if (savedStaff) {
         currentStaff = savedStaff;
-        document.getElementById('pinSection').style.display = 'none';
-        document.getElementById('mainSection').style.display = 'block';
+        const pinSection = document.getElementById('pinSection');
+        if (pinSection) pinSection.style.display = 'none';
+        const mainSection = document.getElementById('mainSection');
+        if (mainSection) mainSection.style.display = 'block';
         // staffName ve staffInfo elementleri kaldırıldı, null kontrolü yap
         const staffNameEl = document.getElementById('staffName');
         if (staffNameEl) {
@@ -8358,8 +8360,10 @@ function generateMobileHTML(serverURL) {
         }
         // Sultan Somatı ve Yaka's Grill için direkt masa ekranını göster, normal mod için seçim ekranını göster
         if (isSultanSomatiMode) {
-          document.getElementById('tableSelection').style.display = 'block';
-          document.getElementById('cart').style.display = 'none'; // Ana sayfada cart gizli
+          const tableSelection = document.getElementById('tableSelection');
+          if (tableSelection) tableSelection.style.display = 'block';
+          const cart = document.getElementById('cart');
+          if (cart) cart.style.display = 'none'; // Ana sayfada cart gizli
           // İlk salonu otomatik seç
           if (sultanSomatiSalons.length > 0) {
             currentTableType = sultanSomatiSalons[0].id;
@@ -8371,11 +8375,15 @@ function generateMobileHTML(serverURL) {
             }
           }
         } else if (isYakasGrillMode) {
-          document.getElementById('tableSelection').style.display = 'block';
-          document.getElementById('cart').style.display = 'block';
+          const tableSelection = document.getElementById('tableSelection');
+          if (tableSelection) tableSelection.style.display = 'block';
+          const cart = document.getElementById('cart');
+          if (cart) cart.style.display = 'block';
         } else {
-          document.getElementById('tableTypeSelection').style.display = 'flex';
-          document.getElementById('cart').style.display = 'none';
+          const tableTypeSelection = document.getElementById('tableTypeSelection');
+          if (tableTypeSelection) tableTypeSelection.style.display = 'flex';
+          const cart = document.getElementById('cart');
+          if (cart) cart.style.display = 'none';
         }
         loadData();
         initWebSocket();
@@ -8409,14 +8417,19 @@ function generateMobileHTML(serverURL) {
           errorDiv.classList.remove('show');
           
           // Splash screen göster
-          document.getElementById('pinSection').style.display = 'none';
-          document.getElementById('splashScreen').style.display = 'flex';
-          document.getElementById('splashStaffName').textContent = currentStaff.name + ' ' + currentStaff.surname;
+          const pinSection = document.getElementById('pinSection');
+          if (pinSection) pinSection.style.display = 'none';
+          const splashScreen = document.getElementById('splashScreen');
+          if (splashScreen) splashScreen.style.display = 'flex';
+          const splashStaffName = document.getElementById('splashStaffName');
+          if (splashStaffName) splashStaffName.textContent = currentStaff.name + ' ' + currentStaff.surname;
           
           // 2 saniye sonra ana ekrana geç
           setTimeout(() => {
-            document.getElementById('splashScreen').style.display = 'none';
-            document.getElementById('mainSection').style.display = 'block';
+            const splashScreenEl = document.getElementById('splashScreen');
+            if (splashScreenEl) splashScreenEl.style.display = 'none';
+            const mainSection = document.getElementById('mainSection');
+            if (mainSection) mainSection.style.display = 'block';
             // staffName ve staffInfo elementleri kaldırıldı, null kontrolü yap
             const staffNameEl = document.getElementById('staffName');
             if (staffNameEl) {
@@ -8428,8 +8441,10 @@ function generateMobileHTML(serverURL) {
             }
             // Sultan Somatı ve Yaka's Grill için direkt masa ekranını göster, normal mod için seçim ekranını göster
             if (isSultanSomatiMode) {
-              document.getElementById('tableSelection').style.display = 'block';
-              document.getElementById('cart').style.display = 'block';
+              const tableSelection = document.getElementById('tableSelection');
+              if (tableSelection) tableSelection.style.display = 'block';
+              const cart = document.getElementById('cart');
+              if (cart) cart.style.display = 'block';
               // İlk salonu otomatik seç
               if (sultanSomatiSalons.length > 0) {
                 currentTableType = sultanSomatiSalons[0].id;
@@ -8441,11 +8456,15 @@ function generateMobileHTML(serverURL) {
                 }
               }
             } else if (isYakasGrillMode) {
-              document.getElementById('tableSelection').style.display = 'block';
-              document.getElementById('cart').style.display = 'block';
+              const tableSelection = document.getElementById('tableSelection');
+              if (tableSelection) tableSelection.style.display = 'block';
+              const cart = document.getElementById('cart');
+              if (cart) cart.style.display = 'block';
             } else {
-              document.getElementById('tableTypeSelection').style.display = 'flex';
-              document.getElementById('cart').style.display = 'none';
+              const tableTypeSelection = document.getElementById('tableTypeSelection');
+              if (tableTypeSelection) tableTypeSelection.style.display = 'flex';
+              const cart = document.getElementById('cart');
+              if (cart) cart.style.display = 'none';
             }
             loadData();
             initWebSocket();
@@ -8581,8 +8600,10 @@ function generateMobileHTML(serverURL) {
     function selectTableTypeScreen(type) {
       if (isSultanSomatiMode || isYakasGrillMode) return; // Sultan Somatı ve Yaka's Grill için bu fonksiyon kullanılmaz
       currentTableType = type;
-      document.getElementById('tableTypeSelection').style.display = 'none';
-      document.getElementById('tableSelection').style.display = 'block';
+      const tableTypeSelection = document.getElementById('tableTypeSelection');
+      if (tableTypeSelection) tableTypeSelection.style.display = 'none';
+      const tableSelection = document.getElementById('tableSelection');
+      if (tableSelection) tableSelection.style.display = 'block';
       // staffInfo elementi kaldırıldı, null kontrolü yap
       const staffInfoEl = document.getElementById('staffInfo');
       if (staffInfoEl) {
@@ -8593,15 +8614,18 @@ function generateMobileHTML(serverURL) {
         mainLogoutBtn.style.display = 'flex';
       }
       // Sipariş gönder modalını göster
-      document.getElementById('cart').style.display = 'block';
+      const cart = document.getElementById('cart');
+      if (cart) cart.style.display = 'block';
       renderTables();
     }
     
     // Geri dönüş butonu (Normal Mod için)
     function goBackToTypeSelection() {
       if (isSultanSomatiMode || isYakasGrillMode) return; // Sultan Somatı ve Yaka's Grill için bu fonksiyon kullanılmaz
-      document.getElementById('tableSelection').style.display = 'none';
-      document.getElementById('tableTypeSelection').style.display = 'flex';
+      const tableSelection = document.getElementById('tableSelection');
+      if (tableSelection) tableSelection.style.display = 'none';
+      const tableTypeSelection = document.getElementById('tableTypeSelection');
+      if (tableTypeSelection) tableTypeSelection.style.display = 'flex';
       // staffInfo elementi kaldırıldı, null kontrolü yap
       const staffInfoEl = document.getElementById('staffInfo');
       if (staffInfoEl) {
@@ -8612,7 +8636,8 @@ function generateMobileHTML(serverURL) {
         mainLogoutBtn.style.display = 'none';
       }
       // Sipariş gönder modalını gizle
-      document.getElementById('cart').style.display = 'none';
+      const cart = document.getElementById('cart');
+      if (cart) cart.style.display = 'none';
       selectedTable = null;
       renderTables();
     }
@@ -8830,48 +8855,71 @@ function generateMobileHTML(serverURL) {
     // Alt navigasyon bar fonksiyonları (Sultan Somatı ve Yaka's Grill için)
     function showTablesView() {
       if (!isSultanSomatiMode && !isYakasGrillMode) return;
-      document.getElementById('tableSelection').style.display = 'block';
-      document.getElementById('orderSection').style.display = 'none';
-      document.getElementById('ordersView').style.display = 'none';
-      document.getElementById('salesView').style.display = 'none';
+      const tableSelection = document.getElementById('tableSelection');
+      if (tableSelection) tableSelection.style.display = 'block';
+      const orderSection = document.getElementById('orderSection');
+      if (orderSection) orderSection.style.display = 'none';
+      const ordersView = document.getElementById('ordersView');
+      if (ordersView) ordersView.style.display = 'none';
+      const salesView = document.getElementById('salesView');
+      if (salesView) salesView.style.display = 'none';
       const bottomNavBar = document.getElementById('bottomNavBar');
       if (bottomNavBar) bottomNavBar.style.display = 'flex';
       const cartEl = document.getElementById('cart');
       if (cartEl) cartEl.style.display = 'none'; // Ana sayfada cart gizli
       selectedTable = null;
       renderTables();
-      updateBottomNavActive('tables');
+      if (isSultanSomatiMode) {
+        updateBottomNavActive('tables');
+      }
     }
     
-<<<<<<< Updated upstream
     async function showOrdersView() {
-      if (!isSultanSomatiMode) return;
-      document.getElementById('tableSelection').style.display = 'none';
-      document.getElementById('orderSection').style.display = 'none';
-      document.getElementById('ordersView').style.display = 'block';
-      document.getElementById('salesView').style.display = 'none';
-      const bottomNavBar = document.getElementById('bottomNavBar');
-      if (bottomNavBar) bottomNavBar.style.display = 'flex';
-      const cartEl = document.getElementById('cart');
-      if (cartEl) cartEl.style.display = 'none'; // Siparişler görünümünde cart gizli
-      selectedTable = null;
-      await loadAllOrders();
-      updateBottomNavActive('orders');
+      if (!isSultanSomatiMode && !isYakasGrillMode) return;
+      if (isSultanSomatiMode) {
+        const tableSelection = document.getElementById('tableSelection');
+        if (tableSelection) tableSelection.style.display = 'none';
+        const orderSection = document.getElementById('orderSection');
+        if (orderSection) orderSection.style.display = 'none';
+        const ordersView = document.getElementById('ordersView');
+        if (ordersView) ordersView.style.display = 'block';
+        const salesView = document.getElementById('salesView');
+        if (salesView) salesView.style.display = 'none';
+        const bottomNavBar = document.getElementById('bottomNavBar');
+        if (bottomNavBar) bottomNavBar.style.display = 'flex';
+        const cartEl = document.getElementById('cart');
+        if (cartEl) cartEl.style.display = 'none'; // Siparişler görünümünde cart gizli
+        selectedTable = null;
+        await loadAllOrders();
+        updateBottomNavActive('orders');
+      } else {
+        // Yaka's Grill için masa görünümüne yönlendir
+        showTablesView();
+      }
     }
     
     async function showSalesView() {
-      if (!isSultanSomatiMode) return;
-      document.getElementById('tableSelection').style.display = 'none';
-      document.getElementById('orderSection').style.display = 'none';
-      document.getElementById('ordersView').style.display = 'none';
-      document.getElementById('salesView').style.display = 'block';
-      const bottomNavBar = document.getElementById('bottomNavBar');
-      if (bottomNavBar) bottomNavBar.style.display = 'flex';
-      const cartEl = document.getElementById('cart');
-      if (cartEl) cartEl.style.display = 'none'; // Satışlar görünümünde cart gizli
-      selectedTable = null;
-      await loadRecentSales();
-      updateBottomNavActive('sales');
+      if (!isSultanSomatiMode && !isYakasGrillMode) return;
+      if (isSultanSomatiMode) {
+        const tableSelection = document.getElementById('tableSelection');
+        if (tableSelection) tableSelection.style.display = 'none';
+        const orderSection = document.getElementById('orderSection');
+        if (orderSection) orderSection.style.display = 'none';
+        const ordersView = document.getElementById('ordersView');
+        if (ordersView) ordersView.style.display = 'none';
+        const salesView = document.getElementById('salesView');
+        if (salesView) salesView.style.display = 'block';
+        const bottomNavBar = document.getElementById('bottomNavBar');
+        if (bottomNavBar) bottomNavBar.style.display = 'flex';
+        const cartEl = document.getElementById('cart');
+        if (cartEl) cartEl.style.display = 'none'; // Satışlar görünümünde cart gizli
+        selectedTable = null;
+        await loadRecentSales();
+        updateBottomNavActive('sales');
+      } else {
+        // Yaka's Grill için masa görünümüne yönlendir
+        showTablesView();
+      }
     }
     
     function updateBottomNavActive(activeView) {
@@ -8885,18 +8933,6 @@ function generateMobileHTML(serverURL) {
           btn.style.color = 'white';
         }
       });
-=======
-    function showOrdersView() {
-      if (!isSultanSomatiMode && !isYakasGrillMode) return;
-      // Siparişler görünümü - şimdilik masa görünümüne yönlendir
-      showTablesView();
-    }
-    
-    function showSalesView() {
-      if (!isSultanSomatiMode && !isYakasGrillMode) return;
-      // Satışlar görünümü - şimdilik masa görünümüne yönlendir
-      showTablesView();
->>>>>>> Stashed changes
     }
     
     function showSettingsView() {
@@ -8908,10 +8944,14 @@ function generateMobileHTML(serverURL) {
     async function selectTable(id, name, type) {
       selectedTable = { id, name, type };
       renderTables();
-      document.getElementById('tableSelection').style.display = 'none';
-      document.getElementById('orderSection').style.display = 'block';
-      document.getElementById('ordersView').style.display = 'none';
-      document.getElementById('salesView').style.display = 'none';
+      const tableSelection = document.getElementById('tableSelection');
+      if (tableSelection) tableSelection.style.display = 'none';
+      const orderSection = document.getElementById('orderSection');
+      if (orderSection) orderSection.style.display = 'block';
+      const ordersView = document.getElementById('ordersView');
+      if (ordersView) ordersView.style.display = 'none';
+      const salesView = document.getElementById('salesView');
+      if (salesView) salesView.style.display = 'none';
       // Alt navigasyon bar'ı gizle (masa içeriğine girildiğinde)
       const bottomNavBar = document.getElementById('bottomNavBar');
       if (bottomNavBar) bottomNavBar.style.display = 'none';
@@ -8939,7 +8979,8 @@ function generateMobileHTML(serverURL) {
         }
       }
       // Arama çubuğunu temizle
-      document.getElementById('searchInput').value = '';
+      const searchInput = document.getElementById('searchInput');
+      if (searchInput) searchInput.value = '';
       // Kategorileri render et
       renderCategories();
       // Mevcut siparişleri yükle
@@ -8957,7 +8998,8 @@ function generateMobileHTML(serverURL) {
         renderExistingOrders(orders);
       } catch (error) {
         console.error('Sipariş yükleme hatası:', error);
-        document.getElementById('existingOrders').style.display = 'none';
+        const existingOrders = document.getElementById('existingOrders');
+        if (existingOrders) existingOrders.style.display = 'none';
       }
     }
     
@@ -9019,29 +9061,32 @@ function generateMobileHTML(serverURL) {
     
     function goBackToTables() {
       selectedTable = null;
-      document.getElementById('orderSection').style.display = 'none';
-<<<<<<< Updated upstream
-      document.getElementById('ordersView').style.display = 'none';
-      document.getElementById('salesView').style.display = 'none';
+      const orderSection = document.getElementById('orderSection');
+      if (orderSection) orderSection.style.display = 'none';
+      const ordersView = document.getElementById('ordersView');
+      if (ordersView) ordersView.style.display = 'none';
+      const salesView = document.getElementById('salesView');
+      if (salesView) salesView.style.display = 'none';
       // Alt navigasyon bar'ı göster (masa görünümüne dönüldüğünde)
       const bottomNavBar = document.getElementById('bottomNavBar');
       if (bottomNavBar) bottomNavBar.style.display = 'flex';
-      // Sultan Somatı için direkt masa ekranını göster, normal mod için seçim ekranını göster
-      if (isSultanSomatiMode) {
-        document.getElementById('tableSelection').style.display = 'block';
-        updateBottomNavActive('tables');
-=======
       // Sultan Somatı ve Yaka's Grill için direkt masa ekranını göster, normal mod için seçim ekranını göster
       if (isSultanSomatiMode || isYakasGrillMode) {
-        document.getElementById('tableSelection').style.display = 'block';
+        const tableSelection = document.getElementById('tableSelection');
+        if (tableSelection) tableSelection.style.display = 'block';
+        // Sultan Somatı için bottom nav aktif durumunu güncelle
+        if (isSultanSomatiMode) {
+          updateBottomNavActive('tables');
+        }
         // Yaka's Grill için masaları yeniden render et
         if (isYakasGrillMode) {
           renderTables();
         }
->>>>>>> Stashed changes
       } else {
-        document.getElementById('tableSelection').style.display = 'none';
-        document.getElementById('tableTypeSelection').style.display = 'flex';
+        const tableSelection = document.getElementById('tableSelection');
+        if (tableSelection) tableSelection.style.display = 'none';
+        const tableTypeSelection = document.getElementById('tableTypeSelection');
+        if (tableTypeSelection) tableTypeSelection.style.display = 'flex';
       }
       const cartEl = document.getElementById('cart');
       if (cartEl) {
