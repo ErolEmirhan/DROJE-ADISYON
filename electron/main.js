@@ -1385,7 +1385,7 @@ ipcMain.handle('get-products', async (event, categoryId) => {
 });
 
 ipcMain.handle('create-sale', async (event, saleData) => {
-  const { items, totalAmount, paymentMethod, orderNote, staff_name } = saleData;
+  const { items, totalAmount, paymentMethod, orderNote, orderSource, staff_name } = saleData;
   
   const now = new Date();
   const saleDate = getBusinessDayDateString(now);
@@ -1460,6 +1460,7 @@ ipcMain.handle('create-sale', async (event, saleData) => {
         sale_date: saleDate,
         sale_time: saleTime,
         staff_name: staff_name || null,
+        order_source: orderSource || null, // 'Trendyol', 'Yemeksepeti', or null
         items: itemsText,
         items_array: items.map(item => ({
           product_id: item.id,
@@ -1648,7 +1649,7 @@ ipcMain.handle('delete-all-sales', async (event) => {
 
 // Table Order IPC Handlers
 ipcMain.handle('create-table-order', async (event, orderData) => {
-  const { items, totalAmount, tableId, tableName, tableType, orderNote } = orderData;
+  const { items, totalAmount, tableId, tableName, tableType, orderNote, orderSource } = orderData;
   
   const now = new Date();
   const orderDate = now.toLocaleDateString('tr-TR');
@@ -1725,7 +1726,8 @@ ipcMain.handle('create-table-order', async (event, orderData) => {
       order_date: orderDate,
       order_time: orderTime,
       status: 'pending',
-      order_note: orderNote || null
+      order_note: orderNote || null,
+      order_source: orderSource || null // 'Trendyol', 'Yemeksepeti', or null
     });
 
     // Sipariş itemlarını ekle
@@ -2448,6 +2450,7 @@ ipcMain.handle('complete-table-order', async (event, orderId, paymentMethod = 'N
         table_name: order.table_name,
         table_type: order.table_type,
         staff_name: staffName,
+        order_source: order.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
         items: itemsText,
         items_array: orderItems.map(item => ({
           product_id: item.product_id,
@@ -4619,8 +4622,8 @@ function generateProductionReceiptHTML(items, receiptData) {
       
       ${receiptData.orderNote ? `
       <div style="margin: 10px 0; padding: 8px; background-color: #fef3c7; border: 1px solid #fbbf24; border-radius: 4px;">
-        <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #d97706; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu:</p>
-        <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #92400e; margin: 0; font-family: 'Montserrat', sans-serif;">${receiptData.orderNote}</p>
+        <p style="font-size: ${isYakasGrill ? '20px' : '10px'}; font-weight: 900; font-style: italic; color: #d97706; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu:</p>
+        <p style="font-size: ${isYakasGrill ? '20px' : '10px'}; font-weight: 900; font-style: italic; color: #92400e; margin: 0; font-family: 'Montserrat', sans-serif;">${receiptData.orderNote}</p>
       </div>
       ` : ''}
     </body>
@@ -4630,6 +4633,10 @@ function generateProductionReceiptHTML(items, receiptData) {
 
 // Fiş HTML içeriğini oluştur
 function generateReceiptHTML(receiptData) {
+  // Yaka's Grill kontrolü
+  const tenantInfo = tenantManager.getCurrentTenantInfo();
+  const isYakasGrill = tenantInfo?.tenantId === 'TENANT-1766340222641';
+  
   const itemsHTML = receiptData.items.map(item => {
     const isGift = item.isGift || false;
     const displayPrice = isGift ? 0 : item.price;
@@ -4862,8 +4869,8 @@ function generateReceiptHTML(receiptData) {
       
       ${receiptData.orderNote ? `
       <div style="margin: 10px 0; padding: 8px; background-color: #fef3c7; border: 1px solid #fbbf24; border-radius: 4px;">
-        <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #d97706; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu:</p>
-        <p style="font-size: 10px; font-weight: 900; font-style: italic; color: #92400e; margin: 0; font-family: 'Montserrat', sans-serif;">${receiptData.orderNote}</p>
+        <p style="font-size: ${isYakasGrill ? '20px' : '10px'}; font-weight: 900; font-style: italic; color: #d97706; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu:</p>
+        <p style="font-size: ${isYakasGrill ? '20px' : '10px'}; font-weight: 900; font-style: italic; color: #92400e; margin: 0; font-family: 'Montserrat', sans-serif;">${receiptData.orderNote}</p>
       </div>
       ` : ''}
 
@@ -5738,6 +5745,13 @@ function generateAdisyonHTML(items, adisyonData) {
   // Garson ismini adisyonData'dan al (eğer yoksa items'dan al)
   const staffName = adisyonData.staff_name || (items.length > 0 && items[0].staff_name ? items[0].staff_name : null);
   
+  // Order source kontrolü (Yaka's Grill için)
+  const orderSource = adisyonData.orderSource || null;
+  const orderSourceTitle = orderSource === 'Trendyol' ? 'Trendyol Siparişi' : 
+                          orderSource === 'Yemeksepeti' ? 'Yemek Sepeti Siparişi' : null;
+  
+  console.log('[generateAdisyonHTML] orderSource:', orderSource, 'orderSourceTitle:', orderSourceTitle);
+  
   // Eğer kategori bilgisi varsa, kategorilere göre grupla
   const hasCategories = adisyonData.categories && adisyonData.categories.length > 0;
   
@@ -5997,6 +6011,13 @@ function generateAdisyonHTML(items, adisyonData) {
       </style>
     </head>
     <body>
+      ${orderSourceTitle ? `
+      <div style="text-align: center; margin: 0 0 20px 0; padding: 14px 10px; background: ${orderSource === 'Trendyol' ? 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)' : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'}; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.4); border: 2px solid ${orderSource === 'Trendyol' ? '#d97706' : '#b91c1c'};">
+        <h2 style="margin: 0; font-size: 18px; font-weight: 900; color: white; font-family: 'Montserrat', sans-serif; text-transform: uppercase; letter-spacing: 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">
+          ${orderSourceTitle}
+        </h2>
+      </div>
+      ` : ''}
       <div class="info">
         ${adisyonData.tableName ? `
         <div class="table-row">
@@ -6026,8 +6047,8 @@ function generateAdisyonHTML(items, adisyonData) {
       
       ${adisyonData.orderNote ? `
       <div style="margin: 10px 0; padding: 8px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 6px; border-left: 3px solid #f59e0b; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-        <p style="font-size: 9px; font-weight: 900; color: #92400e; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu:</p>
-        <p style="font-size: 9px; font-weight: 700; color: #78350f; margin: 0; font-family: 'Montserrat', sans-serif;">${adisyonData.orderNote}</p>
+        <p style="font-size: ${isYakasGrill ? '18px' : '9px'}; font-weight: 900; color: #92400e; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu:</p>
+        <p style="font-size: ${isYakasGrill ? '18px' : '9px'}; font-weight: 700; color: #78350f; margin: 0; font-family: 'Montserrat', sans-serif;">${adisyonData.orderNote}</p>
       </div>
       ` : ''}
 
@@ -10041,7 +10062,14 @@ function generateMobileHTML(serverURL) {
               return;
             }
             
-            // Dürümler, Ekmek Arası, Balık kategorileri için soğan seçici modal
+            // Balık kategorisinde "Balık Porsiyon" ürünü için porsiyon seçici modal
+            const productNameLower = name.toLowerCase();
+            if (categoryNameLower === 'balık' && productNameLower.includes('balık porsiyon')) {
+              showPortionModal(productId, name, price);
+              return;
+            }
+            
+            // Dürümler, Ekmek Arası, Balık kategorileri için soğan seçici modal (Balık Porsiyon hariç)
             if (categoryNameLower === 'dürümler' || categoryNameLower === 'ekmek arası' || categoryNameLower === 'balık') {
               showOnionModal(productId, name, price);
               return;
@@ -11901,6 +11929,7 @@ function startAPIServer() {
           tableName: tableName,
           tableType: tableType,
           orderNote: orderNote || null,
+          orderSource: order.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
           // Items'lardan alınan tarih/saat ve personel bilgisini kullan
           sale_date: adisyonDate,
           sale_time: adisyonTime,

@@ -401,6 +401,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       tableName: selectedOrder.table_name,
       tableType: selectedOrder.table_type,
       orderNote: selectedOrder.order_note || null,
+      orderSource: selectedOrder.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
       sale_date: selectedOrder.order_date || new Date().toLocaleDateString('tr-TR'),
       sale_time: selectedOrder.order_time || new Date().toLocaleTimeString('tr-TR'),
       cashierOnly: true // Sadece kasa yazıcısından fiyatlı fiş

@@ -7,10 +7,109 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Yaka's Grill">
-  <link rel="manifest" href="/manifest.json">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <link rel="manifest" href="/manifest.json?v=2.4.8">
   <link rel="icon" type="image/png" href="patron.png">
   <link rel="apple-touch-icon" href="patron.png">
   <title id="pageTitle">Yaka's Grill - Admin Dashboard</title>
+  
+  <script>
+    // Service Worker Registration - Cache kontrolü için
+    // Service worker sadece HTTPS veya localhost'ta çalışır
+    const isSecureContext = window.location.protocol === 'https:' || 
+                            window.location.hostname === 'localhost' || 
+                            window.location.hostname === '127.0.0.1';
+    
+    if ('serviceWorker' in navigator && isSecureContext) {
+      let refreshing = false;
+      
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js?v=2.4.8')
+          .then((registration) => {
+            console.log('[SW] Service Worker registered:', registration.scope);
+            
+            // Yeni service worker varsa, hemen güncelle
+            registration.addEventListener('updatefound', () => {
+              const newWorker = registration.installing;
+              if (newWorker) {
+                newWorker.addEventListener('statechange', () => {
+                  if (newWorker.state === 'installed') {
+                    if (navigator.serviceWorker.controller) {
+                      // Yeni versiyon var ve eski worker aktif
+                      console.log('[SW] New version available!');
+                      // Kullanıcıya bildir ve otomatik yenile
+                      if (!refreshing) {
+                        refreshing = true;
+                        // 2 saniye bekle, sonra otomatik yenile
+                        setTimeout(() => {
+                          console.log('[SW] Auto-reloading for update...');
+                          window.location.reload(true); // Hard reload
+                        }, 2000);
+                      }
+                    } else {
+                      // İlk yükleme
+                      console.log('[SW] Service Worker installed for the first time');
+                    }
+                  }
+                });
+              }
+            });
+            
+            // Her 30 saniyede bir kontrol et (daha sık)
+            setInterval(() => {
+              registration.update();
+            }, 30000);
+            
+            // Sayfa görünür olduğunda kontrol et
+            document.addEventListener('visibilitychange', () => {
+              if (!document.hidden) {
+                registration.update();
+              }
+            });
+            
+            // Focus olduğunda kontrol et
+            window.addEventListener('focus', () => {
+              registration.update();
+            });
+          })
+          .catch((error) => {
+            console.warn('[SW] Service Worker registration failed:', error.message);
+            // Hata olsa bile uygulama çalışmaya devam etsin
+          });
+        
+        // Service worker mesajlarını dinle
+        navigator.serviceWorker.addEventListener('message', (event) => {
+          if (event.data && event.data.type === 'SW_UPDATED') {
+            console.log('[SW] Update message received:', event.data.message);
+            if (!refreshing) {
+              refreshing = true;
+              // 1 saniye bekle, sonra otomatik yenile
+              setTimeout(() => {
+                window.location.reload(true); // Hard reload
+              }, 1000);
+            }
+          }
+        });
+        
+        // Service worker controller değiştiğinde yenile
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          console.log('[SW] New service worker activated, reloading...');
+          if (!refreshing) {
+            refreshing = true;
+            window.location.reload(true); // Hard reload
+          }
+        });
+      });
+    } else {
+      if (!isSecureContext) {
+        console.log('[SW] Service Worker not supported in this context (requires HTTPS or localhost)');
+      } else {
+        console.log('[SW] Service Worker not supported in this browser');
+      }
+    }
+  </script>
   
   <!-- Firebase SDK (Compat Version) -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
@@ -644,6 +743,150 @@
       }
     }
 
+    // Masa verilerini çek (sadece aktif masa sayısı için, render etmeden)
+    function loadTablesDataForStats() {
+      console.log('📊 Masa verileri istatistikler için yükleniyor...');
+      
+      if (!tablesDb) {
+        console.warn('⚠️ tablesDb bulunamadı - sadece statik masalar oluşturulacak');
+        // Firebase olmasa bile tüm masaları oluştur (dinamik)
+        allStaticTables = {};
+        const totalTablesCount = insideTablesCount + outsideTablesCount;
+        
+        // Masalar (masa-1, masa-2 formatında)
+        for (let i = 1; i <= totalTablesCount; i++) {
+          allStaticTables[`masa-${i}`] = {
+            table_id: `masa-${i}`,
+            table_name: `Masa ${i}`,
+            table_type: 'table',
+            table_number: i,
+            is_occupied: false,
+            total_amount: 0,
+            items: []
+          };
+        }
+        
+        // Paket masaları (paket-1, paket-2 formatında)
+        for (let i = 1; i <= packageTablesCount; i++) {
+          allStaticTables[`paket-${i}`] = {
+            table_id: `paket-${i}`,
+            table_name: `Paket ${i}`,
+            table_type: 'package',
+            table_number: i,
+            is_occupied: false,
+            total_amount: 0,
+            items: []
+          };
+        }
+        
+        // Aktif masa sayısını güncelle
+        updateActiveTablesCount(calculateActiveTablesCount());
+        return;
+      }
+
+      console.log('✅ tablesDb mevcut, masa verileri çekiliyor...');
+
+      // TÜM masaları statik olarak oluştur
+      allStaticTables = {};
+      
+      // Toplam masa sayısı (iç + dış)
+      const totalTablesCount = insideTablesCount + outsideTablesCount;
+      
+      // Masalar (masa-1, masa-2 formatında)
+      for (let i = 1; i <= totalTablesCount; i++) {
+        const tableId = `masa-${i}`;
+        allStaticTables[tableId] = {
+          table_id: tableId,
+          table_name: `Masa ${i}`,
+          table_type: 'table',
+          table_number: i,
+          is_occupied: false,
+          total_amount: 0,
+          items: []
+        };
+      }
+      
+      // Paket masaları (paket-1, paket-2 formatında)
+      for (let i = 1; i <= packageTablesCount; i++) {
+        const tableId = `paket-${i}`;
+        allStaticTables[tableId] = {
+          table_id: tableId,
+          table_name: `Paket ${i}`,
+          table_type: 'package',
+          table_number: i,
+          is_occupied: false,
+          total_amount: 0,
+          items: []
+        };
+      }
+
+      console.log(`📋 Toplam ${Object.keys(allStaticTables).length} statik masa oluşturuldu (istatistikler için)`);
+      
+      // İlk aktif masa sayısını güncelle
+      updateActiveTablesCount(calculateActiveTablesCount());
+
+      // Firebase'den masaları çek (tek seferlik, listener değil)
+      const tablesRef = tablesDb.collection('tables');
+      tablesRef.get().then((snapshot) => {
+        console.log(`📊 Masalar snapshot alındı (istatistikler için): ${snapshot.size} Firebase verisi bulundu`);
+
+        // Firebase'den gelen verileri statik masalarla birleştir
+        snapshot.forEach((doc) => {
+          const firebaseData = doc.data();
+          const tableId = firebaseData.table_id || doc.id;
+          
+          if (allStaticTables[tableId]) {
+            // Firebase'den gelen verileri statik masaya ekle
+            allStaticTables[tableId].is_occupied = firebaseData.is_occupied === true || 
+                                                   firebaseData.is_occupied === 'true' || 
+                                                   firebaseData.is_occupied === 1 ||
+                                                   (firebaseData.items && Array.isArray(firebaseData.items) && firebaseData.items.length > 0);
+            allStaticTables[tableId].total_amount = parseFloat(firebaseData.total_amount || 0);
+            allStaticTables[tableId].items = Array.isArray(firebaseData.items) ? firebaseData.items : [];
+            allStaticTables[tableId].order_id = firebaseData.order_id || null;
+            allStaticTables[tableId].order_date = firebaseData.order_date || null;
+            allStaticTables[tableId].order_time = firebaseData.order_time || null;
+            allStaticTables[tableId].order_note = firebaseData.order_note || null;
+            // Firebase'den gelen table_name ve table_type'ı da güncelle
+            if (firebaseData.table_name) {
+              allStaticTables[tableId].table_name = firebaseData.table_name;
+            }
+            if (firebaseData.table_type) {
+              allStaticTables[tableId].table_type = firebaseData.table_type;
+            }
+            console.log(`✅ Masa güncellendi (istatistikler için): ${tableId} - Dolu: ${allStaticTables[tableId].is_occupied}`);
+          } else {
+            // Firebase'de var ama statik listede yok - yeni masa ekle (dinamik)
+            allStaticTables[tableId] = {
+              table_id: tableId,
+              table_name: firebaseData.table_name || tableId,
+              table_type: firebaseData.table_type || 'table',
+              table_number: firebaseData.table_number || parseInt(tableId.replace(/\D/g, '')) || 0,
+              is_occupied: firebaseData.is_occupied === true || 
+                          firebaseData.is_occupied === 'true' || 
+                          firebaseData.is_occupied === 1 ||
+                          (firebaseData.items && Array.isArray(firebaseData.items) && firebaseData.items.length > 0),
+              total_amount: parseFloat(firebaseData.total_amount || 0),
+              items: Array.isArray(firebaseData.items) ? firebaseData.items : [],
+              order_id: firebaseData.order_id || null,
+              order_date: firebaseData.order_date || null,
+              order_time: firebaseData.order_time || null,
+              order_note: firebaseData.order_note || null
+            };
+            console.log(`➕ Yeni masa eklendi (istatistikler için): ${tableId}`);
+          }
+        });
+        
+        // Aktif masa sayısını güncelle
+        updateActiveTablesCount(calculateActiveTablesCount());
+        console.log('✅ Aktif masa sayısı güncellendi (istatistikler için)');
+      }).catch((error) => {
+        console.error('❌ Masa verileri çekilirken hata (istatistikler için):', error);
+        // Hata olsa bile aktif masa sayısını güncelle (varsayılan değerlerle)
+        updateActiveTablesCount(calculateActiveTablesCount());
+      });
+    }
+
     function showDashboard() {
       const loginSection = document.getElementById('loginSection');
       const dashboard = document.getElementById('dashboard');
@@ -651,6 +894,8 @@
       if (dashboard) dashboard.style.display = 'block';
       loadSales();
       startRealtimeListener();
+      // Dashboard açılır açılmaz masa verilerini çek (aktif masa sayısı için)
+      loadTablesDataForStats();
     }
 
     function verifyPin() {
@@ -670,8 +915,94 @@
       }
     }
 
+    // Eski versiyon kontrolü - PWA güncellemesi için
+    function checkForPWAUpdate() {
+      // Eğer standalone modda çalışıyorsa (PWA olarak kurulmuşsa)
+      if (window.matchMedia('(display-mode: standalone)').matches || 
+          window.navigator.standalone === true ||
+          document.referrer.includes('android-app://')) {
+        
+        // LocalStorage'da son kontrol zamanını kontrol et
+        const lastUpdateCheck = localStorage.getItem('lastPWAUpdateCheck');
+        const now = Date.now();
+        const oneHour = 60 * 60 * 1000; // 1 saat
+        
+        // Her saatte bir kontrol et (çok sık olmasın)
+        if (!lastUpdateCheck || (now - parseInt(lastUpdateCheck)) > oneHour) {
+          localStorage.setItem('lastPWAUpdateCheck', now.toString());
+          
+          // Manifest.json'ı kontrol et
+          fetch('/manifest.json?v=' + Date.now())
+            .then(response => response.json())
+            .then(manifest => {
+              const currentVersion = manifest.version || 'unknown';
+              const storedVersion = localStorage.getItem('pwaVersion');
+              
+              // Eğer versiyon değiştiyse veya ilk kontrol ise
+              if (storedVersion && storedVersion !== currentVersion) {
+                console.log('[PWA] New version detected:', currentVersion);
+                // Kullanıcıya bildir
+                showUpdateNotification(currentVersion);
+              } else if (!storedVersion) {
+                // İlk kurulum, versiyonu kaydet
+                localStorage.setItem('pwaVersion', currentVersion);
+              }
+            })
+            .catch(error => {
+              console.warn('[PWA] Could not check for updates:', error);
+            });
+        }
+      }
+    }
+    
+    // Güncelleme bildirimi göster
+    function showUpdateNotification(newVersion) {
+      // Basit bir bildirim göster
+      const notification = document.createElement('div');
+      notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #dc2626;
+        color: white;
+        padding: 16px 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        z-index: 10000;
+        max-width: 300px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      `;
+      notification.innerHTML = `
+        <div style="font-weight: 600; margin-bottom: 8px;">🔄 Yeni Versiyon Mevcut!</div>
+        <div style="font-size: 14px; margin-bottom: 12px;">Uygulamayı güncellemek için sayfayı yenileyin veya uygulamayı kapatıp açın.</div>
+        <button onclick="window.location.reload(true)" style="
+          background: white;
+          color: #dc2626;
+          border: none;
+          padding: 8px 16px;
+          border-radius: 6px;
+          font-weight: 600;
+          cursor: pointer;
+          width: 100%;
+        ">Şimdi Güncelle</button>
+      `;
+      document.body.appendChild(notification);
+      
+      // 10 saniye sonra otomatik kapat
+      setTimeout(() => {
+        if (notification.parentNode) {
+          notification.style.opacity = '0';
+          notification.style.transition = 'opacity 0.3s';
+          setTimeout(() => notification.remove(), 300);
+        }
+      }, 10000);
+    }
+
     // Sayfa yüklendiğinde kontrol et
     window.addEventListener('load', () => {
+      // PWA güncelleme kontrolü
+      checkForPWAUpdate();
+      
       // Splash screen'i göster
       const loader = document.getElementById('loader');
       if (loader) {
@@ -796,6 +1127,7 @@
             staff_name: data.staff_name || null,
             table_name: data.table_name || null,
             table_type: data.table_type || null,
+            order_source: data.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
             items: items,
             items_array: itemsArray, // Gerçek Firebase verileri
             itemsText: data.items || 'Ürün bulunamadı',
@@ -924,6 +1256,7 @@
             staff_name: data.staff_name || null,
             table_name: data.table_name || null,
             table_type: data.table_type || null,
+            order_source: data.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
             items: items,
             items_array: itemsArray, // Gerçek Firebase verileri
             itemsText: data.items || 'Ürün bulunamadı',
@@ -1370,12 +1703,12 @@
       
       // allStaticTables objesindeki tüm masaları kontrol et
       Object.values(allStaticTables).forEach(table => {
-        // Sadece iç ve dış masaları say (paket masalarını hariç tut)
+        // Sadece masaları say (paket masalarını hariç tut)
         const tableId = table.table_id || '';
-        const isInsideOrOutside = tableId.startsWith('inside-') || tableId.startsWith('outside-');
-        const isPackage = tableId.startsWith('package-');
+        const isTable = tableId.startsWith('masa-');
+        const isPackage = tableId.startsWith('paket-');
         
-        if (isInsideOrOutside && !isPackage) {
+        if (isTable && !isPackage) {
           // Masa dolu mu kontrol et
           const isOccupied = table.is_occupied === true || 
                             table.is_occupied === 'true' || 
@@ -1801,6 +2134,27 @@
 
       const totalRevenue = reportSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
 
+      // Trendyol ve Yemeksepeti cirolarını hesapla
+      const trendyolRevenue = reportSales
+        .filter(sale => sale.order_source === 'Trendyol')
+        .reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+      
+      const yemeksepetiRevenue = reportSales
+        .filter(sale => sale.order_source === 'Yemeksepeti')
+        .reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+
+      // Görsellerin path'lerini dinamik olarak oluştur
+      // Firebase Hosting veya localhost için doğru path'i oluştur
+      let baseUrl = '';
+      if (window.location.protocol === 'file:') {
+        // File protokolü için relative path kullan
+        baseUrl = '.';
+      } else {
+        baseUrl = window.location.origin || '';
+      }
+      const trendyolImageUrl = baseUrl + '/trendyol.webp';
+      const yemeksepetiImageUrl = baseUrl + '/yemeksepeti.png';
+
       // Seçilen zaman dilimindeki masrafları hesapla
       let periodExpenses = allSales.filter(sale => 
         (sale.isExpense || sale.payment_method === 'Masraf')
@@ -1956,6 +2310,42 @@
                   </defs>
                   <path d="M0,200 Q50,150 100,120 T200,80 L200,200 Z" fill="url(#expenseGradient)"/>
                 </svg>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Trendyol ve Yemeksepeti Ciroları -->
+          <div class="period-revenue-container" style="margin-top: 20px;">
+            <div class="period-revenue-card" style="background: white; padding: 3px; border-radius: 20px; background-image: linear-gradient(white, white), linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); background-origin: border-box; background-clip: padding-box, border-box; box-shadow: 0 10px 40px rgba(251, 191, 36, 0.3), 0 4px 16px rgba(251, 191, 36, 0.2);">
+              <div style="background: white; border-radius: 17px; padding: 24px; height: 100%; position: relative; overflow: hidden;">
+                <div class="period-card-background" style="display: none;"></div>
+                <div class="period-card-icon" style="position: absolute; top: 20px; right: 20px; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(251, 191, 36, 0.1);">
+                  <img src="${trendyolImageUrl}" alt="Trendyol" onerror="this.onerror=null; this.style.display='none';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">
+                </div>
+                <div class="period-revenue-content">
+                  <div class="period-revenue-label">
+                    <span class="period-label-icon">🛒</span>
+                    <span style="color: #1e293b;">Trendyol Ciro</span>
+                  </div>
+                  <div class="period-revenue-period" style="color: #64748b;">${periodInfo}</div>
+                  <div class="period-revenue-amount" style="color: #10b981; font-weight: 900; font-size: 28px;">₺${trendyolRevenue.toFixed(2)}</div>
+                </div>
+              </div>
+            </div>
+            <div class="period-expense-card" style="background: white; padding: 3px; border-radius: 20px; background-image: linear-gradient(white, white), linear-gradient(135deg, #ef4444 0%, #dc2626 100%); background-origin: border-box; background-clip: padding-box, border-box; box-shadow: 0 10px 40px rgba(239, 68, 68, 0.3), 0 4px 16px rgba(239, 68, 68, 0.2);">
+              <div style="background: white; border-radius: 17px; padding: 24px; height: 100%; position: relative; overflow: hidden;">
+                <div class="period-card-background" style="display: none;"></div>
+                <div class="period-card-icon" style="position: absolute; top: 20px; right: 20px; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(239, 68, 68, 0.1);">
+                  <img src="${yemeksepetiImageUrl}" alt="Yemeksepeti" onerror="this.onerror=null; this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath fill=%22%23ef4444%22 d=%22M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z%22/%3E%3C/svg%3E';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">
+                </div>
+                <div class="period-revenue-content">
+                  <div class="period-revenue-label">
+                    <span class="period-label-icon">🍽️</span>
+                    <span style="color: #1e293b;">Yemeksepeti Ciro</span>
+                  </div>
+                  <div class="period-revenue-period" style="color: #64748b;">${periodInfo}</div>
+                  <div class="period-revenue-amount" style="color: #10b981; font-weight: 900; font-size: 28px;">₺${yemeksepetiRevenue.toFixed(2)}</div>
+                </div>
               </div>
             </div>
           </div>
@@ -2149,51 +2539,25 @@
         return;
       }
 
-      // Masaları kategorilere ayır
-      const insideTables = [];
-      const outsideTables = [];
-      const packageTablesInside = [];
-      const packageTablesOutside = [];
+      // Sadece masaları filtrele (paketleri hariç tut)
+      const tables = [];
 
       Object.values(allStaticTables).forEach(table => {
-        if (table.table_id.startsWith('inside-') && !table.table_id.startsWith('package-')) {
-          insideTables.push(table);
-        } else if (table.table_id.startsWith('outside-') && !table.table_id.startsWith('package-')) {
-          outsideTables.push(table);
-        } else if (table.table_id.startsWith('package-inside-')) {
-          packageTablesInside.push(table);
-        } else if (table.table_id.startsWith('package-outside-')) {
-          packageTablesOutside.push(table);
+        if (table.table_id.startsWith('masa-')) {
+          tables.push(table);
         }
       });
 
       // Sırala
-      insideTables.sort((a, b) => a.table_number - b.table_number);
-      outsideTables.sort((a, b) => a.table_number - b.table_number);
-      packageTablesInside.sort((a, b) => a.table_number - b.table_number);
-      packageTablesOutside.sort((a, b) => a.table_number - b.table_number);
+      tables.sort((a, b) => a.table_number - b.table_number);
 
       // Render
       let html = `
         <div class="tables-container">
           <div class="tables-section">
-            <h2 class="section-title">📋 İçeri Masalar</h2>
+            <h2 class="section-title">🪑 Masalar</h2>
             <div class="tables-grid">
-              ${insideTables.map(table => renderTableCard(table)).join('')}
-            </div>
-          </div>
-          
-          <div class="tables-section">
-            <h2 class="section-title">☀️ Dışarı Masalar</h2>
-            <div class="tables-grid">
-              ${outsideTables.map(table => renderTableCard(table)).join('')}
-            </div>
-          </div>
-          
-          <div class="tables-section">
-            <h2 class="section-title">📦 Paket Masaları</h2>
-            <div class="tables-grid package-grid">
-              ${[...packageTablesInside, ...packageTablesOutside].map(table => renderTableCard(table)).join('')}
+              ${tables.map(table => renderTableCard(table)).join('')}
             </div>
           </div>
         </div>
@@ -2202,7 +2566,7 @@
       container.innerHTML = html;
       console.log('✅ Tüm masalar render edildi');
       
-      // Aktif masa sayısını güncelle (sadece iç ve dış masalar)
+      // Aktif masa sayısını güncelle (sadece masalar, paketler hariç)
       updateActiveTablesCount(calculateActiveTablesCount());
     }
 
@@ -2228,44 +2592,27 @@
         console.warn('⚠️ tablesDb bulunamadı - sadece statik masalar gösterilecek');
         // Firebase olmasa bile tüm masaları göster (dinamik)
         allStaticTables = {};
-        for (let i = 1; i <= insideTablesCount; i++) {
-          allStaticTables[`inside-${i}`] = {
-            table_id: `inside-${i}`,
-            table_name: `İçeri ${i}`,
-            table_type: 'inside',
+        const totalTablesCount = insideTablesCount + outsideTablesCount;
+        
+        // Masalar (masa-1, masa-2 formatında)
+        for (let i = 1; i <= totalTablesCount; i++) {
+          allStaticTables[`masa-${i}`] = {
+            table_id: `masa-${i}`,
+            table_name: `Masa ${i}`,
+            table_type: 'table',
             table_number: i,
             is_occupied: false,
             total_amount: 0,
             items: []
           };
         }
-        for (let i = 1; i <= outsideTablesCount; i++) {
-          allStaticTables[`outside-${i}`] = {
-            table_id: `outside-${i}`,
-            table_name: `Dışarı ${i}`,
-            table_type: 'outside',
-            table_number: i,
-            is_occupied: false,
-            total_amount: 0,
-            items: []
-          };
-        }
+        
+        // Paket masaları (paket-1, paket-2 formatında)
         for (let i = 1; i <= packageTablesCount; i++) {
-          allStaticTables[`package-inside-${i}`] = {
-            table_id: `package-inside-${i}`,
+          allStaticTables[`paket-${i}`] = {
+            table_id: `paket-${i}`,
             table_name: `Paket ${i}`,
-            table_type: 'inside',
-            table_number: i,
-            is_occupied: false,
-            total_amount: 0,
-            items: []
-          };
-        }
-        for (let i = 1; i <= packageTablesCount; i++) {
-          allStaticTables[`package-outside-${i}`] = {
-            table_id: `package-outside-${i}`,
-            table_name: `Paket ${i}`,
-            table_type: 'outside',
+            table_type: 'package',
             table_number: i,
             is_occupied: false,
             total_amount: 0,
@@ -2286,67 +2633,47 @@
         tablesUnsubscribe = null;
       }
 
-      // TÜM masaları statik olarak oluştur (masaüstü uygulamasındaki gibi)
-      // Global allStaticTables objesini kullan
-      allStaticTables = {};
+      // Eğer allStaticTables zaten doluysa (loadTablesDataForStats çalışmışsa), tekrar oluşturma
+      const totalTablesCount = insideTablesCount + outsideTablesCount;
+      const expectedTablesCount = totalTablesCount + packageTablesCount;
       
-      // İçeri masalar (dinamik)
-      for (let i = 1; i <= insideTablesCount; i++) {
-        const tableId = `inside-${i}`;
-        allStaticTables[tableId] = {
-          table_id: tableId,
-          table_name: `İçeri ${i}`,
-          table_type: 'inside',
-          table_number: i,
-          is_occupied: false,
-          total_amount: 0,
-          items: []
-        };
-      }
-      
-      // Dışarı masalar (dinamik)
-      for (let i = 1; i <= outsideTablesCount; i++) {
-        const tableId = `outside-${i}`;
-        allStaticTables[tableId] = {
-          table_id: tableId,
-          table_name: `Dışarı ${i}`,
-          table_type: 'outside',
-          table_number: i,
-          is_occupied: false,
-          total_amount: 0,
-          items: []
-        };
-      }
-      
-      // Paket masaları - İçeri (dinamik)
-      for (let i = 1; i <= packageTablesCount; i++) {
-        const tableId = `package-inside-${i}`;
-        allStaticTables[tableId] = {
-          table_id: tableId,
-          table_name: `Paket ${i}`,
-          table_type: 'inside',
-          table_number: i,
-          is_occupied: false,
-          total_amount: 0,
-          items: []
-        };
-      }
-      
-      // Paket masaları - Dışarı (dinamik)
-      for (let i = 1; i <= packageTablesCount; i++) {
-        const tableId = `package-outside-${i}`;
-        allStaticTables[tableId] = {
-          table_id: tableId,
-          table_name: `Paket ${i}`,
-          table_type: 'outside',
-          table_number: i,
-          is_occupied: false,
-          total_amount: 0,
-          items: []
-        };
-      }
+      if (Object.keys(allStaticTables).length === 0 || Object.keys(allStaticTables).length !== expectedTablesCount) {
+        // TÜM masaları statik olarak oluştur (masaüstü uygulamasındaki gibi)
+        // Global allStaticTables objesini kullan
+        allStaticTables = {};
+        
+        // Masalar (masa-1, masa-2 formatında)
+        for (let i = 1; i <= totalTablesCount; i++) {
+          const tableId = `masa-${i}`;
+          allStaticTables[tableId] = {
+            table_id: tableId,
+            table_name: `Masa ${i}`,
+            table_type: 'table',
+            table_number: i,
+            is_occupied: false,
+            total_amount: 0,
+            items: []
+          };
+        }
+        
+        // Paket masaları (paket-1, paket-2 formatında)
+        for (let i = 1; i <= packageTablesCount; i++) {
+          const tableId = `paket-${i}`;
+          allStaticTables[tableId] = {
+            table_id: tableId,
+            table_name: `Paket ${i}`,
+            table_type: 'package',
+            table_number: i,
+            is_occupied: false,
+            total_amount: 0,
+            items: []
+          };
+        }
 
-      console.log(`📋 Toplam ${Object.keys(allStaticTables).length} statik masa oluşturuldu`);
+        console.log(`📋 Toplam ${Object.keys(allStaticTables).length} statik masa oluşturuldu`);
+      } else {
+        console.log(`📋 Mevcut ${Object.keys(allStaticTables).length} statik masa kullanılıyor (zaten oluşturulmuş)`);
+      }
 
       // İlk render - tüm masaları göster (Firebase verisi olmasa bile)
       renderAllTables(allStaticTables);
@@ -2359,10 +2686,6 @@
       
       tablesUnsubscribe = tablesRef.onSnapshot((snapshot) => {
         console.log(`📊 Masalar snapshot alındı: ${snapshot.size} Firebase verisi bulundu`);
-        // Aktif sekme kontrolü - eğer masalar sekmesinde değilsek, render etme
-        if (activeTab !== 'tables') {
-          return;
-        }
 
         // Firebase'den gelen verileri statik masalarla birleştir
         snapshot.forEach((doc) => {
@@ -2381,40 +2704,40 @@
             allStaticTables[tableId].order_date = firebaseData.order_date || null;
             allStaticTables[tableId].order_time = firebaseData.order_time || null;
             allStaticTables[tableId].order_note = firebaseData.order_note || null;
+            // Firebase'den gelen table_name ve table_type'ı da güncelle
+            if (firebaseData.table_name) {
+              allStaticTables[tableId].table_name = firebaseData.table_name;
+            }
+            if (firebaseData.table_type) {
+              allStaticTables[tableId].table_type = firebaseData.table_type;
+            }
             console.log(`✅ Masa güncellendi: ${tableId} - Dolu: ${allStaticTables[tableId].is_occupied}, Tutar: ${allStaticTables[tableId].total_amount}`);
+          } else {
+            // Firebase'de var ama statik listede yok - yeni masa ekle (dinamik)
+            allStaticTables[tableId] = {
+              table_id: tableId,
+              table_name: firebaseData.table_name || tableId,
+              table_type: firebaseData.table_type || 'table',
+              table_number: firebaseData.table_number || parseInt(tableId.replace(/\D/g, '')) || 0,
+              is_occupied: firebaseData.is_occupied === true || 
+                          firebaseData.is_occupied === 'true' || 
+                          firebaseData.is_occupied === 1 ||
+                          (firebaseData.items && Array.isArray(firebaseData.items) && firebaseData.items.length > 0),
+              total_amount: parseFloat(firebaseData.total_amount || 0),
+              items: Array.isArray(firebaseData.items) ? firebaseData.items : [],
+              order_id: firebaseData.order_id || null,
+              order_date: firebaseData.order_date || null,
+              order_time: firebaseData.order_time || null,
+              order_note: firebaseData.order_note || null
+            };
+            console.log(`➕ Yeni masa eklendi: ${tableId}`);
           }
         });
         
-        // Aktif masa sayısını güncelle (sadece iç ve dış masalar)
+        // Aktif masa sayısını her zaman güncelle (masalar sekmesinde olmasak bile)
         updateActiveTablesCount(calculateActiveTablesCount());
 
-        // Masaları kategorilere ayır
-        const insideTables = [];
-        const outsideTables = [];
-        const packageTablesInside = [];
-        const packageTablesOutside = [];
-
-        Object.values(allStaticTables).forEach(table => {
-          if (table.table_id.startsWith('inside-') && !table.table_id.startsWith('package-')) {
-            insideTables.push(table);
-          } else if (table.table_id.startsWith('outside-') && !table.table_id.startsWith('package-')) {
-            outsideTables.push(table);
-          } else if (table.table_id.startsWith('package-inside-')) {
-            packageTablesInside.push(table);
-          } else if (table.table_id.startsWith('package-outside-')) {
-            packageTablesOutside.push(table);
-          }
-        });
-
-        console.log(`📊 Kategoriler: İçeri: ${insideTables.length}, Dışarı: ${outsideTables.length}, Paket İç: ${packageTablesInside.length}, Paket Dış: ${packageTablesOutside.length}`);
-
-        // Sırala (zaten sıralı ama emin olmak için)
-        insideTables.sort((a, b) => a.table_number - b.table_number);
-        outsideTables.sort((a, b) => a.table_number - b.table_number);
-        packageTablesInside.sort((a, b) => a.table_number - b.table_number);
-        packageTablesOutside.sort((a, b) => a.table_number - b.table_number);
-
-        // Render - tekrar aktif sekme kontrolü
+        // Render - sadece masalar sekmesindeyse render et
         if (activeTab !== 'tables') {
           return;
         }
@@ -2454,8 +2777,8 @@
       const items = Array.isArray(table.items) ? table.items : [];
       const itemsCount = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
       
-      const isInside = table.table_type === 'inside' || table.table_id.startsWith('inside-') || table.table_id.startsWith('package-inside-');
-      const isOutside = table.table_type === 'outside' || table.table_id.startsWith('outside-') || table.table_id.startsWith('package-outside-');
+      const isTable = table.table_type === 'table' || table.table_id.startsWith('masa-');
+      const isPackage = table.table_type === 'package' || table.table_id.startsWith('paket-');
       
       // Renkleri belirle
       let bgColor, borderColor, statusColor, statusText;
@@ -2467,8 +2790,8 @@
         statusText = 'Dolu';
       } else {
         // Boş masalar
-        if (isInside) {
-          // İç masalar: tema rengi ile açık ton
+        if (isTable) {
+          // Masalar: tema rengi ile açık ton
           const rgb = hexToRgb(themeColor || '#f97316');
           if (rgb) {
             bgColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1)`;
@@ -2480,8 +2803,8 @@
             borderColor = '#f9a8d4';
             statusColor = themeColor || '#f97316';
           }
-        } else if (isOutside) {
-          // Dış masalar: açık sarı
+        } else if (isPackage) {
+          // Paket masaları: açık sarı
           bgColor = '#fef3c7';
           borderColor = '#fde68a';
           statusColor = '#d97706';

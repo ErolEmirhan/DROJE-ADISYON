@@ -1235,6 +1235,7 @@ const SalesHistory = ({ themeColor = '#f97316' }) => {
                           tableName: selectedSaleForAdisyon.table_name || null,
                           tableType: selectedSaleForAdisyon.table_type || null,
                           orderNote: null,
+                          orderSource: selectedSaleForAdisyon.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
                           sale_date: selectedSaleForAdisyon.sale_date,
                           sale_time: selectedSaleForAdisyon.sale_time,
                           staff_name: selectedSaleForAdisyon.staff_name || null,

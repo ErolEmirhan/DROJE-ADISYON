@@ -30,6 +30,7 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [cart, setCart] = useState([]);
   const [orderNote, setOrderNote] = useState('');
+  const [orderSource, setOrderSource] = useState(null); // 'Trendyol', 'Yemeksepeti', or null
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showSplitPaymentModal, setShowSplitPaymentModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
@@ -251,6 +252,7 @@ function App() {
       const category = categories.find(c => c.id === product.category_id);
       if (category && category.name) {
         const categoryNameLower = category.name.toLowerCase();
+        const productNameLower = product.name.toLowerCase();
         
         // Porsiyon kategorisi için porsiyon seçici modal
         if (categoryNameLower === 'porsiyon') {
@@ -259,7 +261,14 @@ function App() {
           return;
         }
         
-        // Dürümler, Ekmek Arası, Balık kategorileri için soğan seçici modal
+        // Balık kategorisinde "Balık Porsiyon" ürünü için porsiyon seçici modal
+        if (categoryNameLower === 'balık' && productNameLower.includes('balık porsiyon')) {
+          setPendingPortionProduct(product);
+          setShowPortionModal(true);
+          return;
+        }
+        
+        // Dürümler, Ekmek Arası, Balık kategorileri için soğan seçici modal (Balık Porsiyon hariç)
         if (categoryNameLower === 'dürümler' || categoryNameLower === 'ekmek arası' || categoryNameLower === 'balık') {
           setPendingOnionProduct(product);
           setShowOnionModal(true);
@@ -384,6 +393,7 @@ function App() {
   const clearCart = () => {
     setCart([]);
     setOrderNote('');
+    setOrderSource(null);
     setSelectedTable(null); // Sepet temizlendiğinde masa seçimini de temizle
   };
 
@@ -411,6 +421,7 @@ function App() {
       tableName: selectedTable.name,
       tableType: selectedTable.type,
       orderNote: orderNote || null,
+      orderSource: orderSource || null, // 'Trendyol', 'Yemeksepeti', or null
       sale_date: new Date().toLocaleDateString('tr-TR'),
       sale_time: new Date().toLocaleTimeString('tr-TR'),
       cashierOnly: true // Sadece kasa yazıcısından fiyatlı fiş
@@ -464,7 +475,8 @@ function App() {
       tableId: selectedTable.id,
       tableName: selectedTable.name,
       tableType: selectedTable.type,
-      orderNote: orderNote || null
+      orderNote: orderNote || null,
+      orderSource: orderSource || null // 'Trendyol', 'Yemeksepeti', or null
     };
 
     try {
@@ -496,6 +508,7 @@ function App() {
           tableName: selectedTable.name,
           tableType: selectedTable.type,
           orderNote: orderNote || null,
+          orderSource: orderSource || null, // 'Trendyol', 'Yemeksepeti', or null
           sale_date: currentDate,
           sale_time: currentTime
         };
@@ -512,6 +525,7 @@ function App() {
         // Sepeti temizle
         setCart([]);
         setOrderNote('');
+    setOrderSource(null);
         
         // Mevcut siparişe ekleme durumunda masa seçimini koru, yeni sipariş durumunda temizle
         if (result.isNewOrder) {
@@ -557,7 +571,8 @@ function App() {
       items: cart,
       totalAmount,
       paymentMethod,
-      orderNote: orderNote || null
+      orderNote: orderNote || null,
+      orderSource: orderSource || null // 'Trendyol', 'Yemeksepeti', or null
     };
 
     const result = await window.electronAPI.createSale(saleData);
@@ -597,6 +612,7 @@ function App() {
         tableName: null, // Hızlı satış için masa yok
         tableType: null,
         orderNote: orderNote || null,
+        orderSource: orderSource || null, // 'Trendyol', 'Yemeksepeti', or null
         sale_date: new Date().toLocaleDateString('tr-TR'),
         sale_time: new Date().toLocaleTimeString('tr-TR')
       };
@@ -735,6 +751,7 @@ function App() {
     // Tüm state'leri temizle
     setCart([]);
     setOrderNote('');
+    setOrderSource(null);
     setSelectedTable(null);
     setCategories([]);
     setProducts([]);
@@ -979,6 +996,9 @@ function App() {
           totalAmount={getTotalAmount()}
           onSelectPayment={completeSale}
           onClose={() => setShowPaymentModal(false)}
+          tenantId={tenantId}
+          orderSource={orderSource}
+          onOrderSourceChange={setOrderSource}
         />
       )}
 
