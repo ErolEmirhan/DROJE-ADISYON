@@ -2638,38 +2638,38 @@
       const expectedTablesCount = totalTablesCount + packageTablesCount;
       
       if (Object.keys(allStaticTables).length === 0 || Object.keys(allStaticTables).length !== expectedTablesCount) {
-        // TÜM masaları statik olarak oluştur (masaüstü uygulamasındaki gibi)
-        // Global allStaticTables objesini kullan
-        allStaticTables = {};
-        
+      // TÜM masaları statik olarak oluştur (masaüstü uygulamasındaki gibi)
+      // Global allStaticTables objesini kullan
+      allStaticTables = {};
+      
         // Masalar (masa-1, masa-2 formatında)
         for (let i = 1; i <= totalTablesCount; i++) {
           const tableId = `masa-${i}`;
-          allStaticTables[tableId] = {
-            table_id: tableId,
+        allStaticTables[tableId] = {
+          table_id: tableId,
             table_name: `Masa ${i}`,
             table_type: 'table',
-            table_number: i,
-            is_occupied: false,
-            total_amount: 0,
-            items: []
-          };
-        }
-        
+          table_number: i,
+          is_occupied: false,
+          total_amount: 0,
+          items: []
+        };
+      }
+      
         // Paket masaları (paket-1, paket-2 formatında)
-        for (let i = 1; i <= packageTablesCount; i++) {
+      for (let i = 1; i <= packageTablesCount; i++) {
           const tableId = `paket-${i}`;
-          allStaticTables[tableId] = {
-            table_id: tableId,
-            table_name: `Paket ${i}`,
+        allStaticTables[tableId] = {
+          table_id: tableId,
+          table_name: `Paket ${i}`,
             table_type: 'package',
-            table_number: i,
-            is_occupied: false,
-            total_amount: 0,
-            items: []
-          };
-        }
-
+          table_number: i,
+          is_occupied: false,
+          total_amount: 0,
+          items: []
+        };
+      }
+      
         console.log(`📋 Toplam ${Object.keys(allStaticTables).length} statik masa oluşturuldu`);
       } else {
         console.log(`📋 Mevcut ${Object.keys(allStaticTables).length} statik masa kullanılıyor (zaten oluşturulmuş)`);

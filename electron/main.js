@@ -11727,7 +11727,7 @@ function startAPIServer() {
 
   appExpress.post('/api/orders', async (req, res) => {
     try {
-      const { items, totalAmount, tableId, tableName, tableType, orderNote, staffId } = req.body;
+      const { items, totalAmount, tableId, tableName, tableType, orderNote, staffId, orderSource } = req.body;
       
       // Stok kontrolü ve düşürme (sadece stok takibi yapılan ürünler için)
       for (const item of items) {
@@ -11812,6 +11812,7 @@ function startAPIServer() {
           order_time: orderTime,
           status: 'pending',
           order_note: orderNote || null,
+          order_source: orderSource || null, // 'Trendyol', 'Yemeksepeti', or null
           staff_id: staffId || null,
           staff_name: staffName
         });
@@ -11924,12 +11925,16 @@ function startAPIServer() {
         const adisyonTime = firstItem?.added_time || getFormattedTime(new Date());
         const adisyonStaffName = firstItem?.staff_name || staffName || null;
         
+        // Order source bilgisini al (existingOrder'dan veya yeni oluşturulan order'dan)
+        const finalOrder = existingOrder || (db.tableOrders || []).find(o => o.id === orderId);
+        const finalOrderSource = finalOrder?.order_source || orderSource || null;
+        
         const adisyonData = {
           items: itemsWithStaff,
           tableName: tableName,
           tableType: tableType,
           orderNote: orderNote || null,
-          orderSource: order.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
+          orderSource: finalOrderSource, // 'Trendyol', 'Yemeksepeti', or null
           // Items'lardan alınan tarih/saat ve personel bilgisini kullan
           sale_date: adisyonDate,
           sale_time: adisyonTime,
