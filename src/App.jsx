@@ -30,7 +30,6 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [cart, setCart] = useState([]);
   const [orderNote, setOrderNote] = useState('');
-  const [orderSource, setOrderSource] = useState(null); // 'Trendyol', 'Yemeksepeti', or null
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showSplitPaymentModal, setShowSplitPaymentModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
@@ -277,6 +276,16 @@ function App() {
       }
     }
     
+    // Yemeksepeti veya TrendyolGO masası seçiliyse özel fiyatları kullan
+    let productPrice = product.price;
+    if (selectedTable) {
+      if (selectedTable.type === 'yemeksepeti' && product.yemeksepeti_price) {
+        productPrice = product.yemeksepeti_price;
+      } else if (selectedTable.type === 'trendyolgo' && product.trendyolgo_price) {
+        productPrice = product.trendyolgo_price;
+      }
+    }
+    
     setCart(prevCart => {
       const existingItem = prevCart.find(item => item.id === product.id && !item.onionOption && !item.portion);
       if (existingItem) {
@@ -286,7 +295,7 @@ function App() {
             : item
         );
       }
-      return [...prevCart, { ...product, quantity: 1 }];
+      return [...prevCart, { ...product, price: productPrice, quantity: 1 }];
     });
   };
   
@@ -294,6 +303,16 @@ function App() {
     if (!pendingOnionProduct) {
       setShowOnionModal(false);
       return;
+    }
+    
+    // Yemeksepeti veya TrendyolGO masası seçiliyse özel fiyatları kullan
+    let productPrice = pendingOnionProduct.price;
+    if (selectedTable) {
+      if (selectedTable.type === 'yemeksepeti' && pendingOnionProduct.yemeksepeti_price) {
+        productPrice = pendingOnionProduct.yemeksepeti_price;
+      } else if (selectedTable.type === 'trendyolgo' && pendingOnionProduct.trendyolgo_price) {
+        productPrice = pendingOnionProduct.trendyolgo_price;
+      }
     }
     
     setCart(prevCart => {
@@ -305,7 +324,7 @@ function App() {
             : item
         );
       }
-      return [...prevCart, { ...pendingOnionProduct, quantity: 1, onionOption: option }];
+      return [...prevCart, { ...pendingOnionProduct, price: productPrice, quantity: 1, onionOption: option }];
     });
     
     setShowOnionModal(false);
@@ -318,8 +337,18 @@ function App() {
       return;
     }
     
+    // Yemeksepeti veya TrendyolGO masası seçiliyse özel fiyatları kullan
+    let basePrice = pendingPortionProduct.price;
+    if (selectedTable) {
+      if (selectedTable.type === 'yemeksepeti' && pendingPortionProduct.yemeksepeti_price) {
+        basePrice = pendingPortionProduct.yemeksepeti_price;
+      } else if (selectedTable.type === 'trendyolgo' && pendingPortionProduct.trendyolgo_price) {
+        basePrice = pendingPortionProduct.trendyolgo_price;
+      }
+    }
+    
     // Porsiyona göre fiyat hesapla
-    const originalPrice = pendingPortionProduct.price;
+    const originalPrice = basePrice;
     const newPrice = originalPrice * portion;
     
     setCart(prevCart => {
@@ -390,10 +419,17 @@ function App() {
     );
   };
 
+  // Masa tipine göre orderSource'u belirle
+  const getOrderSourceFromTable = (table) => {
+    if (!table) return null;
+    if (table.type === 'yemeksepeti') return 'Yemeksepeti';
+    if (table.type === 'trendyolgo') return 'Trendyol';
+    return null;
+  };
+
   const clearCart = () => {
     setCart([]);
     setOrderNote('');
-    setOrderSource(null);
     setSelectedTable(null); // Sepet temizlendiğinde masa seçimini de temizle
   };
 
@@ -421,7 +457,7 @@ function App() {
       tableName: selectedTable.name,
       tableType: selectedTable.type,
       orderNote: orderNote || null,
-      orderSource: orderSource || null, // 'Trendyol', 'Yemeksepeti', or null
+      orderSource: getOrderSourceFromTable(selectedTable), // 'Trendyol', 'Yemeksepeti', or null
       sale_date: new Date().toLocaleDateString('tr-TR'),
       sale_time: new Date().toLocaleTimeString('tr-TR'),
       cashierOnly: true // Sadece kasa yazıcısından fiyatlı fiş
@@ -476,7 +512,7 @@ function App() {
       tableName: selectedTable.name,
       tableType: selectedTable.type,
       orderNote: orderNote || null,
-      orderSource: orderSource || null // 'Trendyol', 'Yemeksepeti', or null
+      orderSource: getOrderSourceFromTable(selectedTable) // 'Trendyol', 'Yemeksepeti', or null
     };
 
     try {
@@ -508,7 +544,7 @@ function App() {
           tableName: selectedTable.name,
           tableType: selectedTable.type,
           orderNote: orderNote || null,
-          orderSource: orderSource || null, // 'Trendyol', 'Yemeksepeti', or null
+          orderSource: getOrderSourceFromTable(selectedTable), // 'Trendyol', 'Yemeksepeti', or null
           sale_date: currentDate,
           sale_time: currentTime
         };
@@ -525,7 +561,6 @@ function App() {
         // Sepeti temizle
         setCart([]);
         setOrderNote('');
-    setOrderSource(null);
         
         // Mevcut siparişe ekleme durumunda masa seçimini koru, yeni sipariş durumunda temizle
         if (result.isNewOrder) {
@@ -572,7 +607,7 @@ function App() {
       totalAmount,
       paymentMethod,
       orderNote: orderNote || null,
-      orderSource: orderSource || null // 'Trendyol', 'Yemeksepeti', or null
+      orderSource: selectedTable ? getOrderSourceFromTable(selectedTable) : null // 'Trendyol', 'Yemeksepeti', or null
     };
 
     const result = await window.electronAPI.createSale(saleData);
@@ -612,7 +647,7 @@ function App() {
         tableName: null, // Hızlı satış için masa yok
         tableType: null,
         orderNote: orderNote || null,
-        orderSource: orderSource || null, // 'Trendyol', 'Yemeksepeti', or null
+        orderSource: null, // Hızlı satış için orderSource yok
         sale_date: new Date().toLocaleDateString('tr-TR'),
         sale_time: new Date().toLocaleTimeString('tr-TR')
       };
@@ -751,7 +786,6 @@ function App() {
     // Tüm state'leri temizle
     setCart([]);
     setOrderNote('');
-    setOrderSource(null);
     setSelectedTable(null);
     setCategories([]);
     setProducts([]);
@@ -844,6 +878,7 @@ function App() {
         onExit={handleExit}
         businessName={businessName}
         themeColor={themeColor}
+        tenantId={tenantId}
       />
       
       {currentView === 'tables' ? (
@@ -997,8 +1032,6 @@ function App() {
           onSelectPayment={completeSale}
           onClose={() => setShowPaymentModal(false)}
           tenantId={tenantId}
-          orderSource={orderSource}
-          onOrderSourceChange={setOrderSource}
         />
       )}
 
@@ -1294,7 +1327,19 @@ function App() {
             {/* Footer */}
             <div className="relative z-10 border-t border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 flex justify-center">
               <button
-                onClick={() => setBroadcastMessage(null)}
+                onClick={async () => {
+                  // Mesajı okundu olarak işaretle
+                  if (broadcastMessage.id && window.electronAPI && window.electronAPI.markBroadcastRead) {
+                    try {
+                      await window.electronAPI.markBroadcastRead(broadcastMessage.id);
+                      console.log('✅ Broadcast mesajı okundu olarak işaretlendi:', broadcastMessage.id);
+                    } catch (error) {
+                      console.error('❌ Broadcast okunma işaretleme hatası:', error);
+                    }
+                  }
+                  // Modal'ı kapat
+                  setBroadcastMessage(null);
+                }}
                 className="px-12 py-4 bg-gradient-to-r from-indigo-600 via-orange-500 to-orange-600 hover:from-indigo-700 hover:via-orange-600 hover:to-orange-700 text-white font-bold rounded-2xl transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 relative overflow-hidden group"
                 style={{
                   boxShadow: '0 8px 20px rgba(102, 126, 234, 0.4)',

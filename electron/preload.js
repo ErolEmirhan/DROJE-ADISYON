@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getTableSyncStatus: () => ipcRenderer.invoke('get-table-sync-status'),
   // Broadcast Message API
   sendBroadcastMessage: (message) => ipcRenderer.invoke('send-broadcast-message', message),
+  markBroadcastRead: (messageId) => ipcRenderer.invoke('mark-broadcast-read', messageId),
   onBroadcastMessage: (callback) => {
     ipcRenderer.on('broadcast-message', (event, data) => callback(data));
     return () => {

@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { getThemeColors } from '../utils/themeUtils';
+import { isYakasGrill } from '../utils/sultanSomatTables';
 
-const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316' }) => {
+const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', tenantId = null }) => {
   // Tema renklerini hesapla
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
+  const isYakasGrillMode = tenantId && isYakasGrill(tenantId);
   const [activeTab, setActiveTab] = useState('password'); // 'password', 'products', 'printers', or 'stock'
+  const [showPlatformPriceModal, setShowPlatformPriceModal] = useState(false);
+  const [platformPriceType, setPlatformPriceType] = useState(null); // 'yemeksepeti' or 'trendyolgo'
   const [printerSubTab, setPrinterSubTab] = useState('usb'); // 'usb' or 'network'
   
   // Stock management state
@@ -929,6 +933,53 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316' }) =
 
           {activeTab === 'products' && (
             <div className="space-y-6">
+              {/* Yaka's Grill için Platform Fiyat Yönetimi Butonları */}
+              {isYakasGrillMode && (
+                <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl p-6 border-2 border-purple-200 mb-6">
+                  <h3 className="text-lg font-bold text-gray-800 mb-4">Platform Fiyat Yönetimi</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      onClick={() => {
+                        setPlatformPriceType('yemeksepeti');
+                        setShowPlatformPriceModal(true);
+                      }}
+                      className="px-6 py-4 rounded-xl font-semibold text-sm bg-gradient-to-r from-red-500 via-red-600 to-red-500 hover:from-red-600 hover:to-red-700 text-white shadow-lg transition-all duration-300 hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      <img 
+                        src="/yemeksepeti.png" 
+                        alt="Yemeksepeti" 
+                        className="w-6 h-6 rounded-full object-cover"
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                          e.target.nextSibling.style.display = 'block';
+                        }}
+                      />
+                      <span style={{display: 'none'}}>🍽️</span>
+                      <span>Yemeksepeti Fiyat Yönetimi</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPlatformPriceType('trendyolgo');
+                        setShowPlatformPriceModal(true);
+                      }}
+                      className="px-6 py-4 rounded-xl font-semibold text-sm bg-gradient-to-r from-yellow-400 via-orange-500 to-yellow-500 hover:from-yellow-500 hover:to-orange-600 text-white shadow-lg transition-all duration-300 hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      <img 
+                        src="/trendyol.webp" 
+                        alt="Trendyol" 
+                        className="w-6 h-6 rounded-full object-cover"
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                          e.target.nextSibling.style.display = 'block';
+                        }}
+                      />
+                      <span style={{display: 'none'}}>🛒</span>
+                      <span>TrendyolGO Fiyat Yönetimi</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+              
               {/* Product Form */}
               <div className="bg-gradient-to-br from-orange-50 to-orange-50 rounded-2xl p-6 border border-orange-200">
                 <h3 className="text-xl font-bold text-gray-800 mb-4">
@@ -2193,6 +2244,21 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316' }) =
         </div>
       )}
 
+      {/* Platform Fiyat Yönetimi Modal */}
+      {showPlatformPriceModal && platformPriceType && (
+        <PlatformPriceModal
+          platformType={platformPriceType}
+          products={products}
+          categories={categories}
+          onClose={() => {
+            setShowPlatformPriceModal(false);
+            setPlatformPriceType(null);
+            loadAllProducts(); // Ürünleri yenile
+          }}
+          themeColor={themeColor}
+        />
+      )}
+
       {/* Delete Category Confirmation Modal */}
       {deleteCategoryModal && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-lg flex items-center justify-center z-[1000] animate-fade-in px-4">
@@ -2236,6 +2302,280 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316' }) =
           </div>
         </div>
       )}
+    </div>,
+    document.body
+  );
+};
+
+// Platform Fiyat Yönetimi Modal Komponenti
+const PlatformPriceModal = ({ platformType, products, categories, onClose, themeColor }) => {
+  const [editingPrices, setEditingPrices] = useState({});
+  const [savingProductId, setSavingProductId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategoryId, setSelectedCategoryId] = useState(null);
+  const [localProducts, setLocalProducts] = useState(products);
+
+  // products prop'u değiştiğinde local state'i güncelle
+  useEffect(() => {
+    setLocalProducts(products);
+  }, [products]);
+
+  const platformName = platformType === 'yemeksepeti' ? 'Yemeksepeti' : 'TrendyolGO';
+  const platformColor = platformType === 'yemeksepeti' 
+    ? 'from-red-500 via-red-600 to-red-500' 
+    : 'from-yellow-400 via-orange-500 to-yellow-500';
+
+  // Filtrelenmiş ürünler
+  const filteredProducts = useMemo(() => {
+    let filtered = localProducts;
+    
+    // Kategori filtresi
+    if (selectedCategoryId) {
+      filtered = filtered.filter(p => p.category_id === selectedCategoryId);
+    }
+    
+    // Arama filtresi
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(p => 
+        p.name.toLowerCase().includes(query)
+      );
+    }
+    
+    return filtered;
+  }, [localProducts, selectedCategoryId, searchQuery]);
+
+  const handlePriceChange = (productId, value) => {
+    setEditingPrices(prev => ({
+      ...prev,
+      [productId]: value
+    }));
+  };
+
+  const handleSavePrice = async (product) => {
+    const newPrice = editingPrices[product.id];
+    if (!newPrice || isNaN(parseFloat(newPrice)) || parseFloat(newPrice) < 0) {
+      return;
+    }
+
+    setSavingProductId(product.id);
+    
+    try {
+      const priceField = platformType === 'yemeksepeti' ? 'yemeksepeti_price' : 'trendyolgo_price';
+      
+      // Ürünü güncelle
+      const updatedProduct = {
+        ...product,
+        [priceField]: parseFloat(newPrice)
+      };
+      
+      const result = await window.electronAPI.updateProduct(updatedProduct);
+      
+      // updateProduct başarılı olursa result.success veya result.product döner
+      if (result && (result.success || result.product)) {
+        // Local products state'ini güncelle
+        setLocalProducts(prevProducts => 
+          prevProducts.map(p => 
+            p.id === product.id 
+              ? { ...p, [priceField]: parseFloat(newPrice) }
+              : p
+          )
+        );
+        
+        // Local state'i güncelle
+        setEditingPrices(prev => {
+          const newPrices = { ...prev };
+          delete newPrices[product.id];
+          return newPrices;
+        });
+        
+        // Başarı mesajı (opsiyonel)
+        console.log(`✅ ${product.name} için ${platformName} fiyatı güncellendi: ${newPrice}₺`);
+      } else {
+        throw new Error((result && result.error) || 'Fiyat güncellenemedi');
+      }
+      
+    } catch (error) {
+      console.error('Fiyat güncelleme hatası:', error);
+      alert(`Fiyat güncellenemedi: ${error.message}`);
+    } finally {
+      setSavingProductId(null);
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[2000] animate-fade-in px-4 py-8">
+      <div className="bg-white rounded-3xl w-full max-w-6xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)] transform animate-scale-in relative overflow-hidden border border-gray-200 max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className={`px-8 py-6 border-b border-gray-200 bg-gradient-to-r ${platformColor} text-white`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {platformType === 'yemeksepeti' ? (
+                <img 
+                  src="/yemeksepeti.png" 
+                  alt="Yemeksepeti" 
+                  className="w-10 h-10 rounded-full object-cover bg-white p-1"
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                    e.target.nextSibling.style.display = 'block';
+                  }}
+                />
+              ) : (
+                <img 
+                  src="/trendyol.webp" 
+                  alt="Trendyol" 
+                  className="w-10 h-10 rounded-full object-cover bg-white p-1"
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                    e.target.nextSibling.style.display = 'block';
+                  }}
+                />
+              )}
+              <span style={{display: 'none'}}>{platformType === 'yemeksepeti' ? '🍽️' : '🛒'}</span>
+              <h2 className="text-2xl font-bold">{platformName} Fiyat Yönetimi</h2>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-10 h-10 rounded-xl bg-white/20 hover:bg-white/30 flex items-center justify-center transition-all duration-200"
+            >
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="px-8 py-4 border-b border-gray-200 bg-gray-50">
+          <div className="flex items-center gap-4">
+            {/* Kategori Filtresi */}
+            <select
+              value={selectedCategoryId || ''}
+              onChange={(e) => setSelectedCategoryId(e.target.value ? parseInt(e.target.value) : null)}
+              className="px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none bg-white"
+            >
+              <option value="">Tüm Kategoriler</option>
+              {categories.map(cat => (
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              ))}
+            </select>
+
+            {/* Arama */}
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Ürün ara..."
+                className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none"
+              />
+              <svg className="w-5 h-5 text-gray-400 absolute right-3 top-1/2 transform -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* Products List */}
+        <div className="flex-1 overflow-y-auto px-8 py-6">
+          <div className="space-y-3">
+            {filteredProducts.map((product) => {
+              const category = categories.find(c => c.id === product.category_id);
+              // Local state'teki güncel ürünü bul (güncellenmiş fiyatlar için)
+              const currentProduct = localProducts.find(p => p.id === product.id) || product;
+              const priceField = platformType === 'yemeksepeti' ? 'yemeksepeti_price' : 'trendyolgo_price';
+              const currentPrice = currentProduct[priceField] !== undefined && currentProduct[priceField] !== null 
+                ? currentProduct[priceField] 
+                : currentProduct.price;
+              const isEditing = editingPrices[product.id] !== undefined;
+              const editValue = isEditing ? editingPrices[product.id] : currentPrice;
+
+              return (
+                <div
+                  key={product.id}
+                  className="bg-white rounded-xl p-4 border-2 border-gray-200 hover:border-orange-300 transition-all"
+                >
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <h3 className="font-bold text-gray-900">{product.name}</h3>
+                        {category && (
+                          <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-md">
+                            {category.name}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 text-sm text-gray-600">
+                        <span>Normal Fiyat: <span className="font-semibold text-gray-800">{product.price.toFixed(2)}₺</span></span>
+                        <span className="text-gray-400">|</span>
+                        <span>{platformName} Fiyatı: <span className="font-semibold text-orange-600">{currentPrice.toFixed(2)}₺</span></span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {isEditing ? (
+                        <>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={editValue}
+                            onChange={(e) => handlePriceChange(product.id, e.target.value)}
+                            className="w-32 px-3 py-2 rounded-lg border-2 border-orange-300 focus:border-orange-500 focus:outline-none text-right"
+                            placeholder="Fiyat"
+                          />
+                          <button
+                            onClick={() => handleSavePrice(product)}
+                            disabled={savingProductId === product.id}
+                            className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white rounded-lg font-semibold transition-all disabled:opacity-50"
+                          >
+                            {savingProductId === product.id ? 'Kaydediliyor...' : 'Kaydet'}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingPrices(prev => {
+                                const newPrices = { ...prev };
+                                delete newPrices[product.id];
+                                return newPrices;
+                              });
+                            }}
+                            className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-semibold transition-all"
+                          >
+                            İptal
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => handlePriceChange(product.id, currentPrice)}
+                          className="px-4 py-2 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-lg font-semibold transition-all"
+                        >
+                          Düzenle
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {filteredProducts.length === 0 && (
+            <div className="text-center py-12 text-gray-500">
+              <p>Ürün bulunamadı</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-8 py-4 border-t border-gray-200 bg-gray-50">
+          <button
+            onClick={onClose}
+            className="w-full px-6 py-3 bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white rounded-xl font-semibold transition-all"
+          >
+            Kapat
+          </button>
+        </div>
+      </div>
     </div>,
     document.body
   );

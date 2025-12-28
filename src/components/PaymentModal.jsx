@@ -1,8 +1,7 @@
 import React from 'react';
 import { isYakasGrill } from '../utils/sultanSomatTables';
 
-const PaymentModal = ({ totalAmount, onSelectPayment, onClose, tenantId = null, orderSource = null, onOrderSourceChange = null }) => {
-  const isYakasGrillMode = tenantId && isYakasGrill(tenantId);
+const PaymentModal = ({ totalAmount, onSelectPayment, onClose, tenantId = null }) => {
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
       <div className="bg-white backdrop-blur-xl border border-purple-200 rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl">
@@ -14,46 +13,6 @@ const PaymentModal = ({ totalAmount, onSelectPayment, onClose, tenantId = null, 
           </p>
         </div>
 
-        {/* Yaka's Grill için Trendyol/Yemeksepeti seçimi */}
-        {isYakasGrillMode && onOrderSourceChange && (
-          <div className="mb-6">
-            <p className="text-sm font-semibold text-gray-700 mb-3 text-center">Sipariş Kaynağı (Opsiyonel)</p>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => onOrderSourceChange(orderSource === 'Trendyol' ? null : 'Trendyol')}
-                className={`flex-1 px-4 py-3 rounded-xl font-semibold text-sm transition-all duration-200 flex items-center justify-center gap-2 ${
-                  orderSource === 'Trendyol'
-                    ? 'bg-gradient-to-r from-yellow-400 via-orange-500 to-yellow-500 text-white shadow-lg scale-105'
-                    : 'bg-white border-2 border-gray-300 text-gray-700 hover:border-gray-400'
-                }`}
-                title="Trendyol Siparişi"
-              >
-                <img 
-                  src="/trendyol.webp" 
-                  alt="Trendyol" 
-                  className="w-8 h-8 rounded-full object-cover"
-                />
-                <span>Trendyol</span>
-              </button>
-              <button
-                onClick={() => onOrderSourceChange(orderSource === 'Yemeksepeti' ? null : 'Yemeksepeti')}
-                className={`flex-1 px-4 py-3 rounded-xl font-semibold text-sm transition-all duration-200 flex items-center justify-center gap-2 ${
-                  orderSource === 'Yemeksepeti'
-                    ? 'bg-gradient-to-r from-red-500 via-red-600 to-red-500 text-white shadow-lg scale-105'
-                    : 'bg-white border-2 border-gray-300 text-gray-700 hover:border-gray-400'
-                }`}
-                title="Yemeksepeti Siparişi"
-              >
-                <img 
-                  src="/yemeksepeti.png" 
-                  alt="Yemeksepeti" 
-                  className="w-8 h-8 rounded-full object-cover"
-                />
-                <span>Yemeksepeti</span>
-              </button>
-            </div>
-          </div>
-        )}
 
         <div className="space-y-4 mb-6">
           <button

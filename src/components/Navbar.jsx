@@ -6,7 +6,7 @@ import SettingsSplash from './SettingsSplash';
 import DateTimeDisplay from './DateTimeDisplay';
 import { getThemeColors } from '../utils/themeUtils';
 
-const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType, onRoleSplash, onProductsUpdated, onExit, businessName = 'MAKARA', themeColor = '#f97316' }) => {
+const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType, onRoleSplash, onProductsUpdated, onExit, businessName = 'MAKARA', themeColor = '#f97316', tenantId = null }) => {
   // Tema renklerini hesapla
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   
@@ -325,7 +325,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
         </div>
         <div>
           <h1 className="text-lg font-bold bg-clip-text text-transparent" style={{ backgroundImage: theme.gradient.main }}>{businessName} Satış Sistemi</h1>
-          <p className="text-xs text-gray-500 font-medium">v2.5.5 DROJE SYSTEMS</p>
+          <p className="text-xs text-gray-500 font-medium">v2.5.6 DROJE SYSTEMS</p>
         </div>
         <div className="ml-4 pl-4 border-l border-gray-300">
           <DateTimeDisplay />
@@ -581,6 +581,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
           onClose={() => setShowSettingsModal(false)}
           onProductsUpdated={onProductsUpdated}
           themeColor={themeColor}
+          tenantId={tenantId}
         />
       )}
 

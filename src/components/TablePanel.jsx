@@ -57,6 +57,28 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
     }));
   }, [isYakasGrillMode]);
 
+  // Yaka's Grill için Yemeksepeti masaları
+  const yakasGrillYemeksepetiTables = useMemo(() => {
+    if (!isYakasGrillMode) return [];
+    return Array.from({ length: 20 }, (_, i) => ({
+      id: `yemeksepeti-${i + 1}`,
+      number: i + 1,
+      type: 'yemeksepeti',
+      name: `Yemeksepeti-${i + 1}`
+    }));
+  }, [isYakasGrillMode]);
+
+  // Yaka's Grill için TrendyolGO masaları
+  const yakasGrillTrendyolGOTables = useMemo(() => {
+    if (!isYakasGrillMode) return [];
+    return Array.from({ length: 20 }, (_, i) => ({
+      id: `trendyolgo-${i + 1}`,
+      number: i + 1,
+      type: 'trendyolgo',
+      name: `TrendyolGO-${i + 1}`
+    }));
+  }, [isYakasGrillMode]);
+
   // Normal mod için masalar
   const insideTables = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode) return [];
@@ -192,7 +214,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       const allTables = isSultanSomatiMode 
         ? sultanSomatiTables 
         : isYakasGrillMode
-        ? [...yakasGrillTables, ...yakasGrillPackageTables]
+        ? [...yakasGrillTables, ...yakasGrillPackageTables, ...yakasGrillYemeksepetiTables, ...yakasGrillTrendyolGOTables]
         : [...insideTables, ...outsideTables, ...packageTables];
       
       // Masayı bul
@@ -242,6 +264,24 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
             type: 'package',
             name: `Paket ${number}`
           };
+        } else if (tableId.startsWith('yemeksepeti-')) {
+          // Yaka's Grill Yemeksepeti masası
+          const number = parseInt(tableId.replace('yemeksepeti-', ''));
+          table = {
+            id: tableId,
+            number: number,
+            type: 'yemeksepeti',
+            name: `Yemeksepeti-${number}`
+          };
+        } else if (tableId.startsWith('trendyolgo-')) {
+          // Yaka's Grill TrendyolGO masası
+          const number = parseInt(tableId.replace('trendyolgo-', ''));
+          table = {
+            id: tableId,
+            number: number,
+            type: 'trendyolgo',
+            name: `TrendyolGO-${number}`
+          };
         } else if (tableId.startsWith('inside-')) {
           const number = parseInt(tableId.replace('inside-', ''));
           table = {
@@ -288,8 +328,93 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       return;
     }
 
-    // Önce ödeme yöntemi seçimi modal'ı göster
-    const paymentMethod = await new Promise((resolve) => {
+    // Yemeksepeti veya TrendyolGO masası mı kontrol et
+    const isOnlineTable = selectedOrder.table_id && (
+      selectedOrder.table_id.startsWith('yemeksepeti-') || 
+      selectedOrder.table_id.startsWith('trendyolgo-')
+    );
+
+    let paymentMethod = null;
+
+    // Eğer online masa ise otomatik "Online" seç
+    if (isOnlineTable) {
+      paymentMethod = 'Online';
+      
+      // 2 saniyelik loading kartı göster
+      const loadingModal = document.createElement('div');
+      loadingModal.className = 'fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[2000]';
+      loadingModal.innerHTML = `
+        <div class="bg-white rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl transform animate-scale-in">
+          <div class="text-center">
+            <div class="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-r from-blue-500 to-cyan-500 flex items-center justify-center shadow-lg animate-pulse">
+              <svg class="w-10 h-10 text-white animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-2">Online Ödeme Alınıyor...</h3>
+            <p class="text-gray-600 mb-6">Lütfen bekleyin</p>
+            <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+              <div class="bg-gradient-to-r from-blue-500 to-cyan-500 h-2 rounded-full animate-progress" style="width: 0%; animation: progress 2s linear forwards;"></div>
+            </div>
+          </div>
+        </div>
+        <style>
+          @keyframes progress {
+            from { width: 0%; }
+            to { width: 100%; }
+          }
+          @keyframes scale-in {
+            from { transform: scale(0.9); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+          }
+          .animate-scale-in {
+            animation: scale-in 0.3s ease-out;
+          }
+        </style>
+      `;
+      document.body.appendChild(loadingModal);
+
+      // 2 saniye bekle
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Loading kartını kaldır ve başarı kartını göster
+      document.body.removeChild(loadingModal);
+      
+      const successModal = document.createElement('div');
+      successModal.className = 'fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[2000]';
+      successModal.innerHTML = `
+        <div class="bg-white rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl transform animate-scale-in">
+          <div class="text-center">
+            <div class="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-r from-green-500 to-emerald-500 flex items-center justify-center shadow-lg">
+              <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-2">Başarıyla Alındı</h3>
+            <p class="text-gray-600">Online ödeme başarıyla tamamlandı</p>
+          </div>
+        </div>
+        <style>
+          @keyframes scale-in {
+            from { transform: scale(0.9); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+          }
+          .animate-scale-in {
+            animation: scale-in 0.3s ease-out;
+          }
+        </style>
+      `;
+      document.body.appendChild(successModal);
+
+      // 1 saniye sonra kaldır
+      setTimeout(() => {
+        if (document.body.contains(successModal)) {
+          document.body.removeChild(successModal);
+        }
+      }, 1000);
+    } else {
+      // Normal masa için ödeme yöntemi seçimi modal'ı göster
+      paymentMethod = await new Promise((resolve) => {
       const modal = document.createElement('div');
       modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
       modal.innerHTML = `
@@ -337,7 +462,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
         document.body.removeChild(modal);
         resolve(null);
       };
-    });
+      });
+    }
 
     if (!paymentMethod) {
       return; // Kullanıcı iptal etti
@@ -525,8 +651,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
           ))}
         </div>
       ) : isYakasGrillMode ? (
-        /* Yaka's Grill için Salon/Paket Seçimi */
-        <div className="flex justify-center gap-4 mb-4">
+        /* Yaka's Grill için Salon/Paket/Yemeksepeti/TrendyolGO Seçimi */
+        <div className="flex justify-center gap-4 mb-4 flex-wrap">
           <button
             onClick={() => setSelectedType('salon')}
             className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 text-lg ${
@@ -556,6 +682,52 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
               </svg>
               <span>Paket</span>
+            </div>
+          </button>
+
+          <button
+            onClick={() => setSelectedType('yemeksepeti')}
+            className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 text-lg ${
+              selectedType === 'yemeksepeti'
+                ? 'bg-gradient-to-r from-red-500 via-red-600 to-red-500 text-white shadow-lg transform scale-105'
+                : 'bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700'
+            }`}
+          >
+            <div className="flex items-center space-x-3">
+              <img 
+                src="/yemeksepeti.png" 
+                alt="Yemeksepeti" 
+                className="w-6 h-6 rounded-full object-cover"
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                  e.target.nextSibling.style.display = 'block';
+                }}
+              />
+              <span style={{display: 'none'}}>🍽️</span>
+              <span>Yemeksepeti</span>
+            </div>
+          </button>
+
+          <button
+            onClick={() => setSelectedType('trendyolgo')}
+            className={`px-8 py-4 rounded-xl font-bold transition-all duration-300 text-lg ${
+              selectedType === 'trendyolgo'
+                ? 'bg-gradient-to-r from-yellow-400 via-orange-500 to-yellow-500 text-white shadow-lg transform scale-105'
+                : 'bg-yellow-50 text-yellow-600 hover:bg-yellow-100 hover:text-yellow-700'
+            }`}
+          >
+            <div className="flex items-center space-x-3">
+              <img 
+                src="/trendyol.webp" 
+                alt="Trendyol" 
+                className="w-6 h-6 rounded-full object-cover"
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                  e.target.nextSibling.style.display = 'block';
+                }}
+              />
+              <span style={{display: 'none'}}>🛒</span>
+              <span>TrendyolGO</span>
             </div>
           </button>
         </div>
@@ -598,12 +770,19 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
 
       {/* Masalar Grid */}
       <div className="grid grid-cols-10 gap-1 mb-6">
-        {(isSultanSomatiMode ? currentSalonTables : isYakasGrillMode ? (selectedType === 'salon' ? yakasGrillTables : yakasGrillPackageTables) : (selectedType === 'inside' ? insideTables : outsideTables)).map((table) => {
+        {(isSultanSomatiMode ? currentSalonTables : isYakasGrillMode ? (
+          selectedType === 'salon' ? yakasGrillTables : 
+          selectedType === 'package' ? yakasGrillPackageTables :
+          selectedType === 'yemeksepeti' ? yakasGrillYemeksepetiTables :
+          selectedType === 'trendyolgo' ? yakasGrillTrendyolGOTables : yakasGrillTables
+        ) : (selectedType === 'inside' ? insideTables : outsideTables)).map((table) => {
           const hasOrder = getTableOrder(table.id);
           const isOutside = !isSultanSomatiMode && !isYakasGrillMode && table.type === 'outside';
           const isSultanTable = isSultanSomatiMode && table.salonId;
           const isYakasGrillTable = isYakasGrillMode && table.type === 'masa';
           const isYakasGrillPackageTable = isYakasGrillMode && table.type === 'package';
+          const isYakasGrillYemeksepetiTable = isYakasGrillMode && table.type === 'yemeksepeti';
+          const isYakasGrillTrendyolGOTable = isYakasGrillMode && table.type === 'trendyolgo';
           
           return (
             <button
@@ -622,6 +801,12 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                   : isYakasGrillPackageTable
                   // Yaka's Grill paket masaları – turuncu/amber tonlar
                   ? 'bg-gradient-to-br from-orange-50 to-amber-100 border-orange-300 hover:border-orange-400'
+                  : isYakasGrillYemeksepetiTable
+                  // Yaka's Grill Yemeksepeti masaları – kırmızı tonlar
+                  ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-300 hover:border-red-400'
+                  : isYakasGrillTrendyolGOTable
+                  // Yaka's Grill TrendyolGO masaları – sarı/turuncu tonlar
+                  ? 'bg-gradient-to-br from-yellow-50 to-orange-100 border-yellow-300 hover:border-yellow-400'
                   : isOutside
                   // Dışarı boş masalar – soft sarı
                   ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-300 hover:border-amber-400'
@@ -640,6 +825,10 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                     ? 'bg-gradient-to-br from-blue-200 to-cyan-300'
                     : isYakasGrillPackageTable
                     ? 'bg-gradient-to-br from-orange-200 to-amber-300'
+                    : isYakasGrillYemeksepetiTable
+                    ? 'bg-gradient-to-br from-red-200 to-red-300'
+                    : isYakasGrillTrendyolGOTable
+                    ? 'bg-gradient-to-br from-yellow-200 to-orange-300'
                     : isOutside
                     ? 'bg-gradient-to-br from-amber-200 to-amber-300'
                     : 'bg-gradient-to-br from-pink-100 to-pink-200'
@@ -659,6 +848,26 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                     <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                     </svg>
+                  ) : isYakasGrillYemeksepetiTable ? (
+                    <img 
+                      src="/yemeksepeti.png" 
+                      alt="Yemeksepeti" 
+                      className="w-5 h-5 rounded-full object-cover"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        e.target.nextSibling.style.display = 'block';
+                      }}
+                    />
+                  ) : isYakasGrillTrendyolGOTable ? (
+                    <img 
+                      src="/trendyol.webp" 
+                      alt="Trendyol" 
+                      className="w-5 h-5 rounded-full object-cover"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        e.target.nextSibling.style.display = 'block';
+                      }}
+                    />
                   ) : (
                     <svg className={`w-5 h-5 ${isOutside ? 'text-white' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
@@ -674,6 +883,10 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                     ? 'text-blue-900'
                     : isYakasGrillPackageTable
                     ? 'text-orange-900'
+                    : isYakasGrillYemeksepetiTable
+                    ? 'text-red-900'
+                    : isYakasGrillTrendyolGOTable
+                    ? 'text-yellow-900'
                     : isOutside
                     ? 'text-amber-900'
                     : 'text-pink-900'
@@ -688,6 +901,10 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                       ? 'bg-blue-100 text-blue-800'
                       : isYakasGrillPackageTable
                       ? 'bg-orange-100 text-orange-800'
+                      : isYakasGrillYemeksepetiTable
+                      ? 'bg-red-100 text-red-800'
+                      : isYakasGrillTrendyolGOTable
+                      ? 'bg-yellow-100 text-yellow-800'
                       : isOutside
                       ? 'bg-amber-100 text-amber-800'
                       : 'bg-pink-100 text-pink-800'

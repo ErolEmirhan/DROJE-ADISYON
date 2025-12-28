@@ -395,7 +395,9 @@ async function saveProductToFirebase(product) {
       name: product.name,
       category_id: product.category_id,
       price: parseFloat(product.price) || 0,
-      image: product.image || null
+      image: product.image || null,
+      yemeksepeti_price: product.yemeksepeti_price !== undefined ? parseFloat(product.yemeksepeti_price) : null,
+      trendyolgo_price: product.trendyolgo_price !== undefined ? parseFloat(product.trendyolgo_price) : null
     }, { merge: true });
     console.log(`✅ Ürün Firebase'e kaydedildi: ${product.name} (ID: ${product.id}, Fiyat: ${parseFloat(product.price) || 0})`);
   } catch (error) {
@@ -743,7 +745,9 @@ async function syncProductsFromFirebase() {
           name: firebaseProduct.name || '',
           category_id: typeof firebaseProduct.category_id === 'string' ? parseInt(firebaseProduct.category_id) : firebaseProduct.category_id,
           price: parseFloat(firebaseProduct.price) || 0,
-          image: firebaseProduct.image || null
+          image: firebaseProduct.image || null,
+          yemeksepeti_price: firebaseProduct.yemeksepeti_price !== undefined && firebaseProduct.yemeksepeti_price !== null ? parseFloat(firebaseProduct.yemeksepeti_price) : undefined,
+          trendyolgo_price: firebaseProduct.trendyolgo_price !== undefined && firebaseProduct.trendyolgo_price !== null ? parseFloat(firebaseProduct.trendyolgo_price) : undefined
         };
         updatedCount++;
       } else {
@@ -753,7 +757,9 @@ async function syncProductsFromFirebase() {
           name: firebaseProduct.name || '',
           category_id: typeof firebaseProduct.category_id === 'string' ? parseInt(firebaseProduct.category_id) : firebaseProduct.category_id,
           price: parseFloat(firebaseProduct.price) || 0,
-          image: firebaseProduct.image || null
+          image: firebaseProduct.image || null,
+          yemeksepeti_price: firebaseProduct.yemeksepeti_price !== undefined && firebaseProduct.yemeksepeti_price !== null ? parseFloat(firebaseProduct.yemeksepeti_price) : undefined,
+          trendyolgo_price: firebaseProduct.trendyolgo_price !== undefined && firebaseProduct.trendyolgo_price !== null ? parseFloat(firebaseProduct.trendyolgo_price) : undefined
         });
         addedCount++;
       }
@@ -991,24 +997,53 @@ function setupBroadcastsRealtimeListener() {
       const changes = snapshot.docChanges();
       if (changes.length === 0) return;
       
-      changes.forEach((change) => {
+      changes.forEach(async (change) => {
         if (change.type === 'added') {
           const data = change.doc.data();
-          console.log('📢 Yeni broadcast mesajı alındı:', data.message);
+          const messageId = change.doc.id;
+          console.log('📢 Yeni broadcast mesajı alındı:', data.message, 'ID:', messageId);
+          
+          // Tenant bilgisini al
+          const tenantInfo = tenantManager.getCurrentTenantInfo();
+          const tenantId = tenantInfo?.tenantId;
+          
+          // Bu mesaj daha önce okunmuş mu kontrol et
+          let isRead = false;
+          if (tenantId && firestore && firebaseCollection && firebaseGetDocs) {
+            try {
+              const readsRef = firebaseCollection(firestore, 'broadcast_reads');
+              const readsSnapshot = await firebaseGetDocs(readsRef);
+              
+              isRead = readsSnapshot.docs.some(doc => {
+                const readData = doc.data();
+                return readData.messageId === messageId && readData.tenantId === tenantId;
+              });
+              
+              if (isRead) {
+                console.log('📢 Mesaj zaten okunmuş, gönderilmiyor:', messageId);
+                return;
+              }
+            } catch (error) {
+              console.error('❌ Okunma kontrolü hatası:', error);
+              // Hata durumunda gönder (güvenli taraf)
+            }
+          }
           
           // Socket.IO ile tüm clientlara gönder
           if (io) {
             io.emit('broadcast-message', {
+              id: messageId,
               message: data.message,
               date: data.date,
               time: data.time
             });
-            console.log('✅ Broadcast mesajı tüm clientlara gönderildi');
+            console.log('✅ Broadcast mesajı tüm clientlara gönderildi:', messageId);
           }
           
           // Desktop uygulamaya da gönder
           if (mainWindow && mainWindow.webContents) {
             mainWindow.webContents.send('broadcast-message', {
+              id: messageId,
               message: data.message,
               date: data.date,
               time: data.time
@@ -1651,6 +1686,16 @@ ipcMain.handle('delete-all-sales', async (event) => {
 ipcMain.handle('create-table-order', async (event, orderData) => {
   const { items, totalAmount, tableId, tableName, tableType, orderNote, orderSource } = orderData;
   
+  // Eğer orderSource gönderilmemişse, tableType'a göre otomatik belirle
+  let finalOrderSource = orderSource;
+  if (!finalOrderSource && tableType) {
+    if (tableType === 'yemeksepeti') {
+      finalOrderSource = 'Yemeksepeti';
+    } else if (tableType === 'trendyolgo') {
+      finalOrderSource = 'Trendyol';
+    }
+  }
+  
   const now = new Date();
   const orderDate = now.toLocaleDateString('tr-TR');
   const orderTime = getFormattedTime(now);
@@ -1710,6 +1755,10 @@ ipcMain.handle('create-table-order', async (event, orderData) => {
     if (orderNote) {
       existingOrder.order_note = orderNote;
     }
+    // Mevcut siparişe order_source'u güncelle (eğer yeni siparişte varsa)
+    if (finalOrderSource && !existingOrder.order_source) {
+      existingOrder.order_source = finalOrderSource;
+    }
   } else {
     // Yeni sipariş oluştur
     isNewOrder = true;
@@ -1727,7 +1776,7 @@ ipcMain.handle('create-table-order', async (event, orderData) => {
       order_time: orderTime,
       status: 'pending',
       order_note: orderNote || null,
-      order_source: orderSource || null // 'Trendyol', 'Yemeksepeti', or null
+      order_source: finalOrderSource || null // 'Trendyol', 'Yemeksepeti', or null
     });
 
     // Sipariş itemlarını ekle
@@ -2357,7 +2406,7 @@ ipcMain.handle('complete-table-order', async (event, orderId, paymentMethod = 'N
   }
 
   // Ödeme yöntemi kontrolü
-  if (!paymentMethod || (paymentMethod !== 'Nakit' && paymentMethod !== 'Kredi Kartı')) {
+  if (!paymentMethod || (paymentMethod !== 'Nakit' && paymentMethod !== 'Kredi Kartı' && paymentMethod !== 'Online')) {
     return { success: false, error: 'Geçerli bir ödeme yöntemi seçilmedi' };
   }
 
@@ -2912,7 +2961,7 @@ ipcMain.handle('create-product', (event, productData) => {
 });
 
 ipcMain.handle('update-product', async (event, productData) => {
-  const { id, name, category_id, price, image } = productData;
+  const { id, name, category_id, price, image, yemeksepeti_price, trendyolgo_price } = productData;
   
   const productIndex = db.products.findIndex(p => p.id === id);
   if (productIndex === -1) {
@@ -2927,12 +2976,30 @@ ipcMain.handle('update-product', async (event, productData) => {
       await deleteImageFromR2(oldImage);
     }
   
+  // Platform fiyatlarını güncelle (null, undefined veya sayı olabilir)
+  let updatedYemeksepetiPrice = db.products[productIndex].yemeksepeti_price;
+  let updatedTrendyolgoPrice = db.products[productIndex].trendyolgo_price;
+  
+  if (yemeksepeti_price !== undefined) {
+    updatedYemeksepetiPrice = yemeksepeti_price !== null && yemeksepeti_price !== '' 
+      ? parseFloat(yemeksepeti_price) 
+      : null;
+  }
+  
+  if (trendyolgo_price !== undefined) {
+    updatedTrendyolgoPrice = trendyolgo_price !== null && trendyolgo_price !== '' 
+      ? parseFloat(trendyolgo_price) 
+      : null;
+  }
+  
   db.products[productIndex] = {
     ...db.products[productIndex],
     name,
     category_id,
     price: parseFloat(price),
-    image: image || null
+    image: image || null,
+    yemeksepeti_price: updatedYemeksepetiPrice,
+    trendyolgo_price: updatedTrendyolgoPrice
   };
   
   saveDatabase();
@@ -11791,6 +11858,14 @@ function startAPIServer() {
             ? `${existingOrder.order_note}\n${orderNote}` 
             : orderNote;
         }
+        // Mevcut siparişe order_source'u güncelle (eğer yeni siparişte varsa)
+        if (finalOrderSource && !existingOrder.order_source) {
+          existingOrder.order_source = finalOrderSource;
+        }
+        // Mevcut siparişe order_source'u güncelle (eğer yeni siparişte varsa)
+        if (finalOrderSource && !existingOrder.order_source) {
+          existingOrder.order_source = finalOrderSource;
+        }
       } else {
         isNewOrder = true;
         const now = new Date();
@@ -11812,7 +11887,7 @@ function startAPIServer() {
           order_time: orderTime,
           status: 'pending',
           order_note: orderNote || null,
-          order_source: orderSource || null, // 'Trendyol', 'Yemeksepeti', or null
+          order_source: finalOrderSource || null, // 'Trendyol', 'Yemeksepeti', or null
           staff_id: staffId || null,
           staff_name: staffName
         });
@@ -11934,7 +12009,7 @@ function startAPIServer() {
           tableName: tableName,
           tableType: tableType,
           orderNote: orderNote || null,
-          orderSource: finalOrderSource, // 'Trendyol', 'Yemeksepeti', or null
+          orderSource: finalOrderSourceForAdisyon, // 'Trendyol', 'Yemeksepeti', or null
           // Items'lardan alınan tarih/saat ve personel bilgisini kullan
           sale_date: adisyonDate,
           sale_time: adisyonTime,
@@ -12376,6 +12451,52 @@ ipcMain.handle('send-broadcast-message', async (event, message) => {
   }
 
   return { success: true, message: 'Mesaj başarıyla gönderildi' };
+});
+
+// Broadcast mesajını okundu olarak işaretle
+ipcMain.handle('mark-broadcast-read', async (event, messageId) => {
+  if (!messageId) {
+    return { success: false, error: 'Mesaj ID gerekli' };
+  }
+
+  const tenantInfo = tenantManager.getCurrentTenantInfo();
+  const tenantId = tenantInfo?.tenantId;
+
+  if (!tenantId) {
+    return { success: false, error: 'Tenant ID bulunamadı' };
+  }
+
+  if (!firestore || !firebaseCollection || !firebaseAddDoc || !firebaseServerTimestamp || !firebaseGetDocs) {
+    return { success: false, error: 'Firebase başlatılamadı' };
+  }
+
+  try {
+    const readsRef = firebaseCollection(firestore, 'broadcast_reads');
+    
+    // Önce bu mesaj zaten okunmuş mu kontrol et
+    const readsSnapshot = await firebaseGetDocs(readsRef);
+    const alreadyRead = readsSnapshot.docs.some(doc => {
+      const readData = doc.data();
+      return readData.messageId === messageId && readData.tenantId === tenantId;
+    });
+    
+    if (alreadyRead) {
+      console.log(`✅ Mesaj zaten okunmuş: ${messageId} (Tenant: ${tenantId})`);
+      return { success: true, alreadyRead: true };
+    }
+    
+    await firebaseAddDoc(readsRef, {
+      messageId: messageId,
+      tenantId: tenantId,
+      readAt: firebaseServerTimestamp()
+    });
+    
+    console.log(`✅ Broadcast mesajı okundu olarak işaretlendi: ${messageId} (Tenant: ${tenantId})`);
+    return { success: true };
+  } catch (error) {
+    console.error('❌ Broadcast okunma işaretleme hatası:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 // Tek bir masayı yeni Firebase'e kaydet (makaramasalar) - sadece sipariş değişikliklerinde çağrılır
