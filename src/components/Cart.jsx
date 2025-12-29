@@ -3,12 +3,13 @@ import { createPortal } from 'react-dom';
 import { getThemeColors } from '../utils/themeUtils';
 import { isYakasGrill } from '../utils/sultanSomatTables';
 
-const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, onSaveToTable, totalAmount, selectedTable, orderNote, onOrderNoteChange, onToggleGift, onRequestAdisyon, themeColor = '#f97316', tenantId = null }) => {
+const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, onSaveToTable, totalAmount, selectedTable, orderNote, onOrderNoteChange, onToggleGift, onRequestAdisyon, onUpdateItemNote, themeColor = '#f97316', tenantId = null }) => {
   // Tema renklerini hesapla
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   const isYakasGrillMode = tenantId && isYakasGrill(tenantId);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [noteText, setNoteText] = useState(orderNote || '');
+  const [selectedProductId, setSelectedProductId] = useState(null); // Ürün bazlı not için
   const textareaRef = useRef(null);
   
   useEffect(() => {
@@ -80,6 +81,14 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                         </svg>
                         İKRAM
+                      </span>
+                    )}
+                    {item.extraNote && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-md text-xs font-bold whitespace-nowrap flex-shrink-0" title={item.extraNote}>
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                        NOT
                       </span>
                     )}
                   </div>
@@ -201,16 +210,20 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
         {/* Order Note Button */}
         {cart.length > 0 && (
           <button
-            onClick={() => setShowNoteModal(true)}
+            onClick={() => {
+              setSelectedProductId(null);
+              setNoteText(orderNote || '');
+              setShowNoteModal(true);
+            }}
             className="w-full py-2 px-3 rounded-lg text-sm font-medium transition-all duration-300 bg-amber-50 hover:bg-amber-100 border border-amber-200 hover:border-amber-300 text-amber-700 flex items-center justify-between"
           >
             <div className="flex items-center space-x-2">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
               </svg>
-              <span>{orderNote ? 'Not Düzenle' : 'Not Ekle'}</span>
+              <span>Ürün Notu Ekle</span>
             </div>
-            {orderNote && (
+            {(orderNote || cart.some(item => item.extraNote)) && (
               <span className="px-2 py-0.5 bg-amber-200 rounded-full text-xs font-bold">
                 ✓
               </span>
@@ -283,6 +296,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
               onClick={() => {
                 setShowNoteModal(false);
                 setNoteText(orderNote || '');
+                setSelectedProductId(null);
               }}
               className="absolute top-6 right-6 w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all hover:rotate-90"
             >
@@ -297,11 +311,40 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                 </svg>
               </div>
-              <h2 className="text-2xl font-bold gradient-text mb-2">Sipariş Notu</h2>
-              <p className="text-sm text-gray-500">Sipariş içeriği ile ilgili not ekleyin</p>
+              <h2 className="text-2xl font-bold gradient-text mb-2">Ürün Notu</h2>
+              <p className="text-sm text-gray-500">Hangi ürün için not eklemek istiyorsunuz?</p>
             </div>
 
             <div className="space-y-4">
+              {/* Ürün Seçimi */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Ürün Seçin
+                </label>
+                <select
+                  value={selectedProductId || ''}
+                  onChange={(e) => {
+                    const productId = e.target.value ? parseInt(e.target.value) : null;
+                    setSelectedProductId(productId);
+                    // Seçilen ürünün mevcut notunu göster
+                    if (productId) {
+                      const selectedItem = cart.find(item => item.id === productId);
+                      setNoteText(selectedItem?.extraNote || '');
+                    } else {
+                      setNoteText('');
+                    }
+                  }}
+                  className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-amber-500 focus:outline-none transition-all"
+                >
+                  <option value="">Tüm sipariş için (genel not)</option>
+                  {cart.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} {item.portion ? `(${item.portion} porsiyon)` : ''} {item.onionOption ? `(${item.onionOption})` : ''} - {item.quantity} adet
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Not (Örn: Sütü az olacak, Ekstra peynir, vs.)
@@ -331,6 +374,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                   onClick={() => {
                     setShowNoteModal(false);
                     setNoteText(orderNote || '');
+                    setSelectedProductId(null);
                   }}
                   className="flex-1 px-6 py-3 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-all"
                 >
@@ -338,10 +382,21 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                 </button>
                 <button
                   onClick={() => {
-                    if (onOrderNoteChange) {
-                      onOrderNoteChange(noteText.trim());
+                    if (selectedProductId) {
+                      // Ürün bazlı not ekle
+                      const item = cart.find(item => item.id === selectedProductId);
+                      if (item && onUpdateItemNote) {
+                        onUpdateItemNote(selectedProductId, noteText.trim(), item.onionOption, item.portion);
+                      }
+                    } else {
+                      // Genel sipariş notu
+                      if (onOrderNoteChange) {
+                        onOrderNoteChange(noteText.trim());
+                      }
                     }
                     setShowNoteModal(false);
+                    setSelectedProductId(null);
+                    setNoteText('');
                   }}
                   className="flex-1 px-6 py-3 text-white rounded-xl font-semibold hover:shadow-lg transition-all transform hover:scale-105"
                   style={{ backgroundImage: theme.gradient.main }}

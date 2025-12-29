@@ -528,6 +528,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       tableType: selectedOrder.table_type,
       orderNote: selectedOrder.order_note || null,
       orderSource: selectedOrder.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
+      orderId: selectedOrder.id || null, // Fiş numarası için
       sale_date: selectedOrder.order_date || new Date().toLocaleDateString('tr-TR'),
       sale_time: selectedOrder.order_time || new Date().toLocaleTimeString('tr-TR'),
       cashierOnly: true // Sadece kasa yazıcısından fiyatlı fiş

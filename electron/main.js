@@ -5803,145 +5803,116 @@ async function printAdisyonByCategory(items, adisyonData) {
 
 // Modern ve profesyonel adisyon HTML formatı
 function generateAdisyonHTML(items, adisyonData) {
-  // Yaka's Grill kontrolü
-  const tenantInfo = tenantManager.getCurrentTenantInfo();
-  const isYakasGrill = tenantInfo?.tenantId === 'TENANT-1766340222641';
-  const productNameFontSize = isYakasGrill ? '2em' : '12px';
-  const quantityFontSize = isYakasGrill ? '2em' : '10px';
-  
   // Garson ismini adisyonData'dan al (eğer yoksa items'dan al)
   const staffName = adisyonData.staff_name || (items.length > 0 && items[0].staff_name ? items[0].staff_name : null);
   
-  // Order source kontrolü (Yaka's Grill için)
-  const orderSource = adisyonData.orderSource || null;
-  const orderSourceTitle = orderSource === 'Trendyol' ? 'Trendyol Siparişi' : 
-                          orderSource === 'Yemeksepeti' ? 'Yemek Sepeti Siparişi' : null;
+  // Fiş numarası - orderId varsa onu kullan, yoksa masa numarasından üret
+  const receiptNo = adisyonData.orderId || (adisyonData.tableName ? adisyonData.tableName.replace(/\D/g, '') || null : null);
   
-  console.log('[generateAdisyonHTML] orderSource:', orderSource, 'orderSourceTitle:', orderSourceTitle);
+  // Masa bilgisi - sadece masa adı
+  const tableInfo = adisyonData.tableName || null;
+  
+  // Tarih ve saat
+  const orderDate = adisyonData.sale_date || new Date().toLocaleDateString('tr-TR');
+  const orderTime = adisyonData.sale_time || getFormattedTime(new Date());
+  const orderDateTime = `${orderDate} ${orderTime}`;
+  
+  // Ürünleri formatla - "1,5 X ADANA PORSİYON" formatında
+  let itemsHTML = '';
   
   // Eğer kategori bilgisi varsa, kategorilere göre grupla
   const hasCategories = adisyonData.categories && adisyonData.categories.length > 0;
   
-  let itemsHTML = '';
-  
   if (hasCategories) {
-    // Kategorilere göre gruplanmış format
+    // Kategorilere göre gruplanmış format (kategori başlığı olmadan)
     adisyonData.categories.forEach((category, catIndex) => {
-      // Kategori başlığı
-      itemsHTML += `
-        <div style="margin: ${catIndex > 0 ? '16px' : '0'} 0 10px 0; padding: 6px 10px; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); border-radius: 6px; box-shadow: 0 2px 4px rgba(59,130,246,0.3);">
-          <h3 style="margin: 0; font-size: 11px; font-weight: 900; color: white; font-family: 'Montserrat', sans-serif; text-transform: uppercase; letter-spacing: 0.5px;">
-            📦 ${category.categoryName}
-          </h3>
-        </div>
-      `;
-      
-      // Kategori ürünleri
+      // Kategori ürünleri (kategori başlığı kaldırıldı)
       category.items.forEach(item => {
         const isGift = item.isGift || false;
+        const portion = item.portion || null;
+        const productName = item.name || '';
+        const quantity = item.quantity || 1;
+        
+        // Ürün adını formatla - porsiyon varsa "ADANA PORSİYON" formatında
+        let displayName = productName;
+        if (portion) {
+          // Eğer ürün adında "PORSİYON" yoksa ekle
+          if (!displayName.toUpperCase().includes('PORSİYON')) {
+            displayName = `${displayName} PORSİYON`;
+          }
+        }
+        
+        // Porsiyon varsa onu kullan, yoksa quantity kullan - "1,5 X ADANA PORSİYON" formatında göster
+        const displayQuantity = portion !== null && portion !== undefined ? portion : quantity;
+        const itemText = `${displayQuantity.toString().replace('.', ',')} X ${displayName.toUpperCase()}`;
+        
+        // Ürün notu varsa göster
+        const noteHTML = item.extraNote ? `
+          <div style="margin-top: 4px; padding: 4px 8px; background: #fef3c7; border-left: 2px solid #f59e0b; border-radius: 4px;">
+            <div style="font-size: 9px; font-weight: 700; color: #92400e; font-family: Arial, sans-serif;">📝 ${item.extraNote}</div>
+          </div>
+        ` : '';
         
         if (isGift) {
           itemsHTML += `
-          <div style="margin-bottom: 8px; padding: 8px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 3px solid #16a34a; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <div style="display: flex; align-items: center; gap: 4px; flex: 1;">
-                <span style="font-weight: 900; font-size: ${productNameFontSize}; color: #166534; font-family: 'Montserrat', sans-serif; text-decoration: line-through; opacity: 0.6;">${item.name}</span>
-                <span style="font-size: 7px; background: linear-gradient(135deg, #16a34a, #22c55e); color: white; padding: 2px 5px; border-radius: 10px; font-weight: 900; box-shadow: 0 1px 3px rgba(22,163,74,0.3);">İKRAM</span>
-              </div>
+            <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #ccc;">
+              <div style="font-size: 11px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif;">${itemText}</div>
+              ${noteHTML}
             </div>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="font-size: ${quantityFontSize}; color: #166534; font-weight: 700; font-family: 'Montserrat', sans-serif;">${item.quantity} adet</span>
-            </div>
-            ${item.extraNote ? `
-            <div style="margin-top: 4px; padding: 4px; background: white; border-radius: 3px; border-left: 2px solid #fbbf24;">
-              <p style="font-size: 8px; color: #92400e; font-weight: 700; margin: 0; font-family: 'Montserrat', sans-serif;">📝 ${item.extraNote}</p>
-            </div>
-            ` : ''}
-          </div>
-        `;
+          `;
         } else {
-          // Yaka's Grill için porsiyon bilgisi varsa büyük yazı ile göster
-          const portionInfo = (isYakasGrill && item.portion) ? `
-            <div style="margin-top: 6px; padding: 6px 10px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 8px; border: 2px solid #f59e0b; text-align: center;">
-              <span style="font-size: ${isYakasGrill ? '1.8em' : '14px'}; font-weight: 900; color: #92400e; font-family: 'Montserrat', sans-serif;">${item.portion} PORSIYON</span>
-            </div>
-          ` : '';
-          // Yaka's Grill için soğan bilgisi varsa büyük yazı ile göster
-          const onionInfo = (isYakasGrill && item.onionOption) ? `
-            <div style="margin-top: 6px; padding: 6px 10px; background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); border-radius: 8px; border: 2px solid #3b82f6; text-align: center;">
-              <span style="font-size: ${isYakasGrill ? '1.8em' : '14px'}; font-weight: 900; color: #1e40af; font-family: 'Montserrat', sans-serif;">${item.onionOption.toUpperCase()}</span>
-            </div>
-          ` : '';
-          
           itemsHTML += `
-          <div style="margin-bottom: 8px; padding: 8px; background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border-left: 3px solid #3b82f6; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <span style="font-weight: 900; font-size: ${productNameFontSize}; color: #1e293b; font-family: 'Montserrat', sans-serif;">${item.name}</span>
+            <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #000;">
+              <div style="font-size: 11px; font-weight: 900; color: #000; font-family: Arial, sans-serif;">${itemText}</div>
+              ${noteHTML}
             </div>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span style="font-size: ${quantityFontSize}; color: #475569; font-weight: 700; font-family: 'Montserrat', sans-serif;">${item.quantity} adet</span>
-            </div>
-            ${portionInfo}
-            ${onionInfo}
-            ${item.extraNote ? `
-            <div style="margin-top: 4px; padding: 4px; background: #fef3c7; border-radius: 3px; border-left: 2px solid #f59e0b;">
-              <p style="font-size: 8px; color: #92400e; font-weight: 700; margin: 0; font-family: 'Montserrat', sans-serif;">📝 ${item.extraNote}</p>
-            </div>
-            ` : ''}
-          </div>
-        `;
+          `;
         }
       });
     });
   } else {
-    // Kategori bilgisi yoksa eski format (geriye dönük uyumluluk)
+    // Kategori bilgisi yoksa basit format
     itemsHTML = items.map(item => {
       const isGift = item.isGift || false;
+      const portion = item.portion || null;
+      const productName = item.name || '';
+      const quantity = item.quantity || 1;
       
-      if (isGift) {
-        return `
-        <div style="margin-bottom: 8px; padding: 8px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 3px solid #16a34a; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-            <div style="display: flex; align-items: center; gap: 4px; flex: 1;">
-              <span style="font-weight: 900; font-size: ${productNameFontSize}; color: #166534; font-family: 'Montserrat', sans-serif; text-decoration: line-through; opacity: 0.6;">${item.name}</span>
-              <span style="font-size: 7px; background: linear-gradient(135deg, #16a34a, #22c55e); color: white; padding: 2px 5px; border-radius: 10px; font-weight: 900; box-shadow: 0 1px 3px rgba(22,163,74,0.3);">İKRAM</span>
-            </div>
-          </div>
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-size: 10px; color: #166534; font-weight: 700; font-family: 'Montserrat', sans-serif;">${item.quantity} adet</span>
-          </div>
-          ${item.extraNote ? `
-          <div style="margin-top: 4px; padding: 4px; background: white; border-radius: 3px; border-left: 2px solid #fbbf24;">
-            <p style="font-size: 8px; color: #92400e; font-weight: 700; margin: 0; font-family: 'Montserrat', sans-serif;">📝 ${item.extraNote}</p>
-          </div>
-          ` : ''}
-        </div>
-      `;
+      // Ürün adını formatla - porsiyon varsa "ADANA PORSİYON" formatında
+      let displayName = productName;
+      if (portion) {
+        // Eğer ürün adında "PORSİYON" yoksa ekle
+        if (!displayName.toUpperCase().includes('PORSİYON')) {
+          displayName = `${displayName} PORSİYON`;
+        }
       }
       
-      // Yaka's Grill için porsiyon bilgisi varsa büyük yazı ile göster
-      const portionInfo = (isYakasGrill && item.portion) ? `
-        <div style="margin-top: 6px; padding: 6px 10px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 8px; border: 2px solid #f59e0b; text-align: center;">
-          <span style="font-size: ${isYakasGrill ? '1.8em' : '14px'}; font-weight: 900; color: #92400e; font-family: 'Montserrat', sans-serif;">${item.portion} PORSIYON</span>
+      // Porsiyon varsa onu kullan, yoksa quantity kullan - "1,5 X ADANA PORSİYON" formatında göster
+      const displayQuantity = portion !== null && portion !== undefined ? portion : quantity;
+      const itemText = `${displayQuantity.toString().replace('.', ',')} X ${displayName.toUpperCase()}`;
+      
+      // Ürün notu varsa göster
+      const noteHTML = item.extraNote ? `
+        <div style="margin-top: 4px; padding: 4px 8px; background: #fef3c7; border-left: 2px solid #f59e0b; border-radius: 4px;">
+          <div style="font-size: 9px; font-weight: 700; color: #92400e; font-family: Arial, sans-serif;">📝 ${item.extraNote}</div>
         </div>
       ` : '';
       
-      return `
-        <div style="margin-bottom: 8px; padding: 8px; background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border-left: 3px solid #3b82f6; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-            <span style="font-weight: 900; font-size: ${productNameFontSize}; color: #1e293b; font-family: 'Montserrat', sans-serif;">${item.name}</span>
+      if (isGift) {
+        return `
+          <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #ccc;">
+            <div style="font-size: 11px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif;">${itemText}</div>
+            ${noteHTML}
           </div>
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-size: 10px; color: #475569; font-weight: 700; font-family: 'Montserrat', sans-serif;">${item.quantity} adet</span>
+        `;
+      } else {
+        return `
+          <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #000;">
+            <div style="font-size: 11px; font-weight: 900; color: #000; font-family: Arial, sans-serif;">${itemText}</div>
+            ${noteHTML}
           </div>
-          ${portionInfo}
-          ${item.extraNote ? `
-          <div style="margin-top: 4px; padding: 4px; background: #fef3c7; border-radius: 3px; border-left: 2px solid #f59e0b;">
-            <p style="font-size: 8px; color: #92400e; font-weight: 700; margin: 0; font-family: 'Montserrat', sans-serif;">📝 ${item.extraNote}</p>
-          </div>
-          ` : ''}
-        </div>
-      `;
+        `;
+      }
     }).join('');
   }
 
@@ -5950,9 +5921,6 @@ function generateAdisyonHTML(items, adisyonData) {
     <html>
     <head>
       <meta charset="UTF-8">
-      <link rel="preconnect" href="https://fonts.googleapis.com">
-      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-      <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;900&display=swap" rel="stylesheet">
       <style>
         @media print {
           @page {
@@ -5962,163 +5930,114 @@ function generateAdisyonHTML(items, adisyonData) {
           }
           body {
             margin: 0;
-            padding: 8px 8px 12px 8px;
+            padding: 8px;
             height: auto;
             min-height: 100%;
             color: #000 !important;
+            background: white !important;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
           }
           * {
             color: #000 !important;
+            background: white !important;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
           }
         }
         * {
           box-sizing: border-box;
-          font-family: 'Montserrat', sans-serif;
-        }
-        body {
-          font-family: 'Montserrat', sans-serif;
-          width: 58mm;
-          max-width: 58mm;
-          padding: 8px 8px 15px 8px;
           margin: 0;
-          font-size: 12px;
-          min-height: 100%;
-          height: auto;
-          overflow: visible;
-          color: #000;
-          background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-          -webkit-font-smoothing: antialiased;
-          -moz-osx-font-smoothing: grayscale;
-          text-rendering: optimizeLegibility;
-        }
-        html {
-          height: auto;
-          min-height: 100%;
-        }
-        .info {
-          background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
-          border-radius: 8px;
-          padding: 10px;
-          margin: 0 0 10px 0;
-          box-shadow: 0 1px 4px rgba(0,0,0,0.1);
-        }
-        .info div {
-          display: flex;
-          justify-content: space-between;
-          margin: 3px 0;
-          font-size: 9px;
-          font-weight: 700;
-          color: #475569;
-          font-family: 'Montserrat', sans-serif;
-        }
-        .info div span:last-child {
-          color: #1e293b;
-          font-weight: 900;
-        }
-        .info .table-row {
-          display: block;
-          margin: 0 0 8px 0;
           padding: 0;
         }
-        .info .table-row .table-label {
-          font-size: 9px;
-          font-weight: 700;
-          color: #475569;
-          margin-bottom: 4px;
+        body {
+          font-family: Arial, sans-serif;
+          width: 58mm;
+          max-width: 58mm;
+          padding: 8px;
+          margin: 0;
+          font-size: 11px;
+          color: #000;
+          background: white;
         }
-        .info .table-row .table-value {
-          font-size: 18px;
-          font-weight: 900;
-          color: #1e293b;
-          font-family: 'Montserrat', sans-serif;
-          line-height: 1.2;
+        .header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 8px;
+          padding-bottom: 4px;
+          border-bottom: 1px solid #000;
         }
-        .info .staff-row {
-          display: block;
-          margin: 6px 0 0 0;
-          padding: 6px 8px;
-          background: rgba(139, 92, 246, 0.1);
-          border-radius: 4px;
-          border-left: 2px solid #8b5cf6;
-        }
-        .info .staff-row .staff-label {
-          font-size: 8px;
-          font-weight: 700;
-          color: #6d28d9;
-          margin-bottom: 2px;
-        }
-        .info .staff-row .staff-value {
+        .receipt-no {
           font-size: 10px;
-          font-weight: 900;
-          color: #6d28d9;
-          font-family: 'Montserrat', sans-serif;
+          font-weight: 700;
+          color: #000;
         }
-        .items {
-          margin: 10px 0;
-        }
-        .footer {
-          text-align: center;
-          margin-top: 24px;
-          padding-top: 16px;
-          border-top: 3px solid #e2e8f0;
+        .receipt-title {
           font-size: 11px;
           font-weight: 700;
-          color: #64748b;
-          font-family: 'Montserrat', sans-serif;
+          color: #000;
+          text-align: right;
         }
-        .footer p {
-          margin: 4px 0;
-          font-weight: 900;
-          color: #1e293b;
+        .table-info {
+          text-align: center;
+          margin: 8px 0;
+          padding: 4px 0;
+          border-bottom: 1px solid #000;
+          font-size: 11px;
+          font-weight: 700;
+          color: #000;
+        }
+        .items {
+          margin: 8px 0;
+        }
+        .item {
+          margin-bottom: 6px;
+          padding: 4px 0;
+          border-bottom: 1px solid #000;
+        }
+        .item-text {
+          font-size: 11px;
+          font-weight: 700;
+          color: #000;
+        }
+        .footer {
+          margin-top: 12px;
+          padding-top: 8px;
+          border-top: 1px solid #000;
+        }
+        .footer-line {
+          font-size: 10px;
+          font-weight: 700;
+          color: #000;
+          margin-bottom: 4px;
         }
       </style>
     </head>
     <body>
-      ${orderSourceTitle ? `
-      <div style="text-align: center; margin: 0 0 20px 0; padding: 14px 10px; background: ${orderSource === 'Trendyol' ? 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)' : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'}; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.4); border: 2px solid ${orderSource === 'Trendyol' ? '#d97706' : '#b91c1c'};">
-        <h2 style="margin: 0; font-size: 18px; font-weight: 900; color: white; font-family: 'Montserrat', sans-serif; text-transform: uppercase; letter-spacing: 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">
-          ${orderSourceTitle}
-        </h2>
+      <!-- Başlık: FİŞ NO sol, SİPARİŞ FİŞİ sağ -->
+      <div class="header">
+        <div class="receipt-no">${receiptNo ? `FİŞ NO : ${receiptNo}` : 'FİŞ NO : -'}</div>
+        <div class="receipt-title">SİPARİŞ FİŞİ</div>
       </div>
+      
+      <!-- Masa Bilgisi: PAKET / P 2 -->
+      ${tableInfo ? `
+      <div class="table-info">${tableInfo}</div>
       ` : ''}
-      <div class="info">
-        ${adisyonData.tableName ? `
-        <div class="table-row">
-          <div class="table-label">Masa:</div>
-          <div class="table-value">${adisyonData.tableName}</div>
-        </div>
-        ` : ''}
-        ${staffName ? `
-        <div class="staff-row">
-          <div class="staff-label">👤 Garson:</div>
-          <div class="staff-value">${staffName}</div>
-        </div>
-        ` : ''}
-        <div>
-          <span>Tarih:</span>
-          <span>${adisyonData.sale_date || new Date().toLocaleDateString('tr-TR')}</span>
-        </div>
-        <div>
-          <span>Saat:</span>
-          <span>${adisyonData.sale_time || getFormattedTime(new Date())}</span>
-        </div>
-      </div>
-
+      
+      <!-- Ürünler -->
       <div class="items">
         ${itemsHTML}
       </div>
       
-      ${adisyonData.orderNote ? `
-      <div style="margin: 10px 0; padding: 8px; background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 6px; border-left: 3px solid #f59e0b; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-        <p style="font-size: ${isYakasGrill ? '18px' : '9px'}; font-weight: 900; color: #92400e; margin: 0 0 4px 0; font-family: 'Montserrat', sans-serif;">📝 Sipariş Notu:</p>
-        <p style="font-size: ${isYakasGrill ? '18px' : '9px'}; font-weight: 700; color: #78350f; margin: 0; font-family: 'Montserrat', sans-serif;">${adisyonData.orderNote}</p>
+      <!-- Alt Bilgiler -->
+      <div class="footer">
+        ${staffName ? `
+        <div class="footer-line">SİPARİŞİ VEREN : ${staffName.toUpperCase()}</div>
+        ` : ''}
+        <div class="footer-line">SİPARİŞ TARİHİ: ${orderDateTime}</div>
       </div>
-      ` : ''}
-
     </body>
     </html>
   `;
@@ -11796,6 +11715,16 @@ function startAPIServer() {
     try {
       const { items, totalAmount, tableId, tableName, tableType, orderNote, staffId, orderSource } = req.body;
       
+      // Eğer orderSource gönderilmemişse, tableType'a göre otomatik belirle
+      let finalOrderSource = orderSource;
+      if (!finalOrderSource && tableType) {
+        if (tableType === 'yemeksepeti') {
+          finalOrderSource = 'Yemeksepeti';
+        } else if (tableType === 'trendyolgo') {
+          finalOrderSource = 'Trendyol';
+        }
+      }
+      
       // Stok kontrolü ve düşürme (sadece stok takibi yapılan ürünler için)
       for (const item of items) {
         if (!item.isGift) {
@@ -11857,10 +11786,6 @@ function startAPIServer() {
           existingOrder.order_note = existingOrder.order_note 
             ? `${existingOrder.order_note}\n${orderNote}` 
             : orderNote;
-        }
-        // Mevcut siparişe order_source'u güncelle (eğer yeni siparişte varsa)
-        if (finalOrderSource && !existingOrder.order_source) {
-          existingOrder.order_source = finalOrderSource;
         }
         // Mevcut siparişe order_source'u güncelle (eğer yeni siparişte varsa)
         if (finalOrderSource && !existingOrder.order_source) {
@@ -12009,7 +11934,8 @@ function startAPIServer() {
           tableName: tableName,
           tableType: tableType,
           orderNote: orderNote || null,
-          orderSource: finalOrderSourceForAdisyon, // 'Trendyol', 'Yemeksepeti', or null
+          orderSource: finalOrderSource, // 'Trendyol', 'Yemeksepeti', or null
+          orderId: orderId || null, // Fiş numarası için
           // Items'lardan alınan tarih/saat ve personel bilgisini kullan
           sale_date: adisyonDate,
           sale_time: adisyonTime,

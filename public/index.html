@@ -2314,37 +2314,82 @@
             </div>
           </div>
           
-          <!-- Trendyol ve Yemeksepeti Ciroları -->
+          <!-- Trendyol ve Yemeksepeti Ciroları - Profesyonel Kurumsal Tasarım -->
           <div class="period-revenue-container" style="margin-top: 20px;">
-            <div class="period-revenue-card" style="background: white; padding: 3px; border-radius: 20px; background-image: linear-gradient(white, white), linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); background-origin: border-box; background-clip: padding-box, border-box; box-shadow: 0 10px 40px rgba(251, 191, 36, 0.3), 0 4px 16px rgba(251, 191, 36, 0.2);">
-              <div style="background: white; border-radius: 17px; padding: 24px; height: 100%; position: relative; overflow: hidden;">
-                <div class="period-card-background" style="display: none;"></div>
-                <div class="period-card-icon" style="position: absolute; top: 20px; right: 20px; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(251, 191, 36, 0.1);">
-                  <img src="${trendyolImageUrl}" alt="Trendyol" onerror="this.onerror=null; this.style.display='none';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">
+            <!-- Trendyol Ciro Kartı -->
+            <div class="period-revenue-card" style="background: white; padding: 0; border-radius: 16px; box-shadow: 0 8px 32px rgba(251, 191, 36, 0.15), 0 2px 8px rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.2); overflow: hidden; position: relative;">
+              <!-- Gradient Border Effect -->
+              <div style="position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%);"></div>
+              
+              <div style="background: linear-gradient(135deg, #ffffff 0%, #fffbeb 100%); padding: 28px 24px; height: 100%; position: relative; overflow: hidden;">
+                <!-- Decorative Background Pattern -->
+                <div style="position: absolute; top: -20px; right: -20px; width: 120px; height: 120px; background: radial-gradient(circle, rgba(251, 191, 36, 0.08) 0%, transparent 70%); border-radius: 50%;"></div>
+                <div style="position: absolute; bottom: -30px; left: -30px; width: 100px; height: 100px; background: radial-gradient(circle, rgba(251, 191, 36, 0.06) 0%, transparent 70%); border-radius: 50%;"></div>
+                
+                <!-- Icon Container -->
+                <div style="position: absolute; top: 24px; right: 24px; width: 64px; height: 64px; display: flex; align-items: center; justify-content: center; border-radius: 14px; background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(217, 119, 6, 0.1) 100%); backdrop-filter: blur(10px); border: 1px solid rgba(251, 191, 36, 0.2); box-shadow: 0 4px 12px rgba(251, 191, 36, 0.15);">
+                  <img src="${trendyolImageUrl}" alt="Trendyol" onerror="this.onerror=null; this.style.display='none';" style="width: 44px; height: 44px; border-radius: 10px; object-fit: cover; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));">
                 </div>
-                <div class="period-revenue-content">
-                  <div class="period-revenue-label">
-                    <span class="period-label-icon">🛒</span>
-                    <span style="color: #1e293b;">Trendyol Ciro</span>
+                
+                <!-- Content -->
+                <div style="position: relative; z-index: 1;">
+                  <div style="margin-bottom: 12px;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                      <div style="width: 6px; height: 6px; border-radius: 50%; background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); box-shadow: 0 0 8px rgba(251, 191, 36, 0.5);"></div>
+                      <span style="font-size: 11px; font-weight: 700; color: #92400e; text-transform: uppercase; letter-spacing: 1px;">TRENDYOL</span>
+                    </div>
+                    <div style="font-size: 15px; font-weight: 800; color: #1e293b; letter-spacing: -0.3px; margin-bottom: 4px;">Toplam Ciro</div>
+                    <div style="font-size: 11px; font-weight: 600; color: #64748b; letter-spacing: 0.2px;">${periodInfo}</div>
                   </div>
-                  <div class="period-revenue-period" style="color: #64748b;">${periodInfo}</div>
-                  <div class="period-revenue-amount" style="color: #10b981; font-weight: 900; font-size: 28px;">₺${trendyolRevenue.toFixed(2)}</div>
+                  
+                  <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(251, 191, 36, 0.15);">
+                    <div style="display: flex; align-items: baseline; gap: 6px;">
+                      <span style="font-size: 13px; font-weight: 700; color: #10b981; margin-right: 2px;">₺</span>
+                      <span style="font-size: 32px; font-weight: 900; color: #10b981; letter-spacing: -1px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif; line-height: 1;">${trendyolRevenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</span>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 10px; font-weight: 600; color: #64748b; opacity: 0.8;">
+                      ${totalRevenue > 0 ? ((trendyolRevenue / totalRevenue) * 100).toFixed(1) : '0'}% toplam cirodan
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-            <div class="period-expense-card" style="background: white; padding: 3px; border-radius: 20px; background-image: linear-gradient(white, white), linear-gradient(135deg, #ef4444 0%, #dc2626 100%); background-origin: border-box; background-clip: padding-box, border-box; box-shadow: 0 10px 40px rgba(239, 68, 68, 0.3), 0 4px 16px rgba(239, 68, 68, 0.2);">
-              <div style="background: white; border-radius: 17px; padding: 24px; height: 100%; position: relative; overflow: hidden;">
-                <div class="period-card-background" style="display: none;"></div>
-                <div class="period-card-icon" style="position: absolute; top: 20px; right: 20px; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(239, 68, 68, 0.1);">
-                  <img src="${yemeksepetiImageUrl}" alt="Yemeksepeti" onerror="this.onerror=null; this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath fill=%22%23ef4444%22 d=%22M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z%22/%3E%3C/svg%3E';" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">
+            
+            <!-- Yemeksepeti Ciro Kartı -->
+            <div class="period-expense-card" style="background: white; padding: 0; border-radius: 16px; box-shadow: 0 8px 32px rgba(239, 68, 68, 0.15), 0 2px 8px rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); overflow: hidden; position: relative;">
+              <!-- Gradient Border Effect -->
+              <div style="position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #ef4444 0%, #dc2626 50%, #b91c1c 100%);"></div>
+              
+              <div style="background: linear-gradient(135deg, #ffffff 0%, #fef2f2 100%); padding: 28px 24px; height: 100%; position: relative; overflow: hidden;">
+                <!-- Decorative Background Pattern -->
+                <div style="position: absolute; top: -20px; right: -20px; width: 120px; height: 120px; background: radial-gradient(circle, rgba(239, 68, 68, 0.08) 0%, transparent 70%); border-radius: 50%;"></div>
+                <div style="position: absolute; bottom: -30px; left: -30px; width: 100px; height: 100px; background: radial-gradient(circle, rgba(239, 68, 68, 0.06) 0%, transparent 70%); border-radius: 50%;"></div>
+                
+                <!-- Icon Container -->
+                <div style="position: absolute; top: 24px; right: 24px; width: 64px; height: 64px; display: flex; align-items: center; justify-content: center; border-radius: 14px; background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(185, 28, 28, 0.1) 100%); backdrop-filter: blur(10px); border: 1px solid rgba(239, 68, 68, 0.2); box-shadow: 0 4px 12px rgba(239, 68, 68, 0.15);">
+                  <img src="${yemeksepetiImageUrl}" alt="Yemeksepeti" onerror="this.onerror=null; this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath fill=%22%23ef4444%22 d=%22M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z%22/%3E%3C/svg%3E';" style="width: 44px; height: 44px; border-radius: 10px; object-fit: cover; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));">
                 </div>
-                <div class="period-revenue-content">
-                  <div class="period-revenue-label">
-                    <span class="period-label-icon">🍽️</span>
-                    <span style="color: #1e293b;">Yemeksepeti Ciro</span>
+                
+                <!-- Content -->
+                <div style="position: relative; z-index: 1;">
+                  <div style="margin-bottom: 12px;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                      <div style="width: 6px; height: 6px; border-radius: 50%; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);"></div>
+                      <span style="font-size: 11px; font-weight: 700; color: #991b1b; text-transform: uppercase; letter-spacing: 1px;">YEMEKSEPETİ</span>
+                    </div>
+                    <div style="font-size: 15px; font-weight: 800; color: #1e293b; letter-spacing: -0.3px; margin-bottom: 4px;">Toplam Ciro</div>
+                    <div style="font-size: 11px; font-weight: 600; color: #64748b; letter-spacing: 0.2px;">${periodInfo}</div>
                   </div>
-                  <div class="period-revenue-period" style="color: #64748b;">${periodInfo}</div>
-                  <div class="period-revenue-amount" style="color: #10b981; font-weight: 900; font-size: 28px;">₺${yemeksepetiRevenue.toFixed(2)}</div>
+                  
+                  <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(239, 68, 68, 0.15);">
+                    <div style="display: flex; align-items: baseline; gap: 6px;">
+                      <span style="font-size: 13px; font-weight: 700; color: #10b981; margin-right: 2px;">₺</span>
+                      <span style="font-size: 32px; font-weight: 900; color: #10b981; letter-spacing: -1px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif; line-height: 1;">${yemeksepetiRevenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</span>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 10px; font-weight: 600; color: #64748b; opacity: 0.8;">
+                      ${totalRevenue > 0 ? ((yemeksepetiRevenue / totalRevenue) * 100).toFixed(1) : '0'}% toplam cirodan
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2524,6 +2569,92 @@
                   <div class="payment-total">Toplam: ₺${data.total.toFixed(2)}</div>
                 </div>
               `).join('')}
+            </div>
+          </div>
+
+          <!-- Tüm Ürünler Detaylı Liste - Modern Kart Tasarımı -->
+          <div class="report-card" style="margin-top: 30px; padding: 0; overflow: hidden; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px 24px; color: white;">
+              <h3 style="margin: 0; font-size: 18px; font-weight: 800; letter-spacing: 0.3px;">📋 ${reportDateFilter === 'week' ? 'Son 1 Hafta' : reportDateFilter === 'month' ? 'Son 1 Ay' : reportDateFilter === 'yesterday' ? 'Dün' : 'Tüm Zamanlar'} - Ürün Bazlı Detaylı Rapor</h3>
+              <p style="margin: 6px 0 0 0; font-size: 12px; opacity: 0.9; font-weight: 500;">Gerçek satış verileri ile ürün performans analizi</p>
+            </div>
+            
+            <div style="padding: 20px; max-height: 600px; overflow-y: auto; overflow-x: hidden;">
+              ${productEntries.length > 0 ? `
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                  ${productEntries
+                    .sort(([, a], [, b]) => b.revenue - a.revenue)
+                    .map(([product, stats], index) => {
+                      const percentage = totalRevenue > 0 ? (stats.revenue / totalRevenue * 100) : 0;
+                      const rankColor = index === 0 ? '#fbbf24' : index === 1 ? '#94a3b8' : index === 2 ? '#f97316' : '#e5e7eb';
+                      return `
+                        <div style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; transition: all 0.3s; position: relative; overflow: hidden;" 
+                             onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 24px rgba(0,0,0,0.12)'; this.style.borderColor='#c7d2fe';" 
+                             onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'; this.style.borderColor='#e5e7eb';">
+                          <div style="position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: linear-gradient(180deg, ${rankColor} 0%, ${rankColor}dd 100%);"></div>
+                          
+                          <div style="display: flex; align-items: center; justify-content: space-between; margin-left: 8px;">
+                            <div style="flex: 1; min-width: 0;">
+                              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                                <div style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, ${rankColor} 0%, ${rankColor}dd 100%); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; color: white; flex-shrink: 0; box-shadow: 0 2px 8px ${rankColor}40;">
+                                  ${index + 1}
+                                </div>
+                                <div style="flex: 1; min-width: 0;">
+                                  <div style="font-weight: 700; font-size: 15px; color: #1e293b; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${product}</div>
+                                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                    <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: #e0e7ff; color: #3730a3; border-radius: 6px; font-size: 12px; font-weight: 700;">
+                                      <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+                                      </svg>
+                                      ${stats.count} adet
+                                    </span>
+                                    <div style="flex: 1; min-width: 100px; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; position: relative;">
+                                      <div style="width: ${percentage}%; height: 100%; background: linear-gradient(90deg, #10b981 0%, #059669 100%); border-radius: 3px; transition: width 0.3s;"></div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div style="margin-left: 12px; text-align: right; flex-shrink: 0;">
+                              <div style="font-weight: 900; font-size: 18px; color: #10b981; line-height: 1.2; margin-bottom: 2px;">₺${stats.revenue.toFixed(2)}</div>
+                              <div style="font-size: 11px; color: #64748b; font-weight: 600;">${percentage.toFixed(1)}%</div>
+                            </div>
+                          </div>
+                        </div>
+                      `;
+                    }).join('')}
+                </div>
+                
+                <!-- Toplam Özet -->
+                <div style="margin-top: 20px; padding: 20px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 12px; border: 2px solid #e2e8f0;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                      <div style="font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">Toplam Özet</div>
+                      <div style="font-size: 11px; color: #94a3b8;">${productEntries.length} ürün</div>
+                    </div>
+                    <div style="text-align: right;">
+                      <div style="display: flex; align-items: center; gap: 16px;">
+                        <div>
+                          <div style="font-size: 11px; font-weight: 600; color: #64748b; margin-bottom: 2px;">Toplam Adet</div>
+                          <div style="font-size: 16px; font-weight: 800; color: #4b5563;">${productEntries.reduce((sum, [, stats]) => sum + stats.count, 0)}</div>
+                        </div>
+                        <div style="width: 1px; height: 30px; background: #cbd5e1;"></div>
+                        <div>
+                          <div style="font-size: 11px; font-weight: 600; color: #64748b; margin-bottom: 2px;">Toplam Ciro</div>
+                          <div style="font-size: 20px; font-weight: 900; color: #10b981;">₺${productEntries.reduce((sum, [, stats]) => sum + stats.revenue, 0).toFixed(2)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ` : `
+                <div style="text-align: center; padding: 60px 20px; color: #9ca3af;">
+                  <div style="font-size: 64px; margin-bottom: 16px; opacity: 0.5;">📊</div>
+                  <div style="font-weight: 700; font-size: 16px; color: #6b7280; margin-bottom: 6px;">Henüz veri yok</div>
+                  <div style="font-size: 13px; color: #9ca3af;">Satış yapıldıkça burada görünecek</div>
+                </div>
+              `}
             </div>
           </div>
         </div>

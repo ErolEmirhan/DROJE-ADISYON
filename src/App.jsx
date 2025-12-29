@@ -419,6 +419,22 @@ function App() {
     );
   };
 
+  const updateItemNote = (productId, note, onionOption = null, portion = null) => {
+    setCart(prevCart =>
+      prevCart.map(item => {
+        // Eşleşme kontrolü: hem ID, hem onionOption (varsa), hem de portion (varsa) eşleşmeli
+        const matchesId = item.id === productId;
+        const matchesOnion = onionOption ? item.onionOption === onionOption : !item.onionOption;
+        const matchesPortion = portion !== null ? item.portion === portion : !item.portion;
+        
+        if (matchesId && matchesOnion && matchesPortion) {
+          return { ...item, extraNote: note || null };
+        }
+        return item;
+      })
+    );
+  };
+
   // Masa tipine göre orderSource'u belirle
   const getOrderSourceFromTable = (table) => {
     if (!table) return null;
@@ -545,6 +561,7 @@ function App() {
           tableType: selectedTable.type,
           orderNote: orderNote || null,
           orderSource: getOrderSourceFromTable(selectedTable), // 'Trendyol', 'Yemeksepeti', or null
+          orderId: result.orderId || null, // Fiş numarası için
           sale_date: currentDate,
           sale_time: currentTime
         };
@@ -1015,6 +1032,7 @@ function App() {
               orderNote={orderNote}
               onOrderNoteChange={setOrderNote}
               onToggleGift={toggleGift}
+              onUpdateItemNote={updateItemNote}
               themeColor={themeColor}
               tenantId={tenantId}
             />
