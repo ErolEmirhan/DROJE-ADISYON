@@ -5846,6 +5846,10 @@ function generateAdisyonHTML(items, adisyonData) {
         const displayQuantity = portion !== null && portion !== undefined ? portion : quantity;
         const itemText = `${displayQuantity.toString().replace('.', ',')} X ${displayName.toUpperCase()}`;
         
+        // Soğanlı/soğansız bilgisi varsa ürünün sağına ekle
+        const onionOption = item.onionOption || null;
+        const onionText = onionOption ? ` ${onionOption.toUpperCase()}` : '';
+        
         // Ürün notu varsa göster
         const noteHTML = item.extraNote ? `
           <div style="margin-top: 4px; padding: 4px 8px; background: #fef3c7; border-left: 2px solid #f59e0b; border-radius: 4px;">
@@ -5856,14 +5860,20 @@ function generateAdisyonHTML(items, adisyonData) {
         if (isGift) {
           itemsHTML += `
             <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #ccc;">
-              <div style="font-size: 11px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif;">${itemText}</div>
+              <div style="font-size: 11px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+                <span>${itemText}</span>
+                ${onionText ? `<span style="font-size: 10px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+              </div>
               ${noteHTML}
             </div>
           `;
         } else {
           itemsHTML += `
             <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #000;">
-              <div style="font-size: 11px; font-weight: 900; color: #000; font-family: Arial, sans-serif;">${itemText}</div>
+              <div style="font-size: 11px; font-weight: 900; color: #000; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+                <span>${itemText}</span>
+                ${onionText ? `<span style="font-size: 10px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+              </div>
               ${noteHTML}
             </div>
           `;
@@ -5891,6 +5901,10 @@ function generateAdisyonHTML(items, adisyonData) {
       const displayQuantity = portion !== null && portion !== undefined ? portion : quantity;
       const itemText = `${displayQuantity.toString().replace('.', ',')} X ${displayName.toUpperCase()}`;
       
+      // Soğanlı/soğansız bilgisi varsa ürünün sağına ekle
+      const onionOption = item.onionOption || null;
+      const onionText = onionOption ? ` ${onionOption.toUpperCase()}` : '';
+      
       // Ürün notu varsa göster
       const noteHTML = item.extraNote ? `
         <div style="margin-top: 4px; padding: 4px 8px; background: #fef3c7; border-left: 2px solid #f59e0b; border-radius: 4px;">
@@ -5901,14 +5915,20 @@ function generateAdisyonHTML(items, adisyonData) {
       if (isGift) {
         return `
           <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #ccc;">
-            <div style="font-size: 11px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif;">${itemText}</div>
+            <div style="font-size: 11px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+              <span>${itemText}</span>
+              ${onionText ? `<span style="font-size: 10px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+            </div>
             ${noteHTML}
           </div>
         `;
       } else {
         return `
           <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #000;">
-            <div style="font-size: 11px; font-weight: 900; color: #000; font-family: Arial, sans-serif;">${itemText}</div>
+            <div style="font-size: 11px; font-weight: 900; color: #000; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+              <span>${itemText}</span>
+              ${onionText ? `<span style="font-size: 10px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+            </div>
             ${noteHTML}
           </div>
         `;
@@ -5930,7 +5950,7 @@ function generateAdisyonHTML(items, adisyonData) {
           }
           body {
             margin: 0;
-            padding: 8px;
+            padding: 8px 8px 8px 32px;
             height: auto;
             min-height: 100%;
             color: #000 !important;
@@ -5954,7 +5974,7 @@ function generateAdisyonHTML(items, adisyonData) {
           font-family: Arial, sans-serif;
           width: 58mm;
           max-width: 58mm;
-          padding: 8px;
+          padding: 8px 8px 8px 32px;
           margin: 0;
           font-size: 11px;
           color: #000;
@@ -8044,12 +8064,22 @@ function generateMobileHTML(serverURL) {
     <div style="background: white; border-radius: 20px; width: 100%; max-width: 400px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
       <div style="background: linear-gradient(135deg, #f97316 0%, #fb923c 50%, #ea580c 100%); color: white; padding: 20px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
-          <h2 style="margin: 0; font-size: 20px; font-weight: 800;">Sipariş Notu</h2>
+          <h2 style="margin: 0; font-size: 20px; font-weight: 800;">Ürün Notu</h2>
           <button onclick="hideNoteModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold;">×</button>
         </div>
       </div>
       <div style="padding: 20px;">
-        <textarea id="noteInput" placeholder="Sipariş notu yazın..." style="width: 100%; min-height: 120px; padding: 12px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 15px; font-family: inherit; resize: vertical; outline: none;" onfocus="this.style.borderColor='#a855f7';" onblur="this.style.borderColor='#e5e7eb';"></textarea>
+        <div style="margin-bottom: 16px;">
+          <label style="display: block; margin-bottom: 8px; font-size: 14px; font-weight: 700; color: #374151;">Ürün Seçin</label>
+          <select id="noteProductSelect" onchange="onNoteProductChange()" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 15px; font-family: inherit; outline: none; background: white;" onfocus="this.style.borderColor='#f97316';" onblur="this.style.borderColor='#e5e7eb';">
+            <option value="">Tüm sipariş için (genel not)</option>
+          </select>
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: 8px; font-size: 14px; font-weight: 700; color: #374151;">Not (Örn: Sütü az olacak, Ekstra peynir, vs.)</label>
+          <textarea id="noteInput" placeholder="Sipariş notunuzu buraya yazın..." style="width: 100%; min-height: 120px; padding: 12px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 15px; font-family: inherit; resize: vertical; outline: none;" onfocus="this.style.borderColor='#f97316';" onblur="this.style.borderColor='#e5e7eb';" maxlength="200"></textarea>
+          <p id="noteCharCount" style="text-align: right; font-size: 12px; color: #9ca3af; margin-top: 4px; margin-bottom: 0;">0/200</p>
+        </div>
       </div>
       <div style="border-top: 1px solid #e5e7eb; padding: 16px; display: flex; justify-content: flex-end; gap: 12px;">
         <button onclick="hideNoteModal()" style="padding: 12px 24px; background: #f3f4f6; color: #374151; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; transition: all 0.3s;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">İptal</button>
@@ -10106,12 +10136,15 @@ function generateMobileHTML(serverURL) {
           const portionInfo = (isYakasGrillMode && item.portion) ? '<div style="color: ' + themePrimary + '; font-size: 12px; font-weight: 700; margin-top: 2px;">' + item.portion + ' Porsiyon</div>' : '';
           // Yaka's Grill için soğan bilgisi varsa göster
           const onionInfo = (isYakasGrillMode && item.onionOption) ? '<div style="color: ' + themePrimary + '; font-size: 12px; font-weight: 700; margin-top: 2px;">' + item.onionOption + '</div>' : '';
+          // Ürün notu varsa göster
+          const noteInfo = item.extraNote ? '<div style="margin-top: 4px; padding: 4px 8px; background: #fef3c7; border-left: 2px solid #f59e0b; border-radius: 4px;"><div style="font-size: 11px; font-weight: 700; color: #92400e;">📝 ' + item.extraNote + '</div></div>' : '';
           const itemKey = item.portion ? item.id + '_' + item.portion : (item.onionOption ? item.id + '_' + item.onionOption : item.id);
           return '<div class="cart-item" data-item-key="' + itemKey + '">' +
             '<div style="flex: 1;">' +
               '<div style="font-weight: 700; font-size: 15px; color: #1f2937; margin-bottom: 4px;">' + item.name + '</div>' +
               portionInfo +
               onionInfo +
+              noteInfo +
               '<div style="color: #6b7280; font-size: 13px; font-weight: 600;">' + item.price.toFixed(2) + ' ₺ × ' + item.quantity + ' = ' + (item.price * item.quantity).toFixed(2) + ' ₺</div>' +
             '</div>' +
             '<div class="cart-item-controls">' +
@@ -10268,9 +10301,69 @@ function generateMobileHTML(serverURL) {
     }
     
     // Not Modal İşlemleri
+    let selectedNoteProductId = null;
+    
     function showNoteModal() {
+      // Ürün seçimi dropdown'ını doldur
+      const productSelect = document.getElementById('noteProductSelect');
+      if (productSelect) {
+        productSelect.innerHTML = '<option value="">Tüm sipariş için (genel not)</option>';
+        cart.forEach((item, index) => {
+          const option = document.createElement('option');
+          option.value = index;
+          const productLabel = item.name + 
+            (item.portion ? ' (' + item.portion + ' porsiyon)' : '') + 
+            (item.onionOption ? ' (' + item.onionOption + ')' : '') + 
+            ' - ' + item.quantity + ' adet';
+          option.textContent = productLabel;
+          productSelect.appendChild(option);
+        });
+      }
+      
+      // Varsayılan olarak genel not göster
+      selectedNoteProductId = null;
       document.getElementById('noteInput').value = orderNote;
+      updateNoteCharCount();
       document.getElementById('noteModal').style.display = 'flex';
+    }
+    
+    function onNoteProductChange() {
+      const productSelect = document.getElementById('noteProductSelect');
+      const noteInput = document.getElementById('noteInput');
+      
+      if (!productSelect || !noteInput) return;
+      
+      const selectedIndex = productSelect.value;
+      
+      if (selectedIndex === '') {
+        // Genel not seçildi
+        selectedNoteProductId = null;
+        noteInput.value = orderNote;
+      } else {
+        // Ürün bazlı not seçildi
+        const itemIndex = parseInt(selectedIndex);
+        if (itemIndex >= 0 && itemIndex < cart.length) {
+          selectedNoteProductId = itemIndex;
+          const item = cart[itemIndex];
+          noteInput.value = item.extraNote || '';
+        }
+      }
+      updateNoteCharCount();
+    }
+    
+    function updateNoteCharCount() {
+      const noteInput = document.getElementById('noteInput');
+      const charCount = document.getElementById('noteCharCount');
+      if (noteInput && charCount) {
+        charCount.textContent = noteInput.value.length + '/200';
+      }
+    }
+    
+    // Not input değiştiğinde karakter sayısını güncelle
+    if (document.getElementById('noteInput')) {
+      document.getElementById('noteInput').addEventListener('input', function() {
+        updateNoteCharCount();
+      });
     }
     
     // Ürün İptal Modal İşlemleri
@@ -10551,11 +10644,30 @@ function generateMobileHTML(serverURL) {
     
     function hideNoteModal() {
       document.getElementById('noteModal').style.display = 'none';
+      selectedNoteProductId = null;
     }
     
     function saveNote() {
-      orderNote = document.getElementById('noteInput').value.trim();
-      updateNoteButton();
+      const noteInput = document.getElementById('noteInput');
+      if (!noteInput) return;
+      
+      const noteText = noteInput.value.trim();
+      
+      if (selectedNoteProductId !== null) {
+        // Ürün bazlı not ekle
+        const itemIndex = selectedNoteProductId;
+        if (itemIndex >= 0 && itemIndex < cart.length) {
+          cart[itemIndex].extraNote = noteText || null;
+          updateCart();
+          showToast('success', 'Not Eklendi', 'Ürün notu başarıyla eklendi');
+        }
+      } else {
+        // Genel sipariş notu
+        orderNote = noteText;
+        updateNoteButton();
+        showToast('success', 'Not Eklendi', 'Sipariş notu başarıyla eklendi');
+      }
+      
       hideNoteModal();
     }
     
