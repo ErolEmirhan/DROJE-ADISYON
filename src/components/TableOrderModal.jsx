@@ -22,8 +22,9 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
     const grouped = new Map();
     
     items.forEach(item => {
-      // product_id ve isGift'e göre grup key'i oluştur
-      const key = `${item.product_id}_${item.isGift || false}`;
+      // product_id, isGift ve portion'a göre grup key'i oluştur (porsiyon bilgisi de dahil)
+      const portionKey = item.portion !== null && item.portion !== undefined ? item.portion : 'no-portion';
+      const key = `${item.product_id}_${item.isGift || false}_${portionKey}`;
       
       if (!grouped.has(key)) {
         // İlk kez görülen ürün
@@ -379,6 +380,14 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                           {item.quantity}
                         </p>
                         <p className="text-sm text-gray-500 font-medium">adet</p>
+                        {item.portion !== null && item.portion !== undefined && item.portion !== 0 && item.portion !== '0' && (
+                          <>
+                            <p className="text-sm text-gray-400">•</p>
+                            <p className="text-sm font-semibold text-blue-600">
+                              {typeof item.portion === 'number' ? item.portion.toString().replace('.', ',') : item.portion.toString().replace('.', ',')} porsiyon
+                            </p>
+                          </>
+                        )}
                         <p className="text-sm text-gray-400">×</p>
                         {isGift ? (
                           <>
@@ -764,6 +773,17 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                   <p className="text-lg font-semibold text-gray-800">₺{selectedItemDetail.price.toFixed(2)}</p>
                 </div>
               </div>
+              
+              {selectedItemDetail.portion !== null && selectedItemDetail.portion !== undefined && selectedItemDetail.portion !== 0 && selectedItemDetail.portion !== '0' && (
+                <div className="border-t border-gray-200 pt-4">
+                  <p className="text-sm text-gray-500 mb-1">Porsiyon</p>
+                  <p className="text-lg font-semibold text-blue-600">
+                    {typeof selectedItemDetail.portion === 'number' 
+                      ? selectedItemDetail.portion.toString().replace('.', ',') 
+                      : selectedItemDetail.portion.toString().replace('.', ',')} porsiyon
+                  </p>
+                </div>
+              )}
 
               {selectedItemDetail.staff_name ? (
                 <>

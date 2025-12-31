@@ -517,6 +517,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       name: item.product_name,
       quantity: item.quantity,
       price: item.price,
+      portion: item.portion !== null && item.portion !== undefined ? item.portion : null,
       isGift: item.isGift || false,
       staff_name: item.staff_name || null,
       category_id: null // Kategori bilgisi item'da yoksa sonra eklenebilir

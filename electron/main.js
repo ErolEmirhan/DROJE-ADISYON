@@ -4710,17 +4710,30 @@ function generateReceiptHTML(receiptData) {
     const itemTotal = isGift ? 0 : (item.price * item.quantity);
     const originalTotal = item.price * item.quantity;
     
-    // Yaka's Grill için porsiyon bilgisi (sadece 1'den farklıysa)
-    const tenantInfo = tenantManager.getCurrentTenantInfo();
-    const isYakasGrill = tenantInfo?.tenantId === 'TENANT-1766340222641';
-    const portionInfo = (isYakasGrill && item.portion && item.portion !== 1) ? `<div style="font-size: 10px; color: #92400e; font-weight: 700; margin-top: 2px; font-family: 'Montserrat', sans-serif;">${item.portion} Porsiyon</div>` : '';
+    // Porsiyon bilgisi - varsa göster (0 hariç tüm değerler için)
+    let portion = item.portion;
+    if (portion === null || portion === undefined || portion === 0 || portion === '0' || portion === '') {
+      portion = null;
+    } else {
+      // Porsiyon değerini sayıya çevir
+      portion = typeof portion === 'string' ? parseFloat(portion) : portion;
+      if (isNaN(portion) || portion === 0) {
+        portion = null;
+      }
+    }
+    const portionText = portion ? ` (${portion.toString().replace('.', ',')} porsiyon)` : '';
+    
+    // Debug: Porsiyon bilgisini logla
+    if (portion) {
+      console.log(`   [generateReceiptHTML] Ürün: ${item.name}, Porsiyon: ${portion}`);
+    }
     
     if (isGift) {
       return `
       <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #ccc;">
         <div style="display: flex; justify-content: space-between; font-weight: 900; font-style: italic; margin-bottom: 4px; font-family: 'Montserrat', sans-serif;">
           <div style="display: flex; align-items: center; gap: 4px;">
-            <span style="text-decoration: line-through; color: #999;">${item.name}</span>
+            <span style="text-decoration: line-through; color: #999;">${item.name}${portionText}</span>
             <span style="font-size: 8px; background: #dcfce7; color: #16a34a; padding: 2px 4px; border-radius: 3px; font-weight: 900;">İKRAM</span>
           </div>
           <div style="text-align: right;">
@@ -4729,9 +4742,8 @@ function generateReceiptHTML(receiptData) {
           </div>
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 10px; color: #000; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">
-          <span>${item.quantity} adet × <span style="text-decoration: line-through; color: #999;">₺${item.price.toFixed(2)}</span> <span style="color: #16a34a;">₺0.00</span></span>
+          <span>${item.quantity} adet${portionText} × <span style="text-decoration: line-through; color: #999;">₺${item.price.toFixed(2)}</span> <span style="color: #16a34a;">₺0.00</span></span>
         </div>
-        ${portionInfo}
       </div>
     `;
     }
@@ -4739,13 +4751,12 @@ function generateReceiptHTML(receiptData) {
     return `
       <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #ccc;">
         <div style="display: flex; justify-content: space-between; font-weight: 900; font-style: italic; margin-bottom: 4px; font-family: 'Montserrat', sans-serif; color: #000 !important;">
-          <span style="color: #000 !important;">${item.name}</span>
+          <span style="color: #000 !important;">${item.name}${portionText}</span>
           <span style="color: #000 !important;">₺${itemTotal.toFixed(2)}</span>
         </div>
         <div style="display: flex; justify-content: space-between; font-size: 10px; color: #000; font-weight: 900; font-style: italic; font-family: 'Montserrat', sans-serif;">
-          <span>${item.quantity} adet × ₺${item.price.toFixed(2)}</span>
+          <span>${item.quantity} adet${portionText} × ₺${item.price.toFixed(2)}</span>
         </div>
-        ${portionInfo}
       </div>
     `;
   }).join('');
@@ -5410,7 +5421,7 @@ async function printAdisyonToPrinter(printerName, printerType, items, adisyonDat
     // Gizli bir pencere oluştur ve adisyon içeriğini yükle
     printWindow = new BrowserWindow({
       show: false,
-      width: 220, // 58mm ≈ 220px (72 DPI'da)
+      width: 286, // 75mm ≈ 286px (72 DPI'da) - 1.3 kat büyütülmüş
       height: 3000,
       webPreferences: {
         nodeIntegration: false,
@@ -5460,7 +5471,7 @@ async function printAdisyonToPrinter(printerName, printerType, items, adisyonDat
           
           // Pencere yüksekliğini içeriğe göre ayarla (en az 3000px, içerik daha uzunsa onu kullan)
           const windowHeight = Math.max(3000, scrollHeight + 200);
-          printWindow.setSize(220, windowHeight);
+          printWindow.setSize(286, windowHeight);
           console.log('Pencere yüksekliği ayarlandı:', windowHeight, 'px');
           
           // Ekstra bir kısa bekleme - pencere boyutu değişikliğinin uygulanması için
@@ -5852,27 +5863,27 @@ function generateAdisyonHTML(items, adisyonData) {
         
         // Ürün notu varsa göster
         const noteHTML = item.extraNote ? `
-          <div style="margin-top: 4px; padding: 4px 8px; background: #fef3c7; border-left: 2px solid #f59e0b; border-radius: 4px;">
-            <div style="font-size: 9px; font-weight: 700; color: #92400e; font-family: Arial, sans-serif;">📝 ${item.extraNote}</div>
+          <div style="margin-top: 5px; padding: 5px 10px; background: #fef3c7; border-left: 2px solid #f59e0b; border-radius: 5px;">
+            <div style="font-size: 12px; font-weight: 700; color: #92400e; font-family: Arial, sans-serif;">📝 ${item.extraNote}</div>
           </div>
         ` : '';
         
         if (isGift) {
           itemsHTML += `
-            <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #ccc;">
-              <div style="font-size: 11px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+            <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #ccc;">
+              <div style="font-size: 14px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
                 <span>${itemText}</span>
-                ${onionText ? `<span style="font-size: 10px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+                ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
               </div>
               ${noteHTML}
             </div>
           `;
         } else {
           itemsHTML += `
-            <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #000;">
-              <div style="font-size: 11px; font-weight: 900; color: #000; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+            <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #000;">
+              <div style="font-size: 14px; font-weight: 900; color: #000; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
                 <span>${itemText}</span>
-                ${onionText ? `<span style="font-size: 10px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+                ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
               </div>
               ${noteHTML}
             </div>
@@ -5907,27 +5918,27 @@ function generateAdisyonHTML(items, adisyonData) {
       
       // Ürün notu varsa göster
       const noteHTML = item.extraNote ? `
-        <div style="margin-top: 4px; padding: 4px 8px; background: #fef3c7; border-left: 2px solid #f59e0b; border-radius: 4px;">
-          <div style="font-size: 9px; font-weight: 700; color: #92400e; font-family: Arial, sans-serif;">📝 ${item.extraNote}</div>
+        <div style="margin-top: 5px; padding: 5px 10px; background: #fef3c7; border-left: 2px solid #f59e0b; border-radius: 5px;">
+          <div style="font-size: 12px; font-weight: 700; color: #92400e; font-family: Arial, sans-serif;">📝 ${item.extraNote}</div>
         </div>
       ` : '';
       
       if (isGift) {
         return `
-          <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #ccc;">
-            <div style="font-size: 11px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+          <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #ccc;">
+            <div style="font-size: 14px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
               <span>${itemText}</span>
-              ${onionText ? `<span style="font-size: 10px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+              ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
             </div>
             ${noteHTML}
           </div>
         `;
       } else {
         return `
-          <div style="margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #000;">
-            <div style="font-size: 11px; font-weight: 900; color: #000; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+          <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #000;">
+            <div style="font-size: 14px; font-weight: 900; color: #000; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
               <span>${itemText}</span>
-              ${onionText ? `<span style="font-size: 10px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+              ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
             </div>
             ${noteHTML}
           </div>
@@ -5944,13 +5955,13 @@ function generateAdisyonHTML(items, adisyonData) {
       <style>
         @media print {
           @page {
-            size: 58mm auto;
+            size: 75mm auto;
             margin: 0;
             min-height: 100%;
           }
           body {
             margin: 0;
-            padding: 8px 8px 8px 32px;
+            padding: 10px 10px 10px 42px;
             height: auto;
             min-height: 100%;
             color: #000 !important;
@@ -5972,11 +5983,11 @@ function generateAdisyonHTML(items, adisyonData) {
         }
         body {
           font-family: Arial, sans-serif;
-          width: 58mm;
-          max-width: 58mm;
-          padding: 8px 8px 8px 32px;
+          width: 75mm;
+          max-width: 75mm;
+          padding: 10px 10px 10px 42px;
           margin: 0;
-          font-size: 11px;
+          font-size: 14px;
           color: #000;
           background: white;
         }
@@ -5984,53 +5995,53 @@ function generateAdisyonHTML(items, adisyonData) {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          margin-bottom: 8px;
-          padding-bottom: 4px;
+          margin-bottom: 10px;
+          padding-bottom: 5px;
           border-bottom: 1px solid #000;
         }
         .receipt-no {
-          font-size: 10px;
+          font-size: 13px;
           font-weight: 700;
           color: #000;
         }
         .receipt-title {
-          font-size: 11px;
+          font-size: 14px;
           font-weight: 700;
           color: #000;
           text-align: right;
         }
         .table-info {
           text-align: center;
-          margin: 8px 0;
-          padding: 4px 0;
+          margin: 10px 0;
+          padding: 5px 0;
           border-bottom: 1px solid #000;
-          font-size: 11px;
+          font-size: 14px;
           font-weight: 700;
           color: #000;
         }
         .items {
-          margin: 8px 0;
+          margin: 10px 0;
         }
         .item {
-          margin-bottom: 6px;
-          padding: 4px 0;
+          margin-bottom: 8px;
+          padding: 5px 0;
           border-bottom: 1px solid #000;
         }
         .item-text {
-          font-size: 11px;
+          font-size: 14px;
           font-weight: 700;
           color: #000;
         }
         .footer {
-          margin-top: 12px;
-          padding-top: 8px;
+          margin-top: 15px;
+          padding-top: 10px;
           border-top: 1px solid #000;
         }
         .footer-line {
-          font-size: 10px;
+          font-size: 13px;
           font-weight: 700;
           color: #000;
-          margin-bottom: 4px;
+          margin-bottom: 5px;
         }
       </style>
     </head>
