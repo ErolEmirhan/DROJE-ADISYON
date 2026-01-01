@@ -5814,6 +5814,10 @@ async function printAdisyonByCategory(items, adisyonData) {
 
 // Modern ve profesyonel adisyon HTML formatı
 function generateAdisyonHTML(items, adisyonData) {
+  // Yaka's Grill kontrolü
+  const tenantInfo = tenantManager.getCurrentTenantInfo();
+  const isYakasGrill = tenantInfo?.tenantId === 'TENANT-1766340222641';
+  
   // Garson ismini adisyonData'dan al (eğer yoksa items'dan al)
   const staffName = adisyonData.staff_name || (items.length > 0 && items[0].staff_name ? items[0].staff_name : null);
   
@@ -5853,9 +5857,8 @@ function generateAdisyonHTML(items, adisyonData) {
           }
         }
         
-        // Porsiyon varsa onu kullan, yoksa quantity kullan - "1,5 X ADANA PORSİYON" formatında göster
-        const displayQuantity = portion !== null && portion !== undefined ? portion : quantity;
-        const itemText = `${displayQuantity.toString().replace('.', ',')} X ${displayName.toUpperCase()}`;
+        // Yaka's Grill için özel işlem: Porsiyon varsa ve quantity > 1 ise, her birini ayrı satır olarak yazdır
+        const shouldExpandItems = isYakasGrill && portion !== null && portion !== undefined && quantity > 1;
         
         // Soğanlı/soğansız bilgisi varsa ürünün sağına ekle
         const onionOption = item.onionOption || null;
@@ -5868,32 +5871,51 @@ function generateAdisyonHTML(items, adisyonData) {
           </div>
         ` : '';
         
-        if (isGift) {
-          itemsHTML += `
-            <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #ccc;">
-              <div style="font-size: 14px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
-                <span>${itemText}</span>
-                ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+        // Item HTML'i oluşturma fonksiyonu
+        const createItemHTML = (itemTextValue) => {
+          if (isGift) {
+            return `
+              <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #ccc;">
+                <div style="font-size: 14px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+                  <span>${itemTextValue}</span>
+                  ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+                </div>
+                ${noteHTML}
               </div>
-              ${noteHTML}
-            </div>
-          `;
+            `;
+          } else {
+            return `
+              <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #000;">
+                <div style="font-size: 14px; font-weight: 900; color: #000; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+                  <span>${itemTextValue}</span>
+                  ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+                </div>
+                ${noteHTML}
+              </div>
+            `;
+          }
+        };
+        
+        if (shouldExpandItems) {
+          // Yaka's Grill için: Her birini ayrı satır olarak yazdır
+          const displayQuantity = portion.toString().replace('.', ',');
+          const itemText = `${displayQuantity} X ${displayName.toUpperCase()}`;
+          
+          // Quantity kadar ayrı satır oluştur
+          for (let i = 0; i < quantity; i++) {
+            itemsHTML += createItemHTML(itemText);
+          }
         } else {
-          itemsHTML += `
-            <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #000;">
-              <div style="font-size: 14px; font-weight: 900; color: #000; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
-                <span>${itemText}</span>
-                ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
-              </div>
-              ${noteHTML}
-            </div>
-          `;
+          // Normal durum: Tek satır olarak göster
+          const displayQuantity = portion !== null && portion !== undefined ? portion : quantity;
+          const itemText = `${displayQuantity.toString().replace('.', ',')} X ${displayName.toUpperCase()}`;
+          itemsHTML += createItemHTML(itemText);
         }
       });
     });
   } else {
     // Kategori bilgisi yoksa basit format
-    itemsHTML = items.map(item => {
+    items.forEach(item => {
       const isGift = item.isGift || false;
       const portion = item.portion || null;
       const productName = item.name || '';
@@ -5908,9 +5930,8 @@ function generateAdisyonHTML(items, adisyonData) {
         }
       }
       
-      // Porsiyon varsa onu kullan, yoksa quantity kullan - "1,5 X ADANA PORSİYON" formatında göster
-      const displayQuantity = portion !== null && portion !== undefined ? portion : quantity;
-      const itemText = `${displayQuantity.toString().replace('.', ',')} X ${displayName.toUpperCase()}`;
+      // Yaka's Grill için özel işlem: Porsiyon varsa ve quantity > 1 ise, her birini ayrı satır olarak yazdır
+      const shouldExpandItems = isYakasGrill && portion !== null && portion !== undefined && quantity > 1;
       
       // Soğanlı/soğansız bilgisi varsa ürünün sağına ekle
       const onionOption = item.onionOption || null;
@@ -5923,28 +5944,47 @@ function generateAdisyonHTML(items, adisyonData) {
         </div>
       ` : '';
       
-      if (isGift) {
-        return `
-          <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #ccc;">
-            <div style="font-size: 14px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
-              <span>${itemText}</span>
-              ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+      // Item HTML'i oluşturma fonksiyonu
+      const createItemHTML = (itemTextValue) => {
+        if (isGift) {
+          return `
+            <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #ccc;">
+              <div style="font-size: 14px; font-weight: 900; color: #000; text-decoration: line-through; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+                <span>${itemTextValue}</span>
+                ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+              </div>
+              ${noteHTML}
             </div>
-            ${noteHTML}
-          </div>
-        `;
+          `;
+        } else {
+          return `
+            <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #000;">
+              <div style="font-size: 14px; font-weight: 900; color: #000; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
+                <span>${itemTextValue}</span>
+                ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
+              </div>
+              ${noteHTML}
+            </div>
+          `;
+        }
+      };
+      
+      if (shouldExpandItems) {
+        // Yaka's Grill için: Her birini ayrı satır olarak yazdır
+        const displayQuantity = portion.toString().replace('.', ',');
+        const itemText = `${displayQuantity} X ${displayName.toUpperCase()}`;
+        
+        // Quantity kadar ayrı satır oluştur
+        for (let i = 0; i < quantity; i++) {
+          itemsHTML += createItemHTML(itemText);
+        }
       } else {
-        return `
-          <div style="margin-bottom: 8px; padding: 5px 0; border-bottom: 1px solid #000;">
-            <div style="font-size: 14px; font-weight: 900; color: #000; font-family: Arial, sans-serif; display: flex; justify-content: space-between; align-items: center;">
-              <span>${itemText}</span>
-              ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
-            </div>
-            ${noteHTML}
-          </div>
-        `;
+        // Normal durum: Tek satır olarak göster
+        const displayQuantity = portion !== null && portion !== undefined ? portion : quantity;
+        const itemText = `${displayQuantity.toString().replace('.', ',')} X ${displayName.toUpperCase()}`;
+        itemsHTML += createItemHTML(itemText);
       }
-    }).join('');
+    });
   }
 
   return `
