@@ -10,7 +10,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <link rel="manifest" href="/manifest.json?v=2.4.8">
+  <link rel="manifest" href="/manifest.json?v=2.5.1">
   <link rel="icon" type="image/png" href="patron.png">
   <link rel="apple-touch-icon" href="patron.png">
   <title id="pageTitle">Yaka's Grill - Admin Dashboard</title>
@@ -26,12 +26,16 @@
       let refreshing = false;
       
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js?v=2.4.8')
+        navigator.serviceWorker.register('/sw.js?v=2.5.1')
           .then((registration) => {
             console.log('[SW] Service Worker registered:', registration.scope);
             
-            // Yeni service worker varsa, hemen güncelle
+            // Yeni service worker varsa, sadece bir kez güncelle
+            let updateChecked = false;
             registration.addEventListener('updatefound', () => {
+              if (updateChecked) return; // Zaten kontrol edildi, tekrar kontrol etme
+              updateChecked = true;
+              
               const newWorker = registration.installing;
               if (newWorker) {
                 newWorker.addEventListener('statechange', () => {
@@ -39,14 +43,14 @@
                     if (navigator.serviceWorker.controller) {
                       // Yeni versiyon var ve eski worker aktif
                       console.log('[SW] New version available!');
-                      // Kullanıcıya bildir ve otomatik yenile
+                      // Sadece bir kez yenile
                       if (!refreshing) {
                         refreshing = true;
-                        // 2 saniye bekle, sonra otomatik yenile
+                        // 3 saniye bekle, sonra otomatik yenile
                         setTimeout(() => {
                           console.log('[SW] Auto-reloading for update...');
                           window.location.reload(true); // Hard reload
-                        }, 2000);
+                        }, 3000);
                       }
                     } else {
                       // İlk yükleme
@@ -57,21 +61,23 @@
               }
             });
             
-            // Her 30 saniyede bir kontrol et (daha sık)
-            setInterval(() => {
-              registration.update();
-            }, 30000);
+            // İlk yüklemede bir kez kontrol et
+            registration.update();
             
-            // Sayfa görünür olduğunda kontrol et
-            document.addEventListener('visibilitychange', () => {
-              if (!document.hidden) {
+            // Her 5 dakikada bir kontrol et (daha az sık)
+            setInterval(() => {
+              if (!refreshing) {
                 registration.update();
               }
-            });
+            }, 300000); // 5 dakika
             
-            // Focus olduğunda kontrol et
-            window.addEventListener('focus', () => {
-              registration.update();
+            // Sayfa görünür olduğunda kontrol et (sadece bir kez)
+            let visibilityChecked = false;
+            document.addEventListener('visibilitychange', () => {
+              if (!document.hidden && !visibilityChecked && !refreshing) {
+                visibilityChecked = true;
+                registration.update();
+              }
             });
           })
           .catch((error) => {
@@ -79,28 +85,17 @@
             // Hata olsa bile uygulama çalışmaya devam etsin
           });
         
-        // Service worker mesajlarını dinle
-        navigator.serviceWorker.addEventListener('message', (event) => {
-          if (event.data && event.data.type === 'SW_UPDATED') {
-            console.log('[SW] Update message received:', event.data.message);
-            if (!refreshing) {
-              refreshing = true;
-              // 1 saniye bekle, sonra otomatik yenile
-              setTimeout(() => {
-                window.location.reload(true); // Hard reload
-              }, 1000);
+        // Service worker mesajlarını dinle (sadece bir kez)
+        let messageListenerAdded = false;
+        if (!messageListenerAdded) {
+          messageListenerAdded = true;
+          navigator.serviceWorker.addEventListener('message', (event) => {
+            if (event.data && event.data.type === 'SW_UPDATED') {
+              console.log('[SW] Update message received:', event.data.message);
+              // Mesajı sadece logla, otomatik yenileme yapma (updatefound zaten hallediyor)
             }
-          }
-        });
-        
-        // Service worker controller değiştiğinde yenile
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-          console.log('[SW] New service worker activated, reloading...');
-          if (!refreshing) {
-            refreshing = true;
-            window.location.reload(true); // Hard reload
-          }
-        });
+          });
+        }
       });
     } else {
       if (!isSecureContext) {
@@ -421,6 +416,12 @@
         splashTitle.textContent = businessName;
       }
 
+      // Login screen business name güncelle
+      const loginBusinessName = document.getElementById('loginBusinessName');
+      if (loginBusinessName) {
+        loginBusinessName.textContent = businessName;
+      }
+
       // Admin PIN'i güncelle (eğer tenant'ta varsa)
       if (currentTenantInfo && currentTenantInfo.adminPin) {
         adminPin = currentTenantInfo.adminPin;
@@ -696,16 +697,26 @@
       return now;
     }
 
+    // Tarihi normalize et - her zaman DD.MM.YYYY formatında döndür
+    function normalizeDateString(date) {
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const year = date.getFullYear();
+      return `${day}.${month}.${year}`;
+    }
+
     function getTodayDateString() {
       const businessDay = getBusinessDayDate();
-      return businessDay.toLocaleDateString('tr-TR');
+      // Her zaman normalize edilmiş format kullan (locale'den bağımsız)
+      return normalizeDateString(businessDay);
     }
 
     function getYesterdayDateString() {
       const businessDay = getBusinessDayDate();
       const yesterday = new Date(businessDay);
       yesterday.setDate(yesterday.getDate() - 1);
-      return yesterday.toLocaleDateString('tr-TR');
+      // Her zaman normalize edilmiş format kullan (locale'den bağımsız)
+      return normalizeDateString(yesterday);
     }
 
     // Tarih karşılaştırması için - gece 03:00'a göre
@@ -1085,13 +1096,26 @@
           if (!saleDate && data.created_at) {
             const timestamp = data.created_at;
             const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
-            saleDate = date.toLocaleDateString('tr-TR');
+            saleDate = normalizeDateString(date);
             saleTime = date.toLocaleTimeString('tr-TR');
           } else if (!saleDate && data.timestamp) {
             const timestamp = data.timestamp;
             const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
-            saleDate = date.toLocaleDateString('tr-TR');
+            saleDate = normalizeDateString(date);
             saleTime = date.toLocaleTimeString('tr-TR');
+          } else if (saleDate) {
+            // sale_date varsa ama format farklıysa normalize et
+            // Eğer format zaten DD.MM.YYYY değilse düzelt
+            if (typeof saleDate === 'string' && !/^\d{2}\.\d{2}\.\d{4}$/.test(saleDate)) {
+              try {
+                const parsedDate = new Date(saleDate);
+                if (!isNaN(parsedDate.getTime())) {
+                  saleDate = normalizeDateString(parsedDate);
+                }
+              } catch (e) {
+                console.warn('Tarih parse edilemedi:', saleDate, e);
+              }
+            }
           }
           
           // Items'ı parse et
@@ -1216,13 +1240,25 @@
           if (!saleDate && data.created_at) {
             const timestamp = data.created_at;
             const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
-            saleDate = date.toLocaleDateString('tr-TR');
+            saleDate = normalizeDateString(date);
             saleTime = date.toLocaleTimeString('tr-TR');
           } else if (!saleDate && data.timestamp) {
             const timestamp = data.timestamp;
             const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
-            saleDate = date.toLocaleDateString('tr-TR');
+            saleDate = normalizeDateString(date);
             saleTime = date.toLocaleTimeString('tr-TR');
+          } else if (saleDate) {
+            // sale_date varsa ama format farklıysa normalize et
+            if (typeof saleDate === 'string' && !/^\d{2}\.\d{2}\.\d{4}$/.test(saleDate)) {
+              try {
+                const parsedDate = new Date(saleDate);
+                if (!isNaN(parsedDate.getTime())) {
+                  saleDate = normalizeDateString(parsedDate);
+                }
+              } catch (e) {
+                console.warn('Tarih parse edilemedi:', saleDate, e);
+              }
+            }
           }
           
           let items = [];
@@ -1745,19 +1781,74 @@
     // İstatistikleri güncelle
     function updateStats(sales) {
       const today = getTodayDateString();
+      console.log('📊 [updateStats] Bugünün tarihi:', today);
+      console.log('📊 [updateStats] Toplam satış sayısı:', sales.length);
+      
       // Masrafları hariç tut
-      const todaySales = sales.filter(s => 
-        s.sale_date === today && 
-        !s.isExpense && 
-        s.payment_method !== 'Masraf'
-      );
+      const todaySales = sales.filter(s => {
+        const saleDate = s.sale_date || '';
+        const matches = saleDate === today;
+        if (matches) {
+          console.log('✅ [updateStats] Bugüne ait satış bulundu:', {
+            sale_id: s.sale_id,
+            sale_date: s.sale_date,
+            total_amount: s.total_amount,
+            payment_method: s.payment_method
+          });
+        }
+        return matches && !s.isExpense && s.payment_method !== 'Masraf';
+      });
+      
+      console.log('📊 [updateStats] Bugüne ait satış sayısı:', todaySales.length);
       const todayRevenue = todaySales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
       
-      // Nakit ve kart tutarlarını hesapla
-      const cashSales = todaySales.filter(s => s.payment_method === 'Nakit');
-      const cardSales = todaySales.filter(s => s.payment_method === 'Kart' || (s.payment_method !== 'Nakit' && s.payment_method !== 'Masraf'));
+      // Nakit, kart ve online tutarlarını hesapla
+      // Önce tüm ödeme yöntemlerini logla
+      const paymentMethods = {};
+      todaySales.forEach(s => {
+        const method = s.payment_method || 'Bilinmeyen';
+        if (!paymentMethods[method]) {
+          paymentMethods[method] = [];
+        }
+        paymentMethods[method].push({
+          sale_id: s.sale_id,
+          amount: s.total_amount,
+          order_source: s.order_source
+        });
+      });
+      console.log('📊 [updateStats] Tüm ödeme yöntemleri:', paymentMethods);
+      
+      // Online siparişler: payment_method === 'Online' veya order_source === 'Trendyol' || 'Yemeksepeti'
+      const onlineSales = todaySales.filter(s => 
+        s.payment_method === 'Online' || 
+        s.order_source === 'Trendyol' || 
+        s.order_source === 'Yemeksepeti'
+      );
+      
+      // Nakit: payment_method === 'Nakit' ve online değil
+      const cashSales = todaySales.filter(s => 
+        s.payment_method === 'Nakit' && 
+        !onlineSales.includes(s)
+      );
+      
+      // Kart: Online değil, Nakit değil, Masraf değil -> Kart olarak say
+      const cardSales = todaySales.filter(s => 
+        !onlineSales.includes(s) &&
+        s.payment_method !== 'Nakit' &&
+        s.payment_method !== 'Masraf' &&
+        s.payment_method !== 'Online' &&
+        !s.isExpense
+      );
+      
+      console.log('📊 [updateStats] Ödeme yöntemleri sayıları:', {
+        nakit: cashSales.length,
+        kart: cardSales.length,
+        online: onlineSales.length,
+        toplam: todaySales.length
+      });
       const cashTotal = cashSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
       const cardTotal = cardSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+      const onlineTotal = onlineSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
       
       // Günlük masrafları hesapla
       const todayExpenses = sales.filter(s => 
@@ -1786,6 +1877,10 @@
             <div class="payment-breakdown-item">
               <span class="payment-breakdown-label">💳 Kart:</span>
               <span class="payment-breakdown-value">₺${cardTotal.toFixed(2)}</span>
+            </div>
+            <div class="payment-breakdown-item">
+              <span class="payment-breakdown-label">🌐 Online:</span>
+              <span class="payment-breakdown-value">₺${onlineTotal.toFixed(2)}</span>
             </div>
           </div>
         </div>
@@ -2026,6 +2121,224 @@
       }
     }
 
+    // Masalar detaylı rapor tablosunu oluştur
+    function generateTablesReportHTML(reportSales, insideTablesCount, outsideTablesCount) {
+      // Masalara göre satış istatistiklerini hesapla
+      const tableStats = {};
+      
+      // Tüm masaları al (iç ve dış masalar, paketler hariç)
+      for (let i = 1; i <= (insideTablesCount + outsideTablesCount); i++) {
+        const tableId = 'masa-' + i;
+        const tableName = 'Masa ' + i;
+        
+        // Başlangıç değerleri
+        tableStats[tableId] = {
+          tableName: tableName,
+          tableNumber: i,
+          totalSales: 0,
+          totalRevenue: 0,
+          products: {} // Ürün bazlı sayılar
+        };
+      }
+      
+      console.log('📊 [generateTablesReportHTML] Toplam satış sayısı:', reportSales.length);
+      console.log('📊 [generateTablesReportHTML] Masa sayısı:', insideTablesCount + outsideTablesCount);
+      
+      // Satış verilerini masalara göre grupla
+      reportSales.forEach(sale => {
+        const tableName = sale.table_name;
+        const tableId = sale.table_id;
+        const tableType = sale.table_type;
+        
+        // Debug: İlk birkaç satışı logla
+        if (reportSales.indexOf(sale) < 3) {
+          console.log('📊 [generateTablesReportHTML] Satış örneği:', {
+            sale_id: sale.sale_id,
+            table_name: tableName,
+            table_id: tableId,
+            table_type: tableType,
+            total_amount: sale.total_amount
+          });
+        }
+        
+        // Masa adı veya ID'sine göre eşleştir
+        let matchedTable = null;
+        
+        // Önce table_id kontrolü
+        if (tableId) {
+          if (tableId.startsWith('masa-')) {
+            matchedTable = tableId;
+          } else if (tableId.startsWith('Masa')) {
+            // "Masa 1" formatından numara çıkar
+            const match = tableId.match(/Masa\s*(\d+)/i);
+            if (match) {
+              matchedTable = 'masa-' + match[1];
+            }
+          }
+        }
+        
+        // table_id yoksa table_name kontrolü
+        if (!matchedTable && tableName) {
+          // "Masa 1", "Masa1", "masa-1" gibi formatları kontrol et
+          const match = tableName.match(/(?:masa|Masa)[\s-]*(\d+)/i);
+          if (match) {
+            matchedTable = 'masa-' + match[1];
+          }
+        }
+        
+        // table_type kontrolü (eğer 'table' ise ve numara varsa)
+        if (!matchedTable && tableType === 'table' && tableName) {
+          const match = tableName.match(/(\d+)/);
+          if (match) {
+            matchedTable = 'masa-' + match[1];
+          }
+        }
+        
+        if (matchedTable && tableStats[matchedTable]) {
+          tableStats[matchedTable].totalSales++;
+          tableStats[matchedTable].totalRevenue += parseFloat(sale.total_amount || 0);
+          
+          // Ürünleri say
+          const items = sale.items_array || sale.items || [];
+          if (Array.isArray(items)) {
+            items.forEach(item => {
+              if (item && item.product_name && !item.isExpense) {
+                const productName = item.product_name;
+                if (!tableStats[matchedTable].products[productName]) {
+                  tableStats[matchedTable].products[productName] = 0;
+                }
+                tableStats[matchedTable].products[productName] += (item.quantity || 1);
+              }
+            });
+          }
+        } else if (tableName || tableId) {
+          // Eşleşmeyen masa bilgilerini logla
+          console.log('⚠️ [generateTablesReportHTML] Eşleşmeyen masa:', {
+            table_name: tableName,
+            table_id: tableId,
+            table_type: tableType
+          });
+        }
+      });
+      
+      console.log('📊 [generateTablesReportHTML] Masa istatistikleri:', Object.keys(tableStats).map(id => ({
+        id: id,
+        name: tableStats[id].tableName,
+        sales: tableStats[id].totalSales,
+        revenue: tableStats[id].totalRevenue
+      })));
+      
+      // En çok sipariş verilen ürünü bul
+      Object.keys(tableStats).forEach(tableId => {
+        const products = tableStats[tableId].products;
+        const entries = Object.entries(products);
+        if (entries.length > 0) {
+          entries.sort(([, a], [, b]) => b - a);
+          tableStats[tableId].topProduct = entries[0][0];
+          tableStats[tableId].topProductCount = entries[0][1];
+        } else {
+          tableStats[tableId].topProduct = '-';
+          tableStats[tableId].topProductCount = 0;
+        }
+      });
+      
+      // Masaları sırala (ciroya göre)
+      const tableEntries = Object.entries(tableStats)
+        .sort(([, a], [, b]) => b.totalRevenue - a.totalRevenue)
+        .filter(([, stats]) => stats.totalSales > 0); // Sadece satış yapılan masalar
+      
+      const totalTableRevenue = tableEntries.reduce((sum, [, stats]) => sum + stats.totalRevenue, 0);
+      const totalTableSales = tableEntries.reduce((sum, [, stats]) => sum + stats.totalSales, 0);
+      
+      if (tableEntries.length === 0) {
+        return `
+          <div style="text-align: center; padding: 60px 20px; color: #9ca3af;">
+            <div style="font-size: 64px; margin-bottom: 16px; opacity: 0.5;">🪑</div>
+            <div style="font-weight: 700; font-size: 16px; color: #6b7280; margin-bottom: 6px;">Henüz masa satışı yok</div>
+            <div style="font-size: 13px; color: #9ca3af;">Masalardan satış yapıldıkça burada görünecek</div>
+          </div>
+        `;
+      }
+      
+      let rowsHTML = '';
+      tableEntries.forEach(([tableId, stats], index) => {
+        const isTop3 = index < 3;
+        const rowBg = index % 2 === 0 ? '#ffffff' : '#f8fafc';
+        const rankColor = index === 0 ? '#fbbf24' : index === 1 ? '#94a3b8' : index === 2 ? '#f97316' : 'transparent';
+        const revenueFull = '₺' + stats.totalRevenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+        const topProductDisplay = stats.topProduct !== '-' ? stats.topProduct + ' (' + stats.topProductCount + 'x)' : '-';
+        
+        rowsHTML += `
+          <div style="background: ${rowBg}; border-bottom: 1px solid #e5e7eb; padding: 10px 12px; display: grid; grid-template-columns: 38px minmax(0, 1fr) 55px 90px 1fr; gap: 6px; align-items: center; transition: all 0.2s; ${isTop3 ? 'border-left: 2px solid ' + rankColor + ';' : ''}" 
+               onmouseover="this.style.background='#f1f5f9';" 
+               onmouseout="this.style.background='${rowBg}';">
+            <!-- Sıra No -->
+            <div style="text-align: center; flex-shrink: 0;">
+              ${isTop3 ? `
+                <div style="width: 24px; height: 24px; border-radius: 5px; background: linear-gradient(135deg, ${rankColor} 0%, ${rankColor}dd 100%); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 11px; color: white; margin: 0 auto; box-shadow: 0 1px 4px ${rankColor}40;">
+                  ${index + 1}
+                </div>
+              ` : `
+                <div style="font-size: 11px; font-weight: 700; color: #64748b;">${index + 1}</div>
+              `}
+            </div>
+            
+            <!-- Masa Adı -->
+            <div style="min-width: 0; overflow: hidden; word-break: break-word;">
+              <div style="font-size: 12px; font-weight: 700; color: #1e293b; line-height: 1.3;">${stats.tableName}</div>
+            </div>
+            
+            <!-- Satış Sayısı -->
+            <div style="text-align: right; flex-shrink: 0;">
+              <div style="font-size: 11px; font-weight: 700; color: #475569;">${stats.totalSales}</div>
+            </div>
+            
+            <!-- Ciro -->
+            <div style="text-align: right; flex-shrink: 0; min-width: 0;">
+              <div style="font-size: 11px; font-weight: 800; color: #10b981; letter-spacing: -0.3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${revenueFull}">${revenueFull}</div>
+            </div>
+            
+            <!-- En Çok Sipariş -->
+            <div style="min-width: 0; overflow: hidden; word-break: break-word;">
+              <div style="font-size: 11px; font-weight: 600; color: #64748b; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis;" title="${topProductDisplay}">${topProductDisplay}</div>
+            </div>
+          </div>
+        `;
+      });
+      
+      return `
+        <div style="width: 100%; border-collapse: collapse;">
+          <!-- Tablo Başlığı - Sabit -->
+          <div style="position: sticky; top: 0; z-index: 10; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 2px solid #e2e8f0; padding: 10px 12px; display: grid; grid-template-columns: 38px minmax(0, 1fr) 55px 90px 1fr; gap: 6px; align-items: center;">
+            <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.3px; text-align: center;">#</div>
+            <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.3px; min-width: 0;">Masa</div>
+            <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.3px; text-align: right;">Satış</div>
+            <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.3px; text-align: right;">Ciro</div>
+            <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.3px; min-width: 0;">En Çok Sipariş</div>
+          </div>
+          
+          <!-- Tablo Satırları -->
+          <div style="display: flex; flex-direction: column;">
+            ${rowsHTML}
+          </div>
+          
+          <!-- Toplam Özet - Alt Sabit -->
+          <div style="position: sticky; bottom: 0; background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding: 12px; border-top: 2px solid #475569; display: grid; grid-template-columns: minmax(0, 1fr) 55px 90px 1fr; gap: 6px; align-items: center;">
+            <div style="font-size: 11px; font-weight: 800; color: #f1f5f9; text-transform: uppercase; letter-spacing: 0.3px; min-width: 0;">Toplam (${tableEntries.length} masa)</div>
+            <div style="text-align: right;">
+              <div style="font-size: 12px; font-weight: 800; color: #f1f5f9;">${totalTableSales}</div>
+            </div>
+            <div style="text-align: right; min-width: 0;">
+              <div style="font-size: 12px; font-weight: 900; color: #10b981; letter-spacing: -0.3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">₺${totalTableRevenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</div>
+            </div>
+            <div style="min-width: 0;">
+              <div style="font-size: 11px; font-weight: 600; color: #f1f5f9; opacity: 0.8;">-</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     // Detaylı Raporlama render et
     function renderReports() {
       const container = document.getElementById('reportsContainer');
@@ -2110,6 +2423,16 @@
       });
 
       const productEntries = Object.entries(productStats);
+      
+      // Debug: Ürün adlarını kontrol et
+      console.log('📊 [renderReports] Toplam ürün sayısı:', productEntries.length);
+      console.log('📊 [renderReports] İlk 5 ürün:', productEntries.slice(0, 5).map(([name, stats]) => ({
+        name: name,
+        nameLength: name ? name.length : 0,
+        count: stats.count,
+        revenue: stats.revenue
+      })));
+      
       const topProductsByCount = [...productEntries]
         .sort(([, a], [, b]) => b.count - a.count)
         .slice(0, 2);
@@ -2572,79 +2895,100 @@
             </div>
           </div>
 
-          <!-- Tüm Ürünler Detaylı Liste - Modern Kart Tasarımı -->
+          <!-- Tüm Ürünler Detaylı Liste - Profesyonel Mobil Tablo -->
           <div class="report-card" style="margin-top: 30px; padding: 0; overflow: hidden; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px 24px; color: white;">
-              <h3 style="margin: 0; font-size: 18px; font-weight: 800; letter-spacing: 0.3px;">📋 ${reportDateFilter === 'week' ? 'Son 1 Hafta' : reportDateFilter === 'month' ? 'Son 1 Ay' : reportDateFilter === 'yesterday' ? 'Dün' : 'Tüm Zamanlar'} - Ürün Bazlı Detaylı Rapor</h3>
-              <p style="margin: 6px 0 0 0; font-size: 12px; opacity: 0.9; font-weight: 500;">Gerçek satış verileri ile ürün performans analizi</p>
+            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 14px 16px; color: white;">
+              <h3 style="margin: 0; font-size: 14px; font-weight: 800; letter-spacing: 0.2px;">📋 ${reportDateFilter === 'week' ? 'Son 1 Hafta' : reportDateFilter === 'month' ? 'Son 1 Ay' : reportDateFilter === 'yesterday' ? 'Dün' : 'Tüm Zamanlar'} - Ürün Bazlı Detaylı Rapor</h3>
+              <p style="margin: 3px 0 0 0; font-size: 10px; opacity: 0.9; font-weight: 500;">Gerçek satış verileri ile ürün performans analizi</p>
             </div>
             
-            <div style="padding: 20px; max-height: 600px; overflow-y: auto; overflow-x: hidden;">
+            <div style="padding: 0; overflow-x: hidden; overflow-y: auto; max-height: calc(100vh - 380px);">
               ${productEntries.length > 0 ? `
-                <div style="display: flex; flex-direction: column; gap: 12px;">
-                  ${productEntries
-                    .sort(([, a], [, b]) => b.revenue - a.revenue)
-                    .map(([product, stats], index) => {
-                      const percentage = totalRevenue > 0 ? (stats.revenue / totalRevenue * 100) : 0;
-                      const rankColor = index === 0 ? '#fbbf24' : index === 1 ? '#94a3b8' : index === 2 ? '#f97316' : '#e5e7eb';
-                      return `
-                        <div style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; transition: all 0.3s; position: relative; overflow: hidden;" 
-                             onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 24px rgba(0,0,0,0.12)'; this.style.borderColor='#c7d2fe';" 
-                             onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'; this.style.borderColor='#e5e7eb';">
-                          <div style="position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: linear-gradient(180deg, ${rankColor} 0%, ${rankColor}dd 100%);"></div>
-                          
-                          <div style="display: flex; align-items: center; justify-content: space-between; margin-left: 8px;">
-                            <div style="flex: 1; min-width: 0;">
-                              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-                                <div style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, ${rankColor} 0%, ${rankColor}dd 100%); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; color: white; flex-shrink: 0; box-shadow: 0 2px 8px ${rankColor}40;">
+                <!-- Profesyonel Tablo -->
+                <div style="width: 100%; border-collapse: collapse;">
+                  <!-- Tablo Başlığı - Sabit -->
+                  <div style="position: sticky; top: 0; z-index: 10; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 2px solid #e2e8f0; padding: 10px 12px; display: grid; grid-template-columns: 38px minmax(0, 1fr) 55px 85px 50px; gap: 6px; align-items: center;">
+                    <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.3px; text-align: center;">#</div>
+                    <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.3px; min-width: 0;">Ürün Adı</div>
+                    <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.3px; text-align: right;">Adet</div>
+                    <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.3px; text-align: right;">Ciro</div>
+                    <div style="font-size: 10px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.3px; text-align: right;">%</div>
+                  </div>
+                  
+                  <!-- Tablo Satırları -->
+                  <div style="display: flex; flex-direction: column;">
+                    ${productEntries
+                      .sort(([, a], [, b]) => b.revenue - a.revenue)
+                      .map(([product, stats], index) => {
+                        const percentage = totalRevenue > 0 ? (stats.revenue / totalRevenue * 100) : 0;
+                        const isTop3 = index < 3;
+                        const rowBg = index % 2 === 0 ? '#ffffff' : '#f8fafc';
+                        const rankColor = index === 0 ? '#fbbf24' : index === 1 ? '#94a3b8' : index === 2 ? '#f97316' : 'transparent';
+                        
+                        // Ürün adını temizle ve kontrol et
+                        let productName = (product || '').toString().trim();
+                        if (!productName || productName === 'undefined' || productName === 'null' || productName.length === 0) {
+                          productName = 'Bilinmeyen Ürün';
+                        }
+                        // HTML escape
+                        productName = productName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+                        // Ciro formatını kompakt ama tam sayı olarak göster
+                        const revenueNum = stats.revenue;
+                        const revenueFormatted = revenueNum >= 1000 
+                          ? `₺${(revenueNum / 1000).toFixed(1)}K` 
+                          : `₺${revenueNum.toFixed(0)}`;
+                        const revenueFull = `₺${revenueNum.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`;
+                        
+                        return `
+                          <div style="background: ${rowBg}; border-bottom: 1px solid #e5e7eb; padding: 10px 12px; display: grid; grid-template-columns: 38px minmax(0, 1fr) 55px 90px 50px; gap: 6px; align-items: center; transition: all 0.2s; ${isTop3 ? 'border-left: 2px solid ' + rankColor + ';' : ''}" 
+                               onmouseover="this.style.background='#f1f5f9';" 
+                               onmouseout="this.style.background='${rowBg}';">
+                            <!-- Sıra No -->
+                            <div style="text-align: center; flex-shrink: 0;">
+                              ${isTop3 ? `
+                                <div style="width: 24px; height: 24px; border-radius: 5px; background: linear-gradient(135deg, ${rankColor} 0%, ${rankColor}dd 100%); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 11px; color: white; margin: 0 auto; box-shadow: 0 1px 4px ${rankColor}40;">
                                   ${index + 1}
                                 </div>
-                                <div style="flex: 1; min-width: 0;">
-                                  <div style="font-weight: 700; font-size: 15px; color: #1e293b; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${product}</div>
-                                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                    <span style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: #e0e7ff; color: #3730a3; border-radius: 6px; font-size: 12px; font-weight: 700;">
-                                      <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
-                                      </svg>
-                                      ${stats.count} adet
-                                    </span>
-                                    <div style="flex: 1; min-width: 100px; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; position: relative;">
-                                      <div style="width: ${percentage}%; height: 100%; background: linear-gradient(90deg, #10b981 0%, #059669 100%); border-radius: 3px; transition: width 0.3s;"></div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
+                              ` : `
+                                <div style="font-size: 11px; font-weight: 700; color: #64748b;">${index + 1}</div>
+                              `}
                             </div>
                             
-                            <div style="margin-left: 12px; text-align: right; flex-shrink: 0;">
-                              <div style="font-weight: 900; font-size: 18px; color: #10b981; line-height: 1.2; margin-bottom: 2px;">₺${stats.revenue.toFixed(2)}</div>
-                              <div style="font-size: 11px; color: #64748b; font-weight: 600;">${percentage.toFixed(1)}%</div>
+                            <!-- Ürün Adı -->
+                            <div style="min-width: 0; overflow: hidden; word-break: break-word;">
+                              <div style="font-size: 12px; font-weight: 700; color: #1e293b; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis;">${productName}</div>
+                            </div>
+                            
+                            <!-- Adet -->
+                            <div style="text-align: right; flex-shrink: 0;">
+                              <div style="font-size: 11px; font-weight: 700; color: #475569;">${stats.count}</div>
+                            </div>
+                            
+                            <!-- Ciro -->
+                            <div style="text-align: right; flex-shrink: 0; min-width: 0;">
+                              <div style="font-size: 11px; font-weight: 800; color: #10b981; letter-spacing: -0.3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${revenueFull}">${revenueFull}</div>
+                            </div>
+                            
+                            <!-- Yüzde -->
+                            <div style="text-align: right; flex-shrink: 0;">
+                              <div style="font-size: 11px; font-weight: 700; color: #64748b;">${percentage.toFixed(1)}%</div>
                             </div>
                           </div>
-                        </div>
-                      `;
-                    }).join('')}
-                </div>
-                
-                <!-- Toplam Özet -->
-                <div style="margin-top: 20px; padding: 20px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 12px; border: 2px solid #e2e8f0;">
-                  <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                      <div style="font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">Toplam Özet</div>
-                      <div style="font-size: 11px; color: #94a3b8;">${productEntries.length} ürün</div>
+                        `;
+                      }).join('')}
+                  </div>
+                  
+                  <!-- Toplam Özet - Alt Sabit -->
+                  <div style="position: sticky; bottom: 0; background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding: 12px; border-top: 2px solid #475569; display: grid; grid-template-columns: minmax(0, 1fr) 55px 90px 50px; gap: 6px; align-items: center;">
+                    <div style="font-size: 11px; font-weight: 800; color: #f1f5f9; text-transform: uppercase; letter-spacing: 0.3px; min-width: 0;">Toplam (${productEntries.length})</div>
+                    <div style="text-align: right;">
+                      <div style="font-size: 12px; font-weight: 800; color: #f1f5f9;">${productEntries.reduce((sum, [, stats]) => sum + stats.count, 0)}</div>
+                    </div>
+                    <div style="text-align: right; min-width: 0;">
+                      <div style="font-size: 12px; font-weight: 900; color: #10b981; letter-spacing: -0.3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">₺${productEntries.reduce((sum, [, stats]) => sum + stats.revenue, 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</div>
                     </div>
                     <div style="text-align: right;">
-                      <div style="display: flex; align-items: center; gap: 16px;">
-                        <div>
-                          <div style="font-size: 11px; font-weight: 600; color: #64748b; margin-bottom: 2px;">Toplam Adet</div>
-                          <div style="font-size: 16px; font-weight: 800; color: #4b5563;">${productEntries.reduce((sum, [, stats]) => sum + stats.count, 0)}</div>
-                        </div>
-                        <div style="width: 1px; height: 30px; background: #cbd5e1;"></div>
-                        <div>
-                          <div style="font-size: 11px; font-weight: 600; color: #64748b; margin-bottom: 2px;">Toplam Ciro</div>
-                          <div style="font-size: 20px; font-weight: 900; color: #10b981;">₺${productEntries.reduce((sum, [, stats]) => sum + stats.revenue, 0).toFixed(2)}</div>
-                        </div>
-                      </div>
+                      <div style="font-size: 11px; font-weight: 800; color: #f1f5f9;">100%</div>
                     </div>
                   </div>
                 </div>
@@ -2657,10 +3001,521 @@
               `}
             </div>
           </div>
+
+          <!-- Masalar Detaylı Rapor Tablosu -->
+          <div class="report-card" style="margin-top: 20px; padding: 0; overflow: hidden; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+            <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 14px 16px; color: white;">
+              <h3 style="margin: 0; font-size: 14px; font-weight: 800; letter-spacing: 0.2px;">🪑 ${reportDateFilter === 'week' ? 'Son 1 Hafta' : reportDateFilter === 'month' ? 'Son 1 Ay' : reportDateFilter === 'yesterday' ? 'Dün' : 'Tüm Zamanlar'} - Masalar Detaylı Rapor</h3>
+              <p style="margin: 3px 0 0 0; font-size: 10px; opacity: 0.9; font-weight: 500;">Masa bazlı satış performans analizi</p>
+            </div>
+            
+            <div style="padding: 0; overflow-x: hidden; overflow-y: auto; max-height: calc(100vh - 380px);">
+              ${generateTablesReportHTML(reportSales, insideTablesCount, outsideTablesCount)}
+            </div>
+          </div>
+
+          <!-- Saat Bazlı Satış Yoğunluk Grafiği -->
+          <div class="report-card" style="margin-top: 20px; padding: 0; overflow: hidden; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+            <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 14px 16px; color: white;">
+              <h3 style="margin: 0; font-size: 14px; font-weight: 800; letter-spacing: 0.2px;">⏰ ${reportDateFilter === 'week' ? 'Son 1 Hafta' : reportDateFilter === 'month' ? 'Son 1 Ay' : reportDateFilter === 'yesterday' ? 'Dün' : 'Tüm Zamanlar'} - Saat Bazlı Satış Yoğunluğu</h3>
+              <p style="margin: 3px 0 0 0; font-size: 10px; opacity: 0.9; font-weight: 500;">Saatlik satış performans analizi ve yoğunluk grafiği</p>
+            </div>
+            
+            <div style="padding: 16px; overflow-x: hidden;">
+              ${generateHourlySalesHTML(reportSales)}
+            </div>
+          </div>
+
+          <!-- Gün Bazlı Satış Yoğunluk Grafiği -->
+          <div class="report-card" style="margin-top: 20px; padding: 0; overflow: hidden; background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+            <div style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); padding: 14px 16px; color: white;">
+              <h3 style="margin: 0; font-size: 14px; font-weight: 800; letter-spacing: 0.2px;">📅 ${reportDateFilter === 'week' ? 'Son 1 Hafta' : reportDateFilter === 'month' ? 'Son 1 Ay' : reportDateFilter === 'yesterday' ? 'Dün' : 'Tüm Zamanlar'} - Gün Bazlı Satış Yoğunluğu</h3>
+              <p style="margin: 3px 0 0 0; font-size: 10px; opacity: 0.9; font-weight: 500;">Haftanın günleri bazlı satış performans analizi</p>
+            </div>
+            
+            <div style="padding: 16px; overflow-x: hidden;">
+              ${generateDailySalesHTML(reportSales)}
+            </div>
+          </div>
         </div>
       `;
 
       container.innerHTML = html;
+    }
+
+    // Gün bazlı satış yoğunluk grafiği ve tablosu oluştur
+    function generateDailySalesHTML(reportSales) {
+      // Türkçe gün isimleri
+      const dayNames = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
+      const dayOrder = [1, 2, 3, 4, 5, 6, 0]; // Pazartesi'den başlayarak sıralama
+      
+      // Gün bazlı istatistikleri hesapla
+      const dailyStats = {};
+      dayOrder.forEach(dayNum => {
+        dailyStats[dayNum] = {
+          dayNum: dayNum,
+          dayName: dayNames[dayNum],
+          salesCount: 0,
+          revenue: 0,
+          products: {} // Ürün bazlı sayılar
+        };
+      });
+      
+      // Satış verilerini gün bazlı grupla
+      reportSales.forEach(sale => {
+        let dayNum = null;
+        
+        // sale_date'den gün çıkar (DD.MM.YYYY formatı)
+        if (sale.sale_date) {
+          try {
+            const dateParts = sale.sale_date.split('.');
+            if (dateParts.length === 3) {
+              const day = parseInt(dateParts[0]);
+              const month = parseInt(dateParts[1]) - 1; // Ay 0-11 arası
+              const year = parseInt(dateParts[2]);
+              const date = new Date(year, month, day);
+              dayNum = date.getDay(); // 0=Pazar, 1=Pazartesi, ...
+            }
+          } catch (e) {
+            // Hata durumunda atla
+          }
+        }
+        
+        // Eğer sale_date'den çıkaramazsak, created_at'ten dene
+        if (dayNum === null && sale.created_at) {
+          try {
+            const date = sale.created_at.toDate ? sale.created_at.toDate() : new Date(sale.created_at);
+            dayNum = date.getDay();
+          } catch (e) {
+            // Hata durumunda atla
+          }
+        }
+        
+        if (dayNum !== null && dayNum >= 0 && dayNum < 7) {
+          dailyStats[dayNum].salesCount++;
+          dailyStats[dayNum].revenue += parseFloat(sale.total_amount || 0);
+          
+          // Ürünleri say
+          const items = sale.items_array || sale.items || [];
+          if (Array.isArray(items)) {
+            items.forEach(item => {
+              if (item && item.product_name && !item.isExpense) {
+                const productName = item.product_name;
+                if (!dailyStats[dayNum].products[productName]) {
+                  dailyStats[dayNum].products[productName] = 0;
+                }
+                dailyStats[dayNum].products[productName] += (item.quantity || 1);
+              }
+            });
+          }
+        }
+      });
+      
+      // En çok satılan ürünü bul (her gün için)
+      dayOrder.forEach(dayNum => {
+        const products = dailyStats[dayNum].products;
+        const entries = Object.entries(products);
+        if (entries.length > 0) {
+          entries.sort(([, a], [, b]) => b - a);
+          dailyStats[dayNum].topProduct = entries[0][0];
+          dailyStats[dayNum].topProductCount = entries[0][1];
+        } else {
+          dailyStats[dayNum].topProduct = '-';
+          dailyStats[dayNum].topProductCount = 0;
+        }
+      });
+      
+      // Günleri sırala (Pazartesi'den başlayarak)
+      const dailyEntries = dayOrder.map(dayNum => dailyStats[dayNum]);
+      const maxRevenue = Math.max(...dailyEntries.map(d => d.revenue), 1);
+      const totalDailyRevenue = dailyEntries.reduce((sum, d) => sum + d.revenue, 0);
+      const totalDailySales = dailyEntries.reduce((sum, d) => sum + d.salesCount, 0);
+      
+      // Line Chart HTML'i oluştur - Modern ve Profesyonel
+      const chartWidth = 700;
+      const chartHeight = 200;
+      const padding = { top: 20, right: 30, bottom: 50, left: 50 };
+      const graphWidth = chartWidth - padding.left - padding.right;
+      const graphHeight = chartHeight - padding.top - padding.bottom;
+      
+      // Günlük Ciro Line Chart
+      let dailyLinePath = '';
+      let dailyPoints = '';
+      dailyEntries.forEach((d, index) => {
+        const x = padding.left + (index / (dailyEntries.length - 1 || 1)) * graphWidth;
+        const y = padding.top + graphHeight - (d.revenue / maxRevenue) * graphHeight;
+        if (index === 0) {
+          dailyLinePath = `M ${x} ${y}`;
+        } else {
+          dailyLinePath += ` L ${x} ${y}`;
+        }
+        const revenueFormatted = d.revenue >= 1000 ? (d.revenue / 1000).toFixed(1) + 'K' : d.revenue.toFixed(0);
+        const dailyTooltipX = x - 80;
+        const dailyTooltipY = y - 40;
+        const dailyRevenueText = d.revenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+        dailyPoints += `<circle cx="${x}" cy="${y}" r="5" fill="#8b5cf6" stroke="#ffffff" stroke-width="2.5" style="cursor: pointer;" onmouseover="this.setAttribute('r', '7'); const tooltip = this.parentElement.querySelector('#tooltip-daily'); const text = this.parentElement.querySelector('#tooltip-daily-text'); text.textContent='${d.dayName} - ₺${dailyRevenueText}'; tooltip.setAttribute('transform', 'translate(${dailyTooltipX}, ${dailyTooltipY})'); tooltip.style.opacity='1';" onmouseout="this.setAttribute('r', '5'); this.parentElement.querySelector('#tooltip-daily').style.opacity='0';"></circle>`;
+      });
+      
+      // Y ekseni grid çizgileri
+      let dailyGridLines = '';
+      for (let i = 0; i <= 4; i++) {
+        const y = padding.top + (i / 4) * graphHeight;
+        dailyGridLines += `<line x1="${padding.left}" y1="${y}" x2="${padding.left + graphWidth}" y2="${y}" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="2,2"></line>`;
+      }
+      
+      let chartHTML = `
+        <div style="margin-bottom: 24px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+            <h4 style="font-size: 13px; font-weight: 800; color: #1e293b; margin: 0; letter-spacing: 0.3px;">💰 Günlük Ciro</h4>
+            <div style="font-size: 10px; color: #64748b; font-weight: 600;">Toplam: <span style="color: #8b5cf6; font-weight: 700;">₺${totalDailyRevenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</span></div>
+          </div>
+          <div style="overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 20px; background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <svg width="${chartWidth}" height="${chartHeight}" style="display: block;">
+              <!-- Grid çizgileri -->
+              ${dailyGridLines}
+              <!-- Area fill -->
+              <defs>
+                <linearGradient id="dailyGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" style="stop-color:#8b5cf6;stop-opacity:0.2" />
+                  <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:0" />
+                </linearGradient>
+              </defs>
+              <path d="${dailyLinePath} L ${padding.left + graphWidth} ${padding.top + graphHeight} L ${padding.left} ${padding.top + graphHeight} Z" fill="url(#dailyGradient)"></path>
+              <!-- Line -->
+              <path d="${dailyLinePath}" stroke="#8b5cf6" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+              <!-- Points -->
+              ${dailyPoints}
+              <!-- Y ekseni etiketleri -->
+              ${[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => {
+                const y = padding.top + (1 - ratio) * graphHeight;
+                const value = Math.round(maxRevenue * ratio / 1000);
+                return `<text x="${padding.left - 10}" y="${y + 4}" text-anchor="end" font-size="10" fill="#94a3b8" font-weight="600">₺${value}K</text>`;
+              }).join('')}
+              <!-- X ekseni etiketleri -->
+              ${dailyEntries.map((d, index) => {
+                const x = padding.left + (index / (dailyEntries.length - 1 || 1)) * graphWidth;
+                return `<text x="${x}" y="${chartHeight - 15}" text-anchor="middle" font-size="11" fill="#64748b" font-weight="600">${d.dayName}</text>`;
+              }).join('')}
+              <!-- Tooltip -->
+              <g id="tooltip-daily" opacity="0" style="transition: opacity 0.2s; pointer-events: none;">
+                <rect x="0" y="0" width="160" height="32" rx="6" fill="#1e293b" opacity="0.95"></rect>
+                <text id="tooltip-daily-text" x="80" y="20" text-anchor="middle" font-size="11" fill="#ffffff" font-weight="700"></text>
+              </g>
+            </svg>
+          </div>
+        </div>
+      `;
+      
+      // Tablo HTML'i oluştur - Modern ve Profesyonel
+      let tableHTML = `
+        <div style="margin-top: 24px;">
+          <h4 style="font-size: 13px; font-weight: 800; color: #1e293b; margin-bottom: 16px; letter-spacing: 0.3px;">📋 Detaylı Gün Bazlı Tablo</h4>
+          <div style="width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <!-- Tablo Başlığı -->
+            <div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 2px solid #e2e8f0; padding: 12px 16px; display: grid; grid-template-columns: 110px 1fr 1fr 1fr; gap: 12px; align-items: center;">
+              <div style="font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.5px;">Gün</div>
+              <div style="font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.5px; text-align: right;">Satış Sayısı</div>
+              <div style="font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.5px; text-align: right;">Ciro</div>
+              <div style="font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.5px; min-width: 0;">En Çok Satılan</div>
+            </div>
+            
+            <!-- Tablo Satırları -->
+            <div style="max-height: 400px; overflow-y: auto;">
+      `;
+      
+      dailyEntries.forEach((d, index) => {
+        const rowBg = index % 2 === 0 ? '#ffffff' : '#f8fafc';
+        const revenueFull = '₺' + d.revenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+        const percentage = totalDailyRevenue > 0 ? (d.revenue / totalDailyRevenue * 100) : 0;
+        const isPeak = d.revenue === maxRevenue;
+        const topProductDisplay = d.topProduct !== '-' ? d.topProduct + ' (' + d.topProductCount + 'x)' : '-';
+        
+        tableHTML += `
+          <div style="background: ${rowBg}; border-bottom: 1px solid #e5e7eb; padding: 12px 16px; display: grid; grid-template-columns: 110px 1fr 1fr 1fr; gap: 12px; align-items: center; transition: all 0.2s; ${isPeak ? 'border-left: 3px solid #8b5cf6; background: #faf5ff;' : ''}" 
+               onmouseover="this.style.background='#f1f5f9';" 
+               onmouseout="this.style.background='${isPeak ? '#faf5ff' : rowBg}';">
+            <div style="font-size: 12px; font-weight: 700; color: #1e293b;">
+              ${d.dayName}
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 12px; font-weight: 700; color: #475569;">${d.salesCount}</div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 12px; font-weight: 800; color: ${isPeak ? '#8b5cf6' : '#10b981'}; letter-spacing: -0.2px;" title="${revenueFull}">${revenueFull}</div>
+              ${percentage > 0 ? `<div style="font-size: 10px; color: #64748b; margin-top: 3px; font-weight: 600;">${percentage.toFixed(1)}%</div>` : ''}
+            </div>
+            <div style="min-width: 0; overflow: hidden; word-break: break-word;">
+              <div style="font-size: 11px; font-weight: 600; color: #64748b; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis;" title="${topProductDisplay}">${topProductDisplay}</div>
+            </div>
+          </div>
+        `;
+      });
+      
+      tableHTML += `
+            </div>
+            
+            <!-- Toplam Özet -->
+            <div style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding: 14px 16px; border-top: 2px solid #475569; display: grid; grid-template-columns: 110px 1fr 1fr 1fr; gap: 12px; align-items: center;">
+              <div style="font-size: 12px; font-weight: 800; color: #f1f5f9; text-transform: uppercase; letter-spacing: 0.5px;">Toplam</div>
+              <div style="text-align: right;">
+                <div style="font-size: 13px; font-weight: 800; color: #f1f5f9;">${totalDailySales}</div>
+              </div>
+              <div style="text-align: right;">
+                <div style="font-size: 14px; font-weight: 900; color: #10b981; letter-spacing: -0.2px;">₺${totalDailyRevenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</div>
+              </div>
+              <div style="min-width: 0;">
+                <div style="font-size: 11px; font-weight: 600; color: #f1f5f9; opacity: 0.8;">-</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      return chartHTML + tableHTML;
+    }
+
+    // Saat bazlı satış yoğunluk grafiği ve tablosu oluştur
+    function generateHourlySalesHTML(reportSales) {
+      // Saat bazlı istatistikleri hesapla (0-23 saat)
+      const hourlyStats = {};
+      for (let hour = 0; hour < 24; hour++) {
+        hourlyStats[hour] = {
+          hour: hour,
+          salesCount: 0,
+          revenue: 0
+        };
+      }
+      
+      // Satış verilerini saat bazlı grupla
+      reportSales.forEach(sale => {
+        let hour = null;
+        
+        // sale_time'den saat çıkar (örn: "14:30:25" -> 14)
+        if (sale.sale_time) {
+          const timeMatch = sale.sale_time.match(/(\d{1,2}):/);
+          if (timeMatch) {
+            hour = parseInt(timeMatch[1]);
+          }
+        }
+        
+        // Eğer sale_time yoksa, created_at veya timestamp'ten çıkar
+        if (hour === null && sale.created_at) {
+          try {
+            const date = sale.created_at.toDate ? sale.created_at.toDate() : new Date(sale.created_at);
+            hour = date.getHours();
+          } catch (e) {
+            // Hata durumunda atla
+          }
+        }
+        
+        if (hour !== null && hour >= 0 && hour < 24) {
+          hourlyStats[hour].salesCount++;
+          hourlyStats[hour].revenue += parseFloat(sale.total_amount || 0);
+        }
+      });
+      
+      // Saatleri sırala ve maksimum değerleri bul
+      const hourlyEntries = Object.values(hourlyStats).sort((a, b) => a.hour - b.hour);
+      const maxSalesCount = Math.max(...hourlyEntries.map(h => h.salesCount), 1);
+      const maxRevenue = Math.max(...hourlyEntries.map(h => h.revenue), 1);
+      const totalHourlyRevenue = hourlyEntries.reduce((sum, h) => sum + h.revenue, 0);
+      const totalHourlySales = hourlyEntries.reduce((sum, h) => sum + h.salesCount, 0);
+      
+      // Line Chart HTML'i oluştur - Modern ve Profesyonel
+      const chartWidth = 800;
+      const chartHeight = 180;
+      const padding = { top: 20, right: 40, bottom: 40, left: 50 };
+      const graphWidth = chartWidth - padding.left - padding.right;
+      const graphHeight = chartHeight - padding.top - padding.bottom;
+      
+      // Satış Sayısı Line Chart
+      let salesLinePath = '';
+      let salesPoints = '';
+      let salesDots = '';
+      hourlyEntries.forEach((h, index) => {
+        const x = padding.left + (index / (hourlyEntries.length - 1 || 1)) * graphWidth;
+        const y = padding.top + graphHeight - (h.salesCount / maxSalesCount) * graphHeight;
+        if (index === 0) {
+          salesLinePath = `M ${x} ${y}`;
+        } else {
+          salesLinePath += ` L ${x} ${y}`;
+        }
+        const tooltipX = x - 60;
+        const tooltipY = y - 35;
+        salesPoints += `<circle cx="${x}" cy="${y}" r="4" fill="#3b82f6" stroke="#ffffff" stroke-width="2" style="cursor: pointer;" onmouseover="this.setAttribute('r', '6'); const tooltip = this.parentElement.querySelector('#tooltip-sales'); const text = this.parentElement.querySelector('#tooltip-sales-text'); text.textContent='${h.hour}:00 - ${h.salesCount} satış'; tooltip.setAttribute('transform', 'translate(${tooltipX}, ${tooltipY})'); tooltip.style.opacity='1';" onmouseout="this.setAttribute('r', '4'); this.parentElement.querySelector('#tooltip-sales').style.opacity='0';"></circle>`;
+      });
+      
+      // Ciro Line Chart
+      let revenueLinePath = '';
+      let revenuePoints = '';
+      hourlyEntries.forEach((h, index) => {
+        const x = padding.left + (index / (hourlyEntries.length - 1 || 1)) * graphWidth;
+        const y = padding.top + graphHeight - (h.revenue / maxRevenue) * graphHeight;
+        if (index === 0) {
+          revenueLinePath = `M ${x} ${y}`;
+        } else {
+          revenueLinePath += ` L ${x} ${y}`;
+        }
+        const revenueFormatted = h.revenue >= 1000 ? (h.revenue / 1000).toFixed(1) + 'K' : h.revenue.toFixed(0);
+        const revTooltipX = x - 70;
+        const revTooltipY = y - 35;
+        const revenueText = h.revenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+        revenuePoints += `<circle cx="${x}" cy="${y}" r="4" fill="#10b981" stroke="#ffffff" stroke-width="2" style="cursor: pointer;" onmouseover="this.setAttribute('r', '6'); const tooltip = this.parentElement.querySelector('#tooltip-revenue'); const text = this.parentElement.querySelector('#tooltip-revenue-text'); text.textContent='${h.hour}:00 - ₺${revenueText}'; tooltip.setAttribute('transform', 'translate(${revTooltipX}, ${revTooltipY})'); tooltip.style.opacity='1';" onmouseout="this.setAttribute('r', '4'); this.parentElement.querySelector('#tooltip-revenue').style.opacity='0';"></circle>`;
+      });
+      
+      // Y ekseni grid çizgileri
+      let salesGridLines = '';
+      let revenueGridLines = '';
+      for (let i = 0; i <= 4; i++) {
+        const y = padding.top + (i / 4) * graphHeight;
+        salesGridLines += `<line x1="${padding.left}" y1="${y}" x2="${padding.left + graphWidth}" y2="${y}" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="2,2"></line>`;
+        revenueGridLines += `<line x1="${padding.left}" y1="${y}" x2="${padding.left + graphWidth}" y2="${y}" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="2,2"></line>`;
+      }
+      
+      let chartHTML = `
+        <div style="margin-bottom: 24px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+            <h4 style="font-size: 13px; font-weight: 800; color: #1e293b; margin: 0; letter-spacing: 0.3px;">📊 Satış Sayısı</h4>
+            <div style="font-size: 10px; color: #64748b; font-weight: 600;">Toplam: <span style="color: #1e293b; font-weight: 700;">${totalHourlySales}</span> satış</div>
+          </div>
+          <div style="overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 20px; background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <svg width="${chartWidth}" height="${chartHeight}" style="display: block;">
+              <!-- Grid çizgileri -->
+              ${salesGridLines}
+              <!-- Area fill -->
+              <defs>
+                <linearGradient id="salesGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:0.2" />
+                  <stop offset="100%" style="stop-color:#3b82f6;stop-opacity:0" />
+                </linearGradient>
+              </defs>
+              <path d="${salesLinePath} L ${padding.left + graphWidth} ${padding.top + graphHeight} L ${padding.left} ${padding.top + graphHeight} Z" fill="url(#salesGradient)"></path>
+              <!-- Line -->
+              <path d="${salesLinePath}" stroke="#3b82f6" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+              <!-- Points -->
+              ${salesPoints}
+              <!-- Y ekseni etiketleri -->
+              ${[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => {
+                const y = padding.top + (1 - ratio) * graphHeight;
+                const value = Math.round(maxSalesCount * ratio);
+                return `<text x="${padding.left - 10}" y="${y + 4}" text-anchor="end" font-size="10" fill="#94a3b8" font-weight="600">${value}</text>`;
+              }).join('')}
+              <!-- X ekseni etiketleri -->
+              ${hourlyEntries.map((h, index) => {
+                const x = padding.left + (index / (hourlyEntries.length - 1 || 1)) * graphWidth;
+                return `<text x="${x}" y="${chartHeight - 10}" text-anchor="middle" font-size="10" fill="#64748b" font-weight="600">${h.hour.toString().padStart(2, '0')}:00</text>`;
+              }).join('')}
+              <!-- Tooltip -->
+              <g id="tooltip-sales" opacity="0" style="transition: opacity 0.2s; pointer-events: none;">
+                <rect x="0" y="0" width="120" height="28" rx="6" fill="#1e293b" opacity="0.95"></rect>
+                <text id="tooltip-sales-text" x="60" y="18" text-anchor="middle" font-size="10" fill="#ffffff" font-weight="700"></text>
+              </g>
+            </svg>
+          </div>
+        </div>
+        
+        <div style="margin-bottom: 24px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+            <h4 style="font-size: 13px; font-weight: 800; color: #1e293b; margin: 0; letter-spacing: 0.3px;">💰 Ciro</h4>
+            <div style="font-size: 10px; color: #64748b; font-weight: 600;">Toplam: <span style="color: #10b981; font-weight: 700;">₺${totalHourlyRevenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</span></div>
+          </div>
+          <div style="overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 20px; background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <svg width="${chartWidth}" height="${chartHeight}" style="display: block;">
+              <!-- Grid çizgileri -->
+              ${revenueGridLines}
+              <!-- Area fill -->
+              <defs>
+                <linearGradient id="revenueGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" style="stop-color:#10b981;stop-opacity:0.2" />
+                  <stop offset="100%" style="stop-color:#10b981;stop-opacity:0" />
+                </linearGradient>
+              </defs>
+              <path d="${revenueLinePath} L ${padding.left + graphWidth} ${padding.top + graphHeight} L ${padding.left} ${padding.top + graphHeight} Z" fill="url(#revenueGradient)"></path>
+              <!-- Line -->
+              <path d="${revenueLinePath}" stroke="#10b981" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+              <!-- Points -->
+              ${revenuePoints}
+              <!-- Y ekseni etiketleri -->
+              ${[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => {
+                const y = padding.top + (1 - ratio) * graphHeight;
+                const value = Math.round(maxRevenue * ratio / 1000);
+                return `<text x="${padding.left - 10}" y="${y + 4}" text-anchor="end" font-size="10" fill="#94a3b8" font-weight="600">₺${value}K</text>`;
+              }).join('')}
+              <!-- X ekseni etiketleri -->
+              ${hourlyEntries.map((h, index) => {
+                const x = padding.left + (index / (hourlyEntries.length - 1 || 1)) * graphWidth;
+                return `<text x="${x}" y="${chartHeight - 10}" text-anchor="middle" font-size="10" fill="#64748b" font-weight="600">${h.hour.toString().padStart(2, '0')}:00</text>`;
+              }).join('')}
+              <!-- Tooltip -->
+              <g id="tooltip-revenue" opacity="0" style="transition: opacity 0.2s; pointer-events: none;">
+                <rect x="0" y="0" width="140" height="28" rx="6" fill="#1e293b" opacity="0.95"></rect>
+                <text id="tooltip-revenue-text" x="70" y="18" text-anchor="middle" font-size="10" fill="#ffffff" font-weight="700"></text>
+              </g>
+            </svg>
+          </div>
+        </div>
+      `;
+      
+      // Tablo HTML'i oluştur - Modern ve Profesyonel
+      let tableHTML = `
+        <div style="margin-top: 24px;">
+          <h4 style="font-size: 13px; font-weight: 800; color: #1e293b; margin-bottom: 16px; letter-spacing: 0.3px;">📋 Detaylı Saat Bazlı Tablo</h4>
+          <div style="width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <!-- Tablo Başlığı -->
+            <div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-bottom: 2px solid #e2e8f0; padding: 12px 16px; display: grid; grid-template-columns: 90px 1fr 1fr; gap: 12px; align-items: center;">
+              <div style="font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.5px;">Saat</div>
+              <div style="font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.5px; text-align: right;">Satış Sayısı</div>
+              <div style="font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.5px; text-align: right;">Ciro</div>
+            </div>
+            
+            <!-- Tablo Satırları -->
+            <div style="max-height: 320px; overflow-y: auto;">
+      `;
+      
+      hourlyEntries.forEach((h, index) => {
+        const rowBg = index % 2 === 0 ? '#ffffff' : '#f8fafc';
+        const revenueFull = '₺' + h.revenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+        const percentage = totalHourlyRevenue > 0 ? (h.revenue / totalHourlyRevenue * 100) : 0;
+        const isPeak = h.revenue === maxRevenue;
+        const isPeakSales = h.salesCount === maxSalesCount;
+        
+        tableHTML += `
+          <div style="background: ${rowBg}; border-bottom: 1px solid #e5e7eb; padding: 12px 16px; display: grid; grid-template-columns: 90px 1fr 1fr; gap: 12px; align-items: center; transition: all 0.2s; ${isPeak ? 'border-left: 3px solid #f59e0b; background: #fffbeb;' : ''}" 
+               onmouseover="this.style.background='#f1f5f9';" 
+               onmouseout="this.style.background='${isPeak ? '#fffbeb' : rowBg}';">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="font-size: 12px; font-weight: 700; color: #1e293b;">${h.hour.toString().padStart(2, '0')}:00</div>
+              ${isPeakSales ? `<div style="width: 6px; height: 6px; border-radius: 50%; background: #10b981; flex-shrink: 0;"></div>` : ''}
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 12px; font-weight: 700; color: ${isPeakSales ? '#10b981' : '#475569'};">${h.salesCount}</div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 12px; font-weight: 800; color: ${isPeak ? '#f59e0b' : '#10b981'}; letter-spacing: -0.2px;" title="${revenueFull}">${revenueFull}</div>
+              ${percentage > 0 ? `<div style="font-size: 10px; color: #64748b; margin-top: 3px; font-weight: 600;">${percentage.toFixed(1)}%</div>` : ''}
+            </div>
+          </div>
+        `;
+      });
+      
+      tableHTML += `
+            </div>
+            
+            <!-- Toplam Özet -->
+            <div style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); padding: 14px 16px; border-top: 2px solid #475569; display: grid; grid-template-columns: 90px 1fr 1fr; gap: 12px; align-items: center;">
+              <div style="font-size: 12px; font-weight: 800; color: #f1f5f9; text-transform: uppercase; letter-spacing: 0.5px;">Toplam</div>
+              <div style="text-align: right;">
+                <div style="font-size: 13px; font-weight: 800; color: #f1f5f9;">${totalHourlySales}</div>
+              </div>
+              <div style="text-align: right;">
+                <div style="font-size: 14px; font-weight: 900; color: #10b981; letter-spacing: -0.2px;">₺${totalHourlyRevenue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      return chartHTML + tableHTML;
     }
 
     // Tüm masaları render et (helper function)
@@ -4250,75 +5105,229 @@
 
     /* Header kaldırıldı - navbar kullanılıyor */
 
-    /* Login - sade, aydınlık */
+    /* Login - Profesyonel ve Kurumsal */
     .pin-section {
-      background: var(--bg-subtle);
-      padding: 22px 18px 18px;
-      border-radius: var(--radius-lg);
+      background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+      padding: 48px 40px;
+      border-radius: 24px;
       text-align: center;
-      border: 1px solid var(--border-subtle);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.08), 0 0 1px rgba(0, 0, 0, 0.1);
+      max-width: 480px;
+      margin: 0 auto;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .pin-section::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, var(--primary) 0%, var(--primary-strong) 100%);
+    }
+
+    .pin-section::after {
+      content: '';
+      position: absolute;
+      top: -100px;
+      right: -100px;
+      width: 200px;
+      height: 200px;
+      background: radial-gradient(circle, rgba(249, 115, 22, 0.08) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .login-header {
+      position: relative;
+      z-index: 1;
+      margin-bottom: 40px;
+    }
+
+    .login-icon {
+      width: 80px;
+      height: 80px;
+      margin: 0 auto 24px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 30px rgba(249, 115, 22, 0.25);
+    }
+
+    .login-icon svg {
+      width: 40px;
+      height: 40px;
+      color: white;
     }
 
     .pin-section h2 {
-      font-size: 18px;
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      color: #1e293b;
+      letter-spacing: -0.5px;
+    }
+
+    .pin-section .login-subtitle {
+      font-size: 15px;
+      color: #64748b;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    .pin-form {
+      position: relative;
+      z-index: 1;
+    }
+
+    .input-group {
+      position: relative;
+      margin-bottom: 32px;
+    }
+
+    .input-label {
+      display: block;
+      text-align: left;
+      font-size: 14px;
       font-weight: 600;
-      margin-bottom: 16px;
-      color: var(--text-main);
+      color: #475569;
+      margin-bottom: 10px;
+      padding-left: 4px;
     }
 
     .pin-input {
-      padding: 12px 16px;
-      font-size: 18px;
-      border-radius: 999px;
+      padding: 16px 20px;
+      font-size: 20px;
+      border-radius: 12px;
       width: 100%;
-      max-width: 260px;
+      max-width: 100%;
       text-align: center;
-      margin: 8px auto 4px;
+      margin: 0;
       font-weight: 600;
-      letter-spacing: 4px;
-      border: 1px solid var(--border-subtle);
+      letter-spacing: 8px;
+      border: 2px solid #e2e8f0;
       background: #ffffff;
-      color: var(--text-main);
-      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      color: #1e293b;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     }
 
     .pin-input::placeholder {
-      color: #c4c4d0;
+      color: #cbd5e1;
+      letter-spacing: 2px;
+      font-size: 16px;
     }
 
     .pin-input:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+      box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.1), 0 4px 12px rgba(249, 115, 22, 0.15);
+      transform: translateY(-2px);
     }
 
     .pin-btn {
-      padding: 11px 28px;
-      margin-top: 10px;
-      border-radius: 999px;
+      padding: 16px 48px;
+      margin-top: 0;
+      border-radius: 12px;
       border: none;
-      background: linear-gradient(90deg, var(--primary) 0%, var(--primary-strong) 100%);
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
       color: #ffffff;
-      font-size: 14px;
-      font-weight: 600;
+      font-size: 16px;
+      font-weight: 700;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      box-shadow: 0 8px 18px rgba(220, 38, 38, 0.25);
-      transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+      gap: 10px;
+      box-shadow: 0 10px 25px rgba(249, 115, 22, 0.3);
+      transition: all 0.2s ease;
+      width: 100%;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .pin-btn::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+      transition: left 0.5s ease;
+    }
+
+    .pin-btn:hover::before {
+      left: 100%;
     }
 
     .pin-btn:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 12px 26px rgba(220, 38, 38, 0.30);
-      filter: brightness(1.02);
+      transform: translateY(-2px);
+      box-shadow: 0 15px 35px rgba(249, 115, 22, 0.4);
     }
 
     .pin-btn:active {
       transform: translateY(0);
-      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.25);
+      box-shadow: 0 5px 15px rgba(249, 115, 22, 0.3);
+    }
+
+    .login-footer {
+      margin-top: 32px;
+      padding-top: 24px;
+      border-top: 1px solid #e2e8f0;
+      position: relative;
+      z-index: 1;
+    }
+
+    .login-footer-text {
+      font-size: 13px;
+      color: #94a3b8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .login-footer-text svg {
+      width: 16px;
+      height: 16px;
+      color: #64748b;
+    }
+
+    @media (max-width: 600px) {
+      .pin-section {
+        padding: 36px 28px;
+        border-radius: 20px;
+      }
+      
+      .login-icon {
+        width: 70px;
+        height: 70px;
+        border-radius: 18px;
+      }
+      
+      .login-icon svg {
+        width: 35px;
+        height: 35px;
+      }
+      
+      .pin-section h2 {
+        font-size: 24px;
+      }
+      
+      .pin-input {
+        font-size: 18px;
+        letter-spacing: 6px;
+      }
+      
+      .pin-btn {
+        padding: 14px 36px;
+        font-size: 15px;
+      }
     }
 
     /* Dashboard shell */
@@ -7510,6 +8519,21 @@
         justify-content: space-between;
       }
 
+      /* Ürün Detaylı Rapor Tablosu - Mobil Optimizasyon */
+      .report-card > div:last-child {
+        max-height: calc(100vh - 350px) !important;
+      }
+      
+      /* Saat Bazlı Grafik - Mobil Optimizasyon */
+      .report-card .hourly-chart-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      
+      .report-card .hourly-chart-container > div {
+        min-width: 600px;
+      }
+      
       /* Masalar responsive */
       .tables-grid {
         grid-template-columns: repeat(5, 1fr);
@@ -7633,10 +8657,37 @@
 
   <div class="container">
     <div id="loginSection" class="pin-section">
-      <h2>PIN ile Giriş</h2>
-      <input type="password" id="pinInput" class="pin-input" placeholder="PIN Girin" maxlength="10" autofocus>
-      <br>
-      <button onclick="verifyPin()" class="pin-btn">🔓 Giriş Yap</button>
+      <div class="login-header">
+        <div class="login-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/>
+          </svg>
+        </div>
+        <h2>Admin Girişi</h2>
+        <p class="login-subtitle" id="loginBusinessName">Yaka's Grill</p>
+      </div>
+      
+      <div class="pin-form">
+        <div class="input-group">
+          <label class="input-label">Güvenlik PIN'i</label>
+          <input type="password" id="pinInput" class="pin-input" placeholder="••••" maxlength="10" autofocus>
+        </div>
+        <button onclick="verifyPin()" class="pin-btn">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75M3.75 21.75h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H3.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/>
+          </svg>
+          Giriş Yap
+        </button>
+      </div>
+      
+      <div class="login-footer">
+        <p class="login-footer-text">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/>
+          </svg>
+          Güvenli Bağlantı
+        </p>
+      </div>
     </div>
 
     <div id="dashboard" class="dashboard">

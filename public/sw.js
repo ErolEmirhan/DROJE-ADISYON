@@ -1,5 +1,5 @@
 // Service Worker - Cache kontrolü için
-const CACHE_NAME = 'yakasgrill-admin-v2.4.8';
+const CACHE_NAME = 'yakasgrill-admin-v2.5.1';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -10,7 +10,7 @@ const urlsToCache = [
 
 // Install event - Cache'e ekle
 self.addEventListener('install', (event) => {
-  console.log('[SW] Installing service worker v2.4.8...');
+  console.log('[SW] Installing service worker v2.5.1...');
   // Yeni service worker'ı hemen aktif et (beklemeden)
   self.skipWaiting();
   
@@ -32,10 +32,10 @@ self.addEventListener('install', (event) => {
 
 // Activate event - Eski cache'leri temizle
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activating service worker v2.4.8...');
+  console.log('[SW] Activating service worker v2.5.1...');
   event.waitUntil(
     Promise.all([
-      // Eski cache'leri temizle
+      // Sadece eski cache'leri temizle (yeni versiyon için)
       caches.keys().then((cacheNames) => {
         return Promise.all(
           cacheNames.map((cacheName) => {
@@ -48,18 +48,7 @@ self.addEventListener('activate', (event) => {
       }),
       // Tüm client'lara hemen kontrol et (beklemeden)
       self.clients.claim()
-    ]).then(() => {
-      // Tüm client'lara yeni versiyon mesajı gönder
-      return self.clients.matchAll().then((clients) => {
-        clients.forEach((client) => {
-          client.postMessage({
-            type: 'SW_UPDATED',
-            version: '2.4.8',
-            message: 'Yeni versiyon yüklendi! Sayfa yenileniyor...'
-          });
-        });
-      });
-    })
+    ])
   );
 });
 
