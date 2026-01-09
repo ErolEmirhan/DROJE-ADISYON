@@ -2121,6 +2121,156 @@
       }
     }
 
+    // Günlük ciro detayları modalını göster
+    function showDailyRevenueModal() {
+      const modal = document.getElementById('dailyRevenueModal');
+      if (!modal) return;
+
+      // Seçilen zaman dilimindeki satışları al
+      let reportSales = allSales.filter(sale => 
+        !sale.isExpense && sale.payment_method !== 'Masraf'
+      );
+      reportSales = filterSalesByDate(reportSales);
+
+      // Günlere göre grupla
+      const dailyStats = {};
+      let unknownDateStats = {
+        date: 'Tarih Bilinmeyen',
+        online: 0,
+        card: 0,
+        cash: 0,
+        total: 0
+      };
+      
+      // Toplam kontrolü için
+      let modalTotal = 0;
+      
+      reportSales.forEach(sale => {
+        const saleRevenue = calculateSaleRevenue(sale);
+        modalTotal += saleRevenue; // Tüm satışları topla
+        const saleDate = sale.sale_date;
+        
+        // Ödeme yöntemine göre dağıt
+        const paymentMethod = sale.payment_method || '';
+        const orderSource = sale.order_source || '';
+        
+        // Online: payment_method === 'Online' veya order_source === 'Trendyol' || 'Yemeksepeti'
+        const isOnline = paymentMethod === 'Online' || orderSource === 'Trendyol' || orderSource === 'Yemeksepeti';
+        // Nakit: payment_method === 'Nakit' ve online değil
+        const isCash = !isOnline && paymentMethod === 'Nakit';
+        // Diğerleri: Kart (Online değil, Nakit değil, Masraf değil)
+        const isCard = !isOnline && !isCash && paymentMethod !== 'Masraf' && !sale.isExpense;
+        
+        // Tarihi olmayan veya 'Bilinmeyen' olan satışları ayrı topla
+        if (!saleDate || saleDate === 'Bilinmeyen') {
+          unknownDateStats.total += saleRevenue;
+          if (isOnline) unknownDateStats.online += saleRevenue;
+          else if (isCash) unknownDateStats.cash += saleRevenue;
+          else if (isCard) unknownDateStats.card += saleRevenue;
+          return;
+        }
+
+        if (!dailyStats[saleDate]) {
+          dailyStats[saleDate] = {
+            date: saleDate,
+            online: 0,
+            card: 0,
+            cash: 0,
+            total: 0
+          };
+        }
+
+        dailyStats[saleDate].total += saleRevenue;
+
+        // Ödeme yöntemine göre dağıt (yukarıda tanımlanan değişkenleri kullan)
+        if (isOnline) {
+          dailyStats[saleDate].online += saleRevenue;
+        } else if (isCash) {
+          dailyStats[saleDate].cash += saleRevenue;
+        } else if (isCard) {
+          dailyStats[saleDate].card += saleRevenue;
+        }
+      });
+
+      // Tarihe göre sırala (en yeni en üstte)
+      const sortedDays = Object.values(dailyStats).sort((a, b) => {
+        const [dayA, monthA, yearA] = a.date.split('.');
+        const [dayB, monthB, yearB] = b.date.split('.');
+        const dateA = new Date(yearA, monthA - 1, dayA);
+        const dateB = new Date(yearB, monthB - 1, dayB);
+        return dateB - dateA;
+      });
+      
+      // Tarihi olmayan satışlar varsa en alta ekle
+      if (unknownDateStats.total > 0) {
+        sortedDays.push(unknownDateStats);
+      }
+      
+      // Toplam kontrolü: Modal'daki toplam ile ana karttaki toplamı karşılaştır
+      const mainCardTotal = reportSales.reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
+
+      // Modal içeriğini oluştur
+      const modalContent = document.getElementById('dailyRevenueModalContent');
+      if (modalContent) {
+        modalContent.innerHTML = `
+          <div style="padding: 12px;">
+            <div style="display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 140px); overflow-y: auto; -webkit-overflow-scrolling: touch;">
+              ${sortedDays.length > 0 ? sortedDays.map(day => `
+                <div style="background: #ffffff; border-radius: 8px; padding: 12px; border: 1px solid #e5e7eb; margin-bottom: 8px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #f3f4f6;">
+                    <div style="font-size: 13px; font-weight: 700; color: ${day.date === 'Tarih Bilinmeyen' ? '#dc2626' : '#374151'};">${day.date}</div>
+                    <div style="font-size: 15px; font-weight: 800; color: #059669;">₺${day.total.toFixed(2)}</div>
+                  </div>
+                  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;">
+                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 8px; text-align: center;">
+                      <div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">Kart</div>
+                      <div style="font-size: 13px; font-weight: 800; color: #1e293b;">₺${day.card.toFixed(2)}</div>
+                    </div>
+                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 8px; text-align: center;">
+                      <div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">Nakit</div>
+                      <div style="font-size: 13px; font-weight: 800; color: #1e293b;">₺${day.cash.toFixed(2)}</div>
+                    </div>
+                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 8px; text-align: center;">
+                      <div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">Online</div>
+                      <div style="font-size: 13px; font-weight: 800; color: #1e293b;">₺${day.online.toFixed(2)}</div>
+                    </div>
+                  </div>
+                </div>
+              `).join('') : `
+                <div style="text-align: center; padding: 40px 20px; color: #64748b;">
+                  <div style="font-size: 32px; margin-bottom: 12px;">📊</div>
+                  <div style="font-size: 14px; font-weight: 600;">Bu zaman diliminde satış bulunamadı</div>
+                </div>
+              `}
+              ${sortedDays.length > 0 ? `
+                <div style="margin-top: 8px; padding: 12px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb; position: sticky; bottom: 0;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="font-size: 13px; font-weight: 700; color: #374151;">Toplam:</div>
+                    <div style="font-size: 16px; font-weight: 900; color: #059669;">₺${modalTotal.toFixed(2)}</div>
+                  </div>
+                  ${Math.abs(modalTotal - mainCardTotal) > 0.01 ? `
+                    <div style="margin-top: 8px; padding: 8px; background: #fef2f2; border-radius: 6px; border: 1px solid #fecaca;">
+                      <div style="font-size: 10px; color: #991b1b; font-weight: 600;">⚠️ Tutarsızlık: ₺${Math.abs(modalTotal - mainCardTotal).toFixed(2)}</div>
+                    </div>
+                  ` : ''}
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }
+
+      modal.classList.add('show');
+    }
+
+    // Günlük ciro detayları modalını kapat
+    function closeDailyRevenueModal() {
+      const modal = document.getElementById('dailyRevenueModal');
+      if (modal) {
+        modal.classList.remove('show');
+      }
+    }
+
     // Masalar detaylı rapor tablosunu oluştur
     function generateTablesReportHTML(reportSales, insideTablesCount, outsideTablesCount) {
       // Masalara göre satış istatistiklerini hesapla
@@ -2339,10 +2489,27 @@
       `;
     }
 
+    // Satış cirosunu hesapla (items_array'den gerçek fiyatlar, ikram edilenler hariç)
+    function calculateSaleRevenue(sale) {
+      if (sale.items_array && Array.isArray(sale.items_array) && sale.items_array.length > 0) {
+        return sale.items_array.reduce((itemSum, item) => {
+          if (item.isExpense || item.isGift) return itemSum;
+          const price = parseFloat(item.price || 0);
+          const quantity = item.quantity || 1;
+          return itemSum + (price * quantity);
+        }, 0);
+      }
+      // Eski veriler için fallback: total_amount kullan
+      return parseFloat(sale.total_amount || 0);
+    }
+
     // Detaylı Raporlama render et
     function renderReports() {
       const container = document.getElementById('reportsContainer');
       if (!container) return;
+
+      // Modal'ı ekle (eğer yoksa)
+      addDailyRevenueModal();
 
       // Masrafları filtrele
       let reportSales = allSales.filter(sale => 
@@ -2452,19 +2619,21 @@
           paymentMethods[sale.payment_method] = { count: 0, total: 0 };
         }
         paymentMethods[sale.payment_method].count++;
-        paymentMethods[sale.payment_method].total += parseFloat(sale.total_amount);
+        // calculateSaleRevenue kullanarak tutarlı hesaplama yap
+        paymentMethods[sale.payment_method].total += calculateSaleRevenue(sale);
       });
 
-      const totalRevenue = reportSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0);
+      // Toplam ciroyu items_array'den hesapla (ikram edilenler hariç, gerçek fiyatlar)
+      const totalRevenue = reportSales.reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
 
-      // Trendyol ve Yemeksepeti cirolarını hesapla
+      // Trendyol ve Yemeksepeti cirolarını hesapla (items_array'den gerçek fiyatlar)
       const trendyolRevenue = reportSales
         .filter(sale => sale.order_source === 'Trendyol')
-        .reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+        .reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
       
       const yemeksepetiRevenue = reportSales
         .filter(sale => sale.order_source === 'Yemeksepeti')
-        .reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+        .reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
 
       // Görsellerin path'lerini dinamik olarak oluştur
       // Firebase Hosting veya localhost için doğru path'i oluştur
@@ -2577,7 +2746,7 @@
           
           <!-- Seçilen Zaman Dilimi Ciro ve Masraf Bilgisi -->
           <div class="period-revenue-container">
-            <div class="period-revenue-card">
+            <div class="period-revenue-card" onclick="showDailyRevenueModal()" style="cursor: pointer;">
               <div class="period-card-background"></div>
               <div class="period-card-icon">
                 <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -4066,6 +4235,29 @@
       });
     }
 
+    // Günlük Ciro Detayları Modal HTML'ini ekle
+    function addDailyRevenueModal() {
+      // Modal zaten varsa ekleme
+      if (document.getElementById('dailyRevenueModal')) return;
+
+      const modal = document.createElement('div');
+      modal.id = 'dailyRevenueModal';
+      modal.className = 'daily-revenue-modal';
+      modal.innerHTML = `
+        <div class="daily-revenue-modal-overlay" onclick="closeDailyRevenueModal()"></div>
+        <div class="daily-revenue-modal-content">
+          <div class="daily-revenue-modal-header">
+            <h2>📊 Günlük Ciro Detayları</h2>
+            <button class="daily-revenue-modal-close" onclick="closeDailyRevenueModal()">×</button>
+          </div>
+          <div id="dailyRevenueModalContent" class="daily-revenue-modal-body">
+            <!-- İçerik dinamik olarak doldurulacak -->
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    }
+
     // Toast Notification Fonksiyonları
     function showToast(type, title, message) {
       // Mevcut toast'ı kaldır
@@ -5025,6 +5217,9 @@
     window.setCustomDateRange = setCustomDateRange;
     window.toggleDateFilterModal = toggleDateFilterModal;
     window.closeDateFilterModal = closeDateFilterModal;
+    window.showDailyRevenueModal = showDailyRevenueModal;
+    window.closeDailyRevenueModal = closeDailyRevenueModal;
+    window.addDailyRevenueModal = addDailyRevenueModal;
     window.showAnalysisModal = showAnalysisModal;
     window.closeAnalysisModal = closeAnalysisModal;
     window.logout = function() {
@@ -6891,6 +7086,126 @@
 
     .date-filter-arrow {
       font-size: 10px;
+    }
+
+    /* Günlük Ciro Detayları Modal */
+    /* Günlük Ciro Detayları Modal - Mobil Uyumlu */
+    .daily-revenue-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 10000;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 0;
+    }
+
+    .daily-revenue-modal.show {
+      display: flex;
+    }
+
+    .daily-revenue-modal-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(2px);
+    }
+
+    .daily-revenue-modal-content {
+      position: relative;
+      background: white;
+      border-radius: 20px 20px 0 0;
+      width: 100%;
+      max-width: 100%;
+      max-height: 95vh;
+      box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      animation: modalSlideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    @keyframes modalSlideUp {
+      from {
+        opacity: 0;
+        transform: translateY(100%);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .daily-revenue-modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 16px 12px 16px;
+      border-bottom: 1px solid #e5e7eb;
+      background: #ffffff;
+      flex-shrink: 0;
+    }
+
+    .daily-revenue-modal-header h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+      color: #1e293b;
+    }
+
+    .daily-revenue-modal-close {
+      background: #f3f4f6;
+      border: none;
+      color: #374151;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .daily-revenue-modal-close:hover {
+      background: #e5e7eb;
+    }
+
+    .daily-revenue-modal-close:active {
+      transform: scale(0.95);
+    }
+
+    .daily-revenue-modal-body {
+      padding: 0;
+      overflow-y: auto;
+      flex: 1;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* Mobil için optimize edilmiş scrollbar */
+    .daily-revenue-modal-body::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .daily-revenue-modal-body::-webkit-scrollbar-track {
+      background: #f9fafb;
+    }
+
+    .daily-revenue-modal-body::-webkit-scrollbar-thumb {
+      background: #d1d5db;
+      border-radius: 2px;
+    }
+
+    .daily-revenue-modal-body::-webkit-scrollbar-thumb:hover {
+      background: #9ca3af;
     }
 
     .date-filter-modal {
