@@ -1059,7 +1059,7 @@
       }, 2500);
     });
 
-    // Satışları yükle - TÜM SATIŞLARI YÜKLE (limit yok)
+    // Satışları yükle - SADECE SON 2 GÜNÜ YÜKLE (Firebase read limitini korumak için)
     async function loadSales() {
       if (!db) {
         console.error('Firebase başlatılamadı');
@@ -1070,10 +1070,21 @@
         showLoading(true);
         const salesRef = db.collection('sales');
         
-        // TÜM SATIŞLARI YÜKLE - Pagination ile
+        // Son 2 günü hesapla (gece 03:00'a göre iş günü)
+        const businessDay = getBusinessDayDate();
+        const twoDaysAgo = new Date(businessDay);
+        twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+        twoDaysAgo.setHours(0, 0, 0, 0);
+        
+        // Tarih string formatına çevir (DD.MM.YYYY)
+        const twoDaysAgoStr = twoDaysAgo.toLocaleDateString('tr-TR');
+        const businessDayStr = businessDay.toLocaleDateString('tr-TR');
+        
+        // Son 2 günün satışlarını yükle
         let allDocs = [];
         let lastDoc = null;
         let hasMore = true;
+        let daysLoaded = new Set();
         
         while (hasMore) {
           let query = salesRef;
@@ -1102,27 +1113,56 @@
             }
           }
           
-          // Her seferinde 1000 kayıt al (Firebase limit)
-          const querySnapshot = await query.limit(1000).get();
+          // Her seferinde 500 kayıt al
+          const querySnapshot = await query.limit(500).get();
           
           if (querySnapshot.empty) {
             hasMore = false;
           } else {
+            let foundOldDate = false;
             querySnapshot.forEach((doc) => {
-              allDocs.push(doc);
+              const data = doc.data();
+              const saleDate = data.sale_date || '';
+              
+              // Son 2 gün içindeki satışları al
+              if (saleDate && saleDate !== 'Bilinmeyen') {
+                const [day, month, year] = saleDate.split('.');
+                if (day && month && year) {
+                  const saleDateObj = new Date(year, month - 1, day);
+                  saleDateObj.setHours(0, 0, 0, 0);
+                  
+                  // Son 2 gün içindeyse ekle
+                  if (saleDateObj >= twoDaysAgo && saleDateObj <= businessDay) {
+                    allDocs.push(doc);
+                    daysLoaded.add(saleDate);
+                  } else if (saleDateObj < twoDaysAgo) {
+                    // 2 günden eski tarih bulundu, dur
+                    foundOldDate = true;
+                  }
+                }
+              } else {
+                // Tarih bilinmeyen satışları da ekle (son 2 gün içinde oluşturulmuş olabilir)
+                if (data.created_at) {
+                  const timestamp = data.created_at;
+                  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
+                  if (date >= twoDaysAgo) {
+                    allDocs.push(doc);
+                  } else {
+                    foundOldDate = true;
+                  }
+                }
+              }
             });
             
             // Son dokümanı kaydet
             lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1];
             
-            // Eğer 1000'den az kayıt geldiyse, daha fazla yok demektir
-            if (querySnapshot.docs.length < 1000) {
+            // Eğer 2 günden eski tarih bulunduysa veya 500'den az kayıt geldiyse, dur
+            if (foundOldDate || querySnapshot.docs.length < 500) {
               hasMore = false;
             }
           }
         }
-        
-        console.log(`📊 [loadSales] Toplam ${allDocs.length} satış yüklendi`);
         
         const querySnapshot = {
           forEach: (callback) => {
@@ -1282,7 +1322,6 @@
       // Not: Firebase real-time listener'da çok fazla veri olabilir
       // Bu durumda performans sorunları olabilir, ama tüm verileri görmek için gerekli
       realtimeUnsubscribe = query.onSnapshot((snapshot) => {
-        console.log(`📊 [startRealtimeListener] ${snapshot.size} satış güncellendi`);
         const sales = [];
         snapshot.forEach((doc) => {
           const data = doc.data();
@@ -1366,6 +1405,9 @@
         allSales = sales; // Tüm satışları sakla
         renderCurrentView();
         updateStats(sales);
+        
+        // Yeni satış geldiğinde günlük ciroları otomatik kaydet
+        autoSaveDailyRevenue();
       }, (error) => {
         console.error('Real-time listener hatası:', error);
       });
@@ -1834,26 +1876,14 @@
     // İstatistikleri güncelle
     function updateStats(sales) {
       const today = getTodayDateString();
-      console.log('📊 [updateStats] Bugünün tarihi:', today);
-      console.log('📊 [updateStats] Toplam satış sayısı:', sales.length);
-      
       // Masrafları hariç tut
       const todaySales = sales.filter(s => {
         const saleDate = s.sale_date || '';
         const matches = saleDate === today;
-        if (matches) {
-          console.log('✅ [updateStats] Bugüne ait satış bulundu:', {
-            sale_id: s.sale_id,
-            sale_date: s.sale_date,
-            total_amount: s.total_amount,
-            payment_method: s.payment_method
-          });
-        }
         return matches && !s.isExpense && s.payment_method !== 'Masraf';
       });
-      
-      console.log('📊 [updateStats] Bugüne ait satış sayısı:', todaySales.length);
-      const todayRevenue = todaySales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+      // calculateSaleRevenue kullanarak tutarlı hesaplama yap
+      const todayRevenue = todaySales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
       
       // Nakit, kart ve online tutarlarını hesapla
       // Önce tüm ödeme yöntemlerini logla
@@ -1865,12 +1895,10 @@
         }
         paymentMethods[method].push({
           sale_id: s.sale_id,
-          amount: s.total_amount,
+          amount: calculateSaleRevenue(s),
           order_source: s.order_source
         });
       });
-      console.log('📊 [updateStats] Tüm ödeme yöntemleri:', paymentMethods);
-      
       // Online siparişler: payment_method === 'Online' veya order_source === 'Trendyol' || 'Yemeksepeti'
       const onlineSales = todaySales.filter(s => 
         s.payment_method === 'Online' || 
@@ -1884,24 +1912,21 @@
         !onlineSales.includes(s)
       );
       
-      // Kart: Online değil, Nakit değil, Masraf değil -> Kart olarak say
-      const cardSales = todaySales.filter(s => 
-        !onlineSales.includes(s) &&
-        s.payment_method !== 'Nakit' &&
-        s.payment_method !== 'Masraf' &&
-        s.payment_method !== 'Online' &&
-        !s.isExpense
-      );
-      
-      console.log('📊 [updateStats] Ödeme yöntemleri sayıları:', {
-        nakit: cashSales.length,
-        kart: cardSales.length,
-        online: onlineSales.length,
-        toplam: todaySales.length
+      // Kart: Online değil, Nakit değil, Masraf değil, boş/undefined değil -> Kart olarak say
+      const cardSales = todaySales.filter(s => {
+        const paymentMethod = s.payment_method || '';
+        return !onlineSales.includes(s) &&
+          paymentMethod !== 'Nakit' &&
+          paymentMethod !== 'Masraf' &&
+          paymentMethod !== 'Online' &&
+          paymentMethod !== '' &&
+          !s.isExpense;
       });
-      const cashTotal = cashSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
-      const cardTotal = cardSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
-      const onlineTotal = onlineSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+      
+      // calculateSaleRevenue kullanarak tutarlı hesaplama yap
+      const cashTotal = cashSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+      const cardTotal = cardSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+      const onlineTotal = onlineSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
       
       // Günlük masrafları hesapla
       const todayExpenses = sales.filter(s => 
@@ -2265,9 +2290,56 @@
       // Modal içeriğini oluştur
       const modalContent = document.getElementById('dailyRevenueModalContent');
       if (modalContent) {
+        // Seçilen zaman dilimi bilgisi
+        const businessDay = getBusinessDayDate();
+        let periodTitle = 'Günlük Ciro Detayları';
+        if (reportDateFilter === 'yesterday') {
+          periodTitle = 'Dün - Günlük Ciro Detayları';
+        } else if (reportDateFilter === 'week') {
+          periodTitle = 'Son 1 Hafta - Günlük Ciro Detayları';
+        } else if (reportDateFilter === 'month') {
+          periodTitle = 'Son 1 Ay - Günlük Ciro Detayları';
+        } else if (reportDateFilter === 'custom' && customDateRange.start && customDateRange.end) {
+          periodTitle = 'Özel Tarih Aralığı - Günlük Ciro Detayları';
+        } else if (reportDateFilter === 'all') {
+          periodTitle = 'Tüm Zamanlar - Günlük Ciro Detayları';
+        }
+        
         modalContent.innerHTML = `
-          <div style="padding: 12px;">
-            <div style="display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 140px); overflow-y: auto; -webkit-overflow-scrolling: touch;">
+          <!-- Şık Header ve Kapatma Butonu -->
+          <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 20px 24px; border-radius: 0; position: sticky; top: 0; z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <div style="flex: 1;">
+                <h2 style="margin: 0; font-size: 20px; font-weight: 800; color: white; letter-spacing: -0.3px; margin-bottom: 4px;">📊 ${periodTitle}</h2>
+                <div style="font-size: 13px; color: rgba(255,255,255,0.9); font-weight: 500;">
+                  Toplam: <span style="font-weight: 700; font-size: 15px;">₺${modalTotal.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</span> • ${sortedDays.length} gün
+                </div>
+              </div>
+              <button onclick="closeDailyRevenueModal()" style="
+                background: rgba(255,255,255,0.2);
+                border: 1px solid rgba(255,255,255,0.3);
+                color: white;
+                width: 44px;
+                height: 44px;
+                border-radius: 12px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                backdrop-filter: blur(10px);
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+              " onmouseover="this.style.background='rgba(255,255,255,0.3)'; this.style.transform='scale(1.05)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)';" onmouseout="this.style.background='rgba(255,255,255,0.2)'; this.style.transform='scale(1)'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.1)';">
+                <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          
+          <div style="padding: 16px; overflow-y: auto; max-height: calc(100vh - 180px); -webkit-overflow-scrolling: touch;">
+            <div style="display: flex; flex-direction: column; gap: 8px;">
               ${sortedDays.length > 0 ? sortedDays.map(day => `
                 <div style="background: #ffffff; border-radius: 8px; padding: 12px; border: 1px solid #e5e7eb; margin-bottom: 8px;">
                   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #f3f4f6;">
@@ -2295,32 +2367,52 @@
                   <div style="font-size: 14px; font-weight: 600;">Bu zaman diliminde satış bulunamadı</div>
                 </div>
               `}
-              ${sortedDays.length > 0 ? `
-                <div style="margin-top: 8px; padding: 12px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb; position: sticky; bottom: 0;">
-                  <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div style="font-size: 13px; font-weight: 700; color: #374151;">Toplam:</div>
-                    <div style="font-size: 16px; font-weight: 900; color: #059669;">₺${modalTotal.toFixed(2)}</div>
-                  </div>
-                  ${Math.abs(modalTotal - mainCardTotal) > 0.01 ? `
-                    <div style="margin-top: 8px; padding: 8px; background: #fef2f2; border-radius: 6px; border: 1px solid #fecaca;">
-                      <div style="font-size: 10px; color: #991b1b; font-weight: 600;">⚠️ Tutarsızlık: ₺${Math.abs(modalTotal - mainCardTotal).toFixed(2)}</div>
-                    </div>
-                  ` : ''}
-                </div>
-              ` : ''}
             </div>
+          </div>
+          
+          <!-- Alt Kapatma Butonu (Mobil için) -->
+          <div style="padding: 16px 24px; background: #f9fafb; border-top: 1px solid #e5e7eb; position: sticky; bottom: 0; z-index: 10;">
+            <button onclick="closeDailyRevenueModal()" style="
+              width: 100%;
+              background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+              border: none;
+              color: white;
+              padding: 14px 24px;
+              border-radius: 12px;
+              font-size: 15px;
+              font-weight: 700;
+              cursor: pointer;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              gap: 8px;
+              transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+              box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+            " onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 16px rgba(16, 185, 129, 0.4)';" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(16, 185, 129, 0.3)';">
+              <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+              <span>Kapat</span>
+            </button>
+            ${Math.abs(modalTotal - mainCardTotal) > 0.01 ? `
+              <div style="margin-top: 12px; padding: 10px; background: #fef2f2; border-radius: 8px; border: 1px solid #fecaca;">
+                <div style="font-size: 11px; color: #991b1b; font-weight: 600; text-align: center;">⚠️ Tutarsızlık: ₺${Math.abs(modalTotal - mainCardTotal).toFixed(2)}</div>
+              </div>
+            ` : ''}
           </div>
         `;
       }
 
-      modal.classList.add('show');
+      modal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
     }
 
     // Günlük ciro detayları modalını kapat
     function closeDailyRevenueModal() {
       const modal = document.getElementById('dailyRevenueModal');
       if (modal) {
-        modal.classList.remove('show');
+        modal.style.display = 'none';
+        document.body.style.overflow = '';
       }
     }
 
@@ -2556,8 +2648,76 @@
       return parseFloat(sale.total_amount || 0);
     }
 
+    // Günlük ciroları Firebase'de kaydet
+    async function saveDailyRevenue(dateStr) {
+      if (!db) return;
+      
+      try {
+        // O güne ait tüm satışları filtrele
+        const daySales = allSales.filter(sale => 
+          sale.sale_date === dateStr && 
+          !sale.isExpense && 
+          sale.payment_method !== 'Masraf'
+        );
+        
+        // Günlük ciroyu hesapla
+        const totalRevenue = daySales.reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
+        
+        // Ödeme yöntemlerine göre dağıt
+        const onlineSales = daySales.filter(s => 
+          s.payment_method === 'Online' || 
+          s.order_source === 'Trendyol' || 
+          s.order_source === 'Yemeksepeti'
+        );
+        const cashSales = daySales.filter(s => 
+          s.payment_method === 'Nakit' && 
+          !onlineSales.includes(s)
+        );
+        const cardSales = daySales.filter(s => {
+          const paymentMethod = s.payment_method || '';
+          return !onlineSales.includes(s) &&
+            paymentMethod !== 'Nakit' &&
+            paymentMethod !== 'Masraf' &&
+            paymentMethod !== 'Online' &&
+            paymentMethod !== '' &&
+            !s.isExpense;
+        });
+        
+        const cashTotal = cashSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        const cardTotal = cardSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        const onlineTotal = onlineSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        
+        // Firebase'de kaydet
+        const dailyRevenuesRef = db.collection('daily_revenues');
+        await dailyRevenuesRef.doc(dateStr).set({
+          date: dateStr,
+          total_revenue: totalRevenue,
+          cash_revenue: cashTotal,
+          card_revenue: cardTotal,
+          online_revenue: onlineTotal,
+          sales_count: daySales.length,
+          updated_at: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        
+      } catch (error) {
+        // Günlük ciro kaydetme hatası - sessizce devam et
+      }
+    }
+
+    // Günlük ciroları otomatik kaydet (her satış sonrası veya gün sonu)
+    async function autoSaveDailyRevenue() {
+      const today = getTodayDateString();
+      await saveDailyRevenue(today);
+      
+      // Dünkü ciroyu da kaydet (gün sonu için)
+      const yesterday = new Date(getBusinessDayDate());
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toLocaleDateString('tr-TR');
+      await saveDailyRevenue(yesterdayStr);
+    }
+
     // Detaylı Raporlama render et
-    function renderReports() {
+    async function renderReports() {
       const container = document.getElementById('reportsContainer');
       if (!container) return;
 
@@ -2568,12 +2728,7 @@
         !sale.isExpense && sale.payment_method !== 'Masraf'
       );
       
-      console.log('📊 [renderReports] Masraflar hariç satış sayısı:', reportSales.length);
-      
       reportSales = filterSalesByDate(reportSales);
-      
-      console.log('📊 [renderReports] Tarih filtresinden sonra satış sayısı:', reportSales.length);
-      console.log('📊 [renderReports] Seçilen filtre:', reportDateFilter);
 
       if (reportSales.length === 0) {
         container.innerHTML = `
@@ -2681,8 +2836,67 @@
         paymentMethods[sale.payment_method].total += calculateSaleRevenue(sale);
       });
 
-      // Toplam ciroyu items_array'den hesapla (ikram edilenler hariç, gerçek fiyatlar)
-      const totalRevenue = reportSales.reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
+      // Toplam ciroyu hesapla - Günlük ciroları Firebase'den yükle ve topla
+      let totalRevenue = 0;
+      
+      // Eğer seçilen zaman dilimi 'all' değilse, günlük ciroları Firebase'den yükle ve topla
+      if (reportDateFilter !== 'all' && db) {
+        try {
+          const dailyRevenuesRef = db.collection('daily_revenues');
+          let startDate, endDate;
+          const businessDay = getBusinessDayDate();
+          
+          if (reportDateFilter === 'yesterday') {
+            const yesterday = new Date(businessDay);
+            yesterday.setDate(yesterday.getDate() - 1);
+            startDate = yesterday.toLocaleDateString('tr-TR');
+            endDate = yesterday.toLocaleDateString('tr-TR');
+          } else if (reportDateFilter === 'week') {
+            const weekAgo = new Date(businessDay);
+            weekAgo.setDate(weekAgo.getDate() - 7);
+            startDate = weekAgo.toLocaleDateString('tr-TR');
+            endDate = businessDay.toLocaleDateString('tr-TR');
+          } else if (reportDateFilter === 'month') {
+            const monthAgo = new Date(businessDay);
+            monthAgo.setMonth(monthAgo.getMonth() - 1);
+            startDate = monthAgo.toLocaleDateString('tr-TR');
+            endDate = businessDay.toLocaleDateString('tr-TR');
+          } else if (reportDateFilter === 'custom' && customDateRange.start && customDateRange.end) {
+            startDate = customDateRange.start.toLocaleDateString('tr-TR');
+            endDate = customDateRange.end.toLocaleDateString('tr-TR');
+          }
+          
+          if (startDate && endDate) {
+            // Tarih aralığındaki günlük ciroları yükle
+            const [startDay, startMonth, startYear] = startDate.split('.');
+            const [endDay, endMonth, endYear] = endDate.split('.');
+            const startDateObj = new Date(startYear, startMonth - 1, startDay);
+            const endDateObj = new Date(endYear, endMonth - 1, endDay);
+            
+            // Tüm günleri döngüye al ve günlük ciroları topla
+            const currentDate = new Date(startDateObj);
+            while (currentDate <= endDateObj) {
+              const dateStr = currentDate.toLocaleDateString('tr-TR');
+              const dailyRevenueDoc = await dailyRevenuesRef.doc(dateStr).get();
+              
+              if (dailyRevenueDoc.exists) {
+                const data = dailyRevenueDoc.data();
+                totalRevenue += parseFloat(data.total_revenue || 0);
+              }
+              
+              currentDate.setDate(currentDate.getDate() + 1);
+            }
+            
+          }
+        } catch (error) {
+          // Günlük cirolar yüklenemedi, satışlardan hesapla
+          // Fallback: Satışlardan hesapla
+          totalRevenue = reportSales.reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
+        }
+      } else {
+        // 'all' veya Firebase yoksa, satışlardan hesapla
+        totalRevenue = reportSales.reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
+      }
 
       // Trendyol ve Yemeksepeti cirolarını hesapla (items_array'den gerçek fiyatlar)
       const trendyolRevenue = reportSales
@@ -4657,46 +4871,8 @@
     }
 
     // Günlük Ciro Modal Fonksiyonları
-    function showDailyRevenueModal() {
-      const modal = document.getElementById('dailyRevenueModal');
-      if (!modal) return;
-      
-      console.log('📊 [showDailyRevenueModal] Modal açılıyor...');
-      console.log('📊 [showDailyRevenueModal] allSales uzunluğu:', allSales.length);
-      
-      // Günlük ciro verilerini hesapla
-      const dailyRevenueData = calculateDailyRevenue();
-      
-      console.log('📊 [showDailyRevenueModal] Hesaplanan günlük veri sayısı:', dailyRevenueData.length);
-      
-      // Modal içeriğini güncelle
-      const content = document.getElementById('dailyRevenueModalContent');
-      if (content) {
-        content.innerHTML = generateDailyRevenueModalHTML(dailyRevenueData);
-        
-        // Scroll container'ı bul ve test et
-        setTimeout(() => {
-          const scrollContainer = content.querySelector('div[style*="overflow-y"]');
-          if (scrollContainer) {
-            console.log('📊 [showDailyRevenueModal] Scroll container bulundu');
-            console.log('📊 [showDailyRevenueModal] Scroll height:', scrollContainer.scrollHeight);
-            console.log('📊 [showDailyRevenueModal] Client height:', scrollContainer.clientHeight);
-            console.log('📊 [showDailyRevenueModal] Scrollable:', scrollContainer.scrollHeight > scrollContainer.clientHeight);
-          }
-        }, 100);
-      }
-      
-      modal.style.display = 'flex';
-      document.body.style.overflow = 'hidden';
-    }
-
-    function closeDailyRevenueModal() {
-      const modal = document.getElementById('dailyRevenueModal');
-      if (!modal) return;
-      
-      modal.style.display = 'none';
-      document.body.style.overflow = '';
-    }
+    // Bu fonksiyon kaldırıldı - İlk showDailyRevenueModal fonksiyonu (satır 2229) kullanılıyor
+    // Çünkü o fonksiyon daha detaylı ve calculateSaleRevenue kullanıyor
 
     // Günlük ciro hesaplama fonksiyonu - HER ZAMAN TÜM ZAMANLARI GÖSTER
     function calculateDailyRevenue() {
@@ -4706,9 +4882,6 @@
       );
       // Tarih filtresi uygulama - TÜM ZAMANLARI göster
       // reportSales = filterSalesByDate(reportSales); // Bu satırı kaldırdık
-      
-      console.log('📊 [calculateDailyRevenue] Toplam satış sayısı:', reportSales.length);
-      console.log('📊 [calculateDailyRevenue] Tüm satışlar (allSales):', allSales.length);
       
       // Tarih bazlı gruplama
       const dailyRevenue = {};
@@ -4726,11 +4899,11 @@
           };
         }
         
-        dailyRevenue[dateKey].revenue += parseFloat(sale.total_amount || 0);
+        // calculateSaleRevenue kullanarak tutarlı hesaplama yap
+        const saleRevenue = calculateSaleRevenue(sale);
+        dailyRevenue[dateKey].revenue += saleRevenue;
         dailyRevenue[dateKey].salesCount += 1;
       });
-      
-      console.log('📊 [calculateDailyRevenue] Farklı gün sayısı:', Object.keys(dailyRevenue).length);
       
       // Tarihe göre sırala (en yeni en üstte)
       const sortedDates = Object.keys(dailyRevenue).sort((a, b) => {
@@ -4742,11 +4915,6 @@
       });
       
       const result = sortedDates.map(dateKey => dailyRevenue[dateKey]);
-      console.log('📊 [calculateDailyRevenue] Sonuç:', result.length, 'gün');
-      if (result.length > 0) {
-        console.log('📊 [calculateDailyRevenue] İlk gün:', result[0].date, 'Son gün:', result[result.length - 1].date);
-      }
-      
       return result;
     }
 
