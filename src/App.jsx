@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { getThemeColors } from './utils/themeUtils';
-import { isYakasGrill } from './utils/sultanSomatTables';
+import { isYakasGrill, isGeceDonercisi } from './utils/sultanSomatTables';
 import Navbar from './components/Navbar';
 import CategoryPanel from './components/CategoryPanel';
 import TablePanel from './components/TablePanel';
@@ -276,13 +276,15 @@ function App() {
       }
     }
     
-    // Yemeksepeti veya TrendyolGO masası seçiliyse özel fiyatları kullan
+    // Yemeksepeti, TrendyolGO veya Migros Yemek masası seçiliyse özel fiyatları kullan (Gece Dönercisi / Yaka's Grill)
     let productPrice = product.price;
     if (selectedTable) {
       if (selectedTable.type === 'yemeksepeti' && product.yemeksepeti_price) {
         productPrice = product.yemeksepeti_price;
       } else if (selectedTable.type === 'trendyolgo' && product.trendyolgo_price) {
         productPrice = product.trendyolgo_price;
+      } else if (selectedTable.type === 'migros-yemek' && product.migros_yemek_price != null) {
+        productPrice = product.migros_yemek_price;
       }
     }
     
@@ -305,13 +307,15 @@ function App() {
       return;
     }
     
-    // Yemeksepeti veya TrendyolGO masası seçiliyse özel fiyatları kullan
+    // Yemeksepeti, TrendyolGO veya Migros Yemek masası seçiliyse özel fiyatları kullan
     let productPrice = pendingOnionProduct.price;
     if (selectedTable) {
       if (selectedTable.type === 'yemeksepeti' && pendingOnionProduct.yemeksepeti_price) {
         productPrice = pendingOnionProduct.yemeksepeti_price;
       } else if (selectedTable.type === 'trendyolgo' && pendingOnionProduct.trendyolgo_price) {
         productPrice = pendingOnionProduct.trendyolgo_price;
+      } else if (selectedTable.type === 'migros-yemek' && pendingOnionProduct.migros_yemek_price != null) {
+        productPrice = pendingOnionProduct.migros_yemek_price;
       }
     }
     
@@ -337,13 +341,15 @@ function App() {
       return;
     }
     
-    // Yemeksepeti veya TrendyolGO masası seçiliyse özel fiyatları kullan
+    // Yemeksepeti, TrendyolGO veya Migros Yemek masası seçiliyse özel fiyatları kullan
     let basePrice = pendingPortionProduct.price;
     if (selectedTable) {
       if (selectedTable.type === 'yemeksepeti' && pendingPortionProduct.yemeksepeti_price) {
         basePrice = pendingPortionProduct.yemeksepeti_price;
       } else if (selectedTable.type === 'trendyolgo' && pendingPortionProduct.trendyolgo_price) {
         basePrice = pendingPortionProduct.trendyolgo_price;
+      } else if (selectedTable.type === 'migros-yemek' && pendingPortionProduct.migros_yemek_price != null) {
+        basePrice = pendingPortionProduct.migros_yemek_price;
       }
     }
     

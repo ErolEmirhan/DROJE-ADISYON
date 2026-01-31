@@ -2,12 +2,15 @@ import React, { useState, useEffect, useMemo } from 'react';
 import TableOrderModal from './TableOrderModal';
 import TablePartialPaymentModal from './TablePartialPaymentModal';
 import TableTransferModal from './TableTransferModal';
-import { isSultanSomati, generateSultanSomatiTables, SULTAN_SOMATI_SALONS, isYakasGrill, generateYakasGrillTables } from '../utils/sultanSomatTables';
+import { isSultanSomati, generateSultanSomatiTables, SULTAN_SOMATI_SALONS, isYakasGrill, generateYakasGrillTables, isGeceDonercisi, generateGeceDonercisiTables, GECE_DONERCISI_CATEGORIES } from '../utils/sultanSomatTables';
 
 const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, insideTablesCount = 20, outsideTablesCount = 20, packageTablesCount = 5 }) => {
   const isSultanSomatiMode = isSultanSomati(tenantId);
   const isYakasGrillMode = isYakasGrill(tenantId);
-  const [selectedType, setSelectedType] = useState(isSultanSomatiMode ? 'disari' : isYakasGrillMode ? 'salon' : 'inside'); // Salon ID, 'salon'/'package', veya 'inside'/'outside'
+  const isGeceDonercisiMode = isGeceDonercisi(tenantId);
+  const [selectedType, setSelectedType] = useState(
+    isSultanSomatiMode ? 'disari' : isYakasGrillMode ? 'salon' : isGeceDonercisiMode ? 'salon' : 'inside'
+  ); // Salon/kategori ID veya 'inside'/'outside'
   const [tableOrders, setTableOrders] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [orderItems, setOrderItems] = useState([]);
@@ -79,9 +82,20 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
     }));
   }, [isYakasGrillMode]);
 
+  // Gece Dönercisi: 6 kategoride 30'ar masa (salon, bahçe, paket, trendyolgo, yemeksepeti, migros yemek)
+  const geceDonercisiTables = useMemo(() => {
+    if (!isGeceDonercisiMode) return [];
+    return generateGeceDonercisiTables();
+  }, [isGeceDonercisiMode]);
+
+  const currentGeceDonercisiTables = useMemo(() => {
+    if (!isGeceDonercisiMode) return [];
+    return geceDonercisiTables.filter(table => table.type === selectedType);
+  }, [isGeceDonercisiMode, geceDonercisiTables, selectedType]);
+
   // Normal mod için masalar
   const insideTables = useMemo(() => {
-    if (isSultanSomatiMode || isYakasGrillMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
     console.log('🔄 insideTables oluşturuluyor, count:', insideTablesCount);
     return Array.from({ length: insideTablesCount }, (_, i) => ({
       id: `inside-${i + 1}`,
@@ -92,7 +106,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
   }, [insideTablesCount, isSultanSomatiMode]);
 
   const outsideTables = useMemo(() => {
-    if (isSultanSomatiMode || isYakasGrillMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
     console.log('🔄 outsideTables oluşturuluyor, count:', outsideTablesCount);
     return Array.from({ length: outsideTablesCount }, (_, i) => ({
       id: `outside-${i + 1}`,
@@ -102,9 +116,9 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
     }));
   }, [outsideTablesCount, isSultanSomatiMode]);
 
-  // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı ve Yaka's Grill'de yok
+  // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı, Yaka's Grill ve Gece Dönercisi'nde yok
   const packageTables = useMemo(() => {
-    if (isSultanSomatiMode || isYakasGrillMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
     return Array.from({ length: packageTablesCount }, (_, i) => ({
       id: `package-${selectedType}-${i + 1}`,
       number: i + 1,
@@ -215,6 +229,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
         ? sultanSomatiTables 
         : isYakasGrillMode
         ? [...yakasGrillTables, ...yakasGrillPackageTables, ...yakasGrillYemeksepetiTables, ...yakasGrillTrendyolGOTables]
+        : isGeceDonercisiMode
+        ? geceDonercisiTables
         : [...insideTables, ...outsideTables, ...packageTables];
       
       // Masayı bul
@@ -274,14 +290,29 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
             name: `Yemeksepeti-${number}`
           };
         } else if (tableId.startsWith('trendyolgo-')) {
-          // Yaka's Grill TrendyolGO masası
+          // Yaka's Grill veya Gece Dönercisi TrendyolGO masası
           const number = parseInt(tableId.replace('trendyolgo-', ''));
           table = {
             id: tableId,
             number: number,
             type: 'trendyolgo',
-            name: `TrendyolGO-${number}`
+            name: isGeceDonercisiMode ? `TrendyolGO ${number}` : `TrendyolGO-${number}`
           };
+        } else if (tableId.startsWith('salon-') && isGeceDonercisiMode) {
+          const number = parseInt(tableId.replace('salon-', ''));
+          table = { id: tableId, number, type: 'salon', categoryId: 'salon', categoryName: 'Salon', name: `Salon ${number}`, icon: '🪑' };
+        } else if (tableId.startsWith('bahce-')) {
+          const number = parseInt(tableId.replace('bahce-', ''));
+          table = { id: tableId, number, type: 'bahce', categoryId: 'bahce', categoryName: 'Bahçe', name: `Bahçe ${number}`, icon: '🌿' };
+        } else if (tableId.startsWith('paket-') && isGeceDonercisiMode) {
+          const number = parseInt(tableId.replace('paket-', ''));
+          table = { id: tableId, number, type: 'paket', categoryId: 'paket', categoryName: 'Paket', name: `Paket ${number}`, icon: '📦' };
+        } else if (tableId.startsWith('yemeksepeti-') && isGeceDonercisiMode) {
+          const number = parseInt(tableId.replace('yemeksepeti-', ''));
+          table = { id: tableId, number, type: 'yemeksepeti', categoryId: 'yemeksepeti', categoryName: 'Yemeksepeti', name: `Yemeksepeti ${number}`, icon: '🍽️' };
+        } else if (tableId.startsWith('migros-yemek-')) {
+          const number = parseInt(tableId.replace('migros-yemek-', ''));
+          table = { id: tableId, number, type: 'migros-yemek', categoryId: 'migros-yemek', categoryName: 'Migros Yemek', name: `Migros Yemek ${number}`, icon: '🛍️' };
         } else if (tableId.startsWith('inside-')) {
           const number = parseInt(tableId.replace('inside-', ''));
           table = {
@@ -328,10 +359,11 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       return;
     }
 
-    // Yemeksepeti veya TrendyolGO masası mı kontrol et
+    // Yemeksepeti, TrendyolGO veya Migros Yemek masası mı kontrol et (online ödeme)
     const isOnlineTable = selectedOrder.table_id && (
       selectedOrder.table_id.startsWith('yemeksepeti-') || 
-      selectedOrder.table_id.startsWith('trendyolgo-')
+      selectedOrder.table_id.startsWith('trendyolgo-') ||
+      selectedOrder.table_id.startsWith('migros-yemek-')
     );
 
     let paymentMethod = null;
@@ -733,6 +765,27 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
             </div>
           </button>
         </div>
+      ) : isGeceDonercisiMode ? (
+        /* Gece Dönercisi: Salon, Bahçe, Paket, TrendyolGO, Yemeksepeti, Migros Yemek */
+        <div className="flex justify-center gap-3 mb-4 flex-wrap">
+          {GECE_DONERCISI_CATEGORIES.map((cat) => (
+            <button
+              key={cat.id}
+              onClick={() => setSelectedType(cat.id)}
+              className={`px-5 py-3 rounded-xl font-bold transition-all duration-300 text-sm ${
+                selectedType === cat.id
+                  ? 'bg-gradient-to-r from-slate-600 to-slate-800 text-white shadow-lg transform scale-105'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900'
+              }`}
+            >
+              <div className="flex items-center space-x-2">
+                <span className="text-lg">{cat.icon}</span>
+                <span>{cat.name}</span>
+                <span className="text-xs opacity-75">({cat.count})</span>
+              </div>
+            </button>
+          ))}
+        </div>
       ) : (
         /* Normal Mod için Masa Tipi Seçimi */
         <div className="flex justify-center gap-4 mb-4">
@@ -777,15 +830,21 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
           selectedType === 'package' ? yakasGrillPackageTables :
           selectedType === 'yemeksepeti' ? yakasGrillYemeksepetiTables :
           selectedType === 'trendyolgo' ? yakasGrillTrendyolGOTables : yakasGrillTables
-        ) : (selectedType === 'inside' ? insideTables : outsideTables)).map((table) => {
+        ) : isGeceDonercisiMode ? currentGeceDonercisiTables : (selectedType === 'inside' ? insideTables : outsideTables)).map((table) => {
           const hasOrder = getTableOrder(table.id);
-          const isOutside = !isSultanSomatiMode && !isYakasGrillMode && table.type === 'outside';
+          const isOutside = !isSultanSomatiMode && !isYakasGrillMode && !isGeceDonercisiMode && table.type === 'outside';
           const isSultanTable = isSultanSomatiMode && table.salonId;
           const isYakasGrillTable = isYakasGrillMode && table.type === 'masa';
           const isYakasGrillPackageTable = isYakasGrillMode && table.type === 'package';
           const isYakasGrillYemeksepetiTable = isYakasGrillMode && table.type === 'yemeksepeti';
           const isYakasGrillTrendyolGOTable = isYakasGrillMode && table.type === 'trendyolgo';
-          
+          const isGeceSalon = isGeceDonercisiMode && table.type === 'salon';
+          const isGeceBahce = isGeceDonercisiMode && table.type === 'bahce';
+          const isGecePaket = isGeceDonercisiMode && table.type === 'paket';
+          const isGeceTrendyolgo = isGeceDonercisiMode && table.type === 'trendyolgo';
+          const isGeceYemeksepeti = isGeceDonercisiMode && table.type === 'yemeksepeti';
+          const isGeceMigros = isGeceDonercisiMode && table.type === 'migros-yemek';
+
           return (
             <button
               key={table.id}
@@ -807,12 +866,21 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                   // Yaka's Grill Yemeksepeti masaları – kırmızı tonlar
                   ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-300 hover:border-red-400'
                   : isYakasGrillTrendyolGOTable
-                  // Yaka's Grill TrendyolGO masaları – sarı/turuncu tonlar
                   ? 'bg-gradient-to-br from-yellow-50 to-orange-100 border-yellow-300 hover:border-yellow-400'
+                  : isGeceSalon
+                  ? 'bg-gradient-to-br from-slate-50 to-slate-100 border-slate-300 hover:border-slate-400'
+                  : isGeceBahce
+                  ? 'bg-gradient-to-br from-emerald-50 to-green-100 border-emerald-300 hover:border-emerald-400'
+                  : isGecePaket
+                  ? 'bg-gradient-to-br from-orange-50 to-amber-100 border-orange-300 hover:border-orange-400'
+                  : isGeceTrendyolgo
+                  ? 'bg-gradient-to-br from-yellow-50 to-orange-100 border-yellow-300 hover:border-yellow-400'
+                  : isGeceYemeksepeti
+                  ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-300 hover:border-red-400'
+                  : isGeceMigros
+                  ? 'bg-gradient-to-br from-blue-50 to-indigo-100 border-blue-300 hover:border-blue-400'
                   : isOutside
-                  // Dışarı boş masalar – soft sarı
                   ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-300 hover:border-amber-400'
-                  // İçeri boş masalar – soft pembe
                   : 'bg-gradient-to-br from-pink-50 to-pink-100 border-pink-200 hover:border-pink-300'
               }`}
             >
@@ -831,6 +899,18 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                     ? 'bg-gradient-to-br from-red-200 to-red-300'
                     : isYakasGrillTrendyolGOTable
                     ? 'bg-gradient-to-br from-yellow-200 to-orange-300'
+                    : isGeceSalon
+                    ? 'bg-gradient-to-br from-slate-200 to-slate-300'
+                    : isGeceBahce
+                    ? 'bg-gradient-to-br from-emerald-200 to-green-300'
+                    : isGecePaket
+                    ? 'bg-gradient-to-br from-orange-200 to-amber-300'
+                    : isGeceTrendyolgo
+                    ? 'bg-gradient-to-br from-yellow-200 to-orange-300'
+                    : isGeceYemeksepeti
+                    ? 'bg-gradient-to-br from-red-200 to-red-300'
+                    : isGeceMigros
+                    ? 'bg-gradient-to-br from-blue-200 to-indigo-300'
                     : isOutside
                     ? 'bg-gradient-to-br from-amber-200 to-amber-300'
                     : 'bg-gradient-to-br from-pink-100 to-pink-200'
@@ -841,6 +921,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                     </svg>
                   ) : isSultanTable ? (
+                    <span className="text-lg">{table.icon}</span>
+                  ) : (isGeceSalon || isGeceBahce || isGecePaket || isGeceTrendyolgo || isGeceYemeksepeti || isGeceMigros) ? (
                     <span className="text-lg">{table.icon}</span>
                   ) : isYakasGrillTable ? (
                     <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -889,6 +971,18 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                     ? 'text-red-900'
                     : isYakasGrillTrendyolGOTable
                     ? 'text-yellow-900'
+                    : isGeceSalon
+                    ? 'text-slate-900'
+                    : isGeceBahce
+                    ? 'text-emerald-900'
+                    : isGecePaket
+                    ? 'text-orange-900'
+                    : isGeceTrendyolgo
+                    ? 'text-yellow-900'
+                    : isGeceYemeksepeti
+                    ? 'text-red-900'
+                    : isGeceMigros
+                    ? 'text-blue-900'
                     : isOutside
                     ? 'text-amber-900'
                     : 'text-pink-900'
@@ -907,6 +1001,18 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                       ? 'bg-red-100 text-red-800'
                       : isYakasGrillTrendyolGOTable
                       ? 'bg-yellow-100 text-yellow-800'
+                      : isGeceSalon
+                      ? 'bg-slate-100 text-slate-800'
+                      : isGeceBahce
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : isGecePaket
+                      ? 'bg-orange-100 text-orange-800'
+                      : isGeceTrendyolgo
+                      ? 'bg-yellow-100 text-yellow-800'
+                      : isGeceYemeksepeti
+                      ? 'bg-red-100 text-red-800'
+                      : isGeceMigros
+                      ? 'bg-blue-100 text-blue-800'
                       : isOutside
                       ? 'bg-amber-100 text-amber-800'
                       : 'bg-pink-100 text-pink-800'
@@ -923,8 +1029,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
         })}
       </div>
 
-      {/* PAKET Başlığı - Sadece normal mod için */}
-      {!isSultanSomatiMode && !isYakasGrillMode && (
+      {/* PAKET Başlığı - Sadece normal mod için (Gece Dönercisi'nde kategoriler içinde) */}
+      {!isSultanSomatiMode && !isYakasGrillMode && !isGeceDonercisiMode && (
         <div className="mb-6 mt-8">
           <div className="flex items-center justify-center mb-4">
             <div className="flex items-center space-x-3 px-8 py-3 bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 rounded-2xl shadow-xl transform hover:scale-105 transition-all duration-300">
@@ -993,6 +1099,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
         <TableOrderModal
           order={selectedOrder}
           items={orderItems}
+          tenantId={tenantId}
           onClose={() => {
             setShowModal(false);
             setSelectedOrder(null);

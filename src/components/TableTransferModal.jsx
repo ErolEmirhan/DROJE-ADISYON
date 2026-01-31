@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { isSultanSomati, generateSultanSomatiTables, isYakasGrill, generateYakasGrillTables } from '../utils/sultanSomatTables';
+import { isSultanSomati, generateSultanSomatiTables, isYakasGrill, generateYakasGrillTables, isGeceDonercisi, generateGeceDonercisiTables } from '../utils/sultanSomatTables';
 
 const TableTransferModal = ({ 
   currentOrder, 
@@ -19,6 +19,7 @@ const TableTransferModal = ({
 
   const isSultanSomatiMode = isSultanSomati(tenantId);
   const isYakasGrillMode = isYakasGrill(tenantId);
+  const isGeceDonercisiMode = isGeceDonercisi(tenantId);
 
   // Sultan Somatı için salon bazlı masalar
   const sultanSomatiTables = useMemo(() => {
@@ -43,9 +44,15 @@ const TableTransferModal = ({
     }));
   }, [isYakasGrillMode]);
 
+  // Gece Dönercisi: 6 kategoride 30'ar masa (salon, bahçe, paket, trendyolgo, yemeksepeti, migros yemek)
+  const geceDonercisiTables = useMemo(() => {
+    if (!isGeceDonercisiMode) return [];
+    return generateGeceDonercisiTables();
+  }, [isGeceDonercisiMode]);
+
   // Normal mod için masalar
   const insideTables = useMemo(() => {
-    if (isSultanSomatiMode || isYakasGrillMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
     return Array.from({ length: insideTablesCount }, (_, i) => ({
       id: `inside-${i + 1}`,
       number: i + 1,
@@ -55,7 +62,7 @@ const TableTransferModal = ({
   }, [insideTablesCount, isSultanSomatiMode]);
 
   const outsideTables = useMemo(() => {
-    if (isSultanSomatiMode || isYakasGrillMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
     return Array.from({ length: outsideTablesCount }, (_, i) => ({
       id: `outside-${i + 1}`,
       number: i + 1,
@@ -66,7 +73,7 @@ const TableTransferModal = ({
 
   // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı ve Yaka's Grill'de yok
   const packageTablesInside = useMemo(() => {
-    if (isSultanSomatiMode || isYakasGrillMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
     return Array.from({ length: packageTablesCount }, (_, i) => ({
       id: `package-inside-${i + 1}`,
       number: i + 1,
@@ -76,7 +83,7 @@ const TableTransferModal = ({
   }, [packageTablesCount, isSultanSomatiMode]);
 
   const packageTablesOutside = useMemo(() => {
-    if (isSultanSomatiMode || isYakasGrillMode) return [];
+    if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
     return Array.from({ length: packageTablesCount }, (_, i) => ({
       id: `package-outside-${i + 1}`,
       number: i + 1,
@@ -145,11 +152,13 @@ const TableTransferModal = ({
     }
   };
 
-  // Tüm masaları göster
+  // Tüm masaları göster (Gece Dönercisi: 6 kategori × 30 masa = 180 masa)
   const allTables = isSultanSomatiMode 
     ? sultanSomatiTables 
     : isYakasGrillMode
     ? [...yakasGrillTables, ...yakasGrillPackageTables]
+    : isGeceDonercisiMode
+    ? geceDonercisiTables
     : [...insideTables, ...outsideTables, ...packageTablesInside, ...packageTablesOutside];
 
   return (
@@ -242,8 +251,9 @@ const TableTransferModal = ({
                   const tableHasOrder = hasOrder(table.id);
                   const isSelected = selectedTargetTable?.id === table.id;
                   const isSourceTable = selectedSourceTable?.id === table.id;
-                  const isOutside = !isSultanSomatiMode && table.type === 'outside';
+                  const isOutside = !isSultanSomatiMode && !isGeceDonercisiMode && table.type === 'outside';
                   const isSultanTable = isSultanSomatiMode && table.salonId;
+                  const isGeceTable = isGeceDonercisiMode && (table.categoryId || table.type);
 
                   if (tableHasOrder || isSourceTable) {
                     return (
@@ -272,11 +282,15 @@ const TableTransferModal = ({
                         isSelected
                           ? isSultanTable
                             ? 'bg-purple-100 border-purple-400 scale-105'
+                            : isGeceTable
+                            ? 'bg-slate-100 border-slate-400 scale-105'
                             : isOutside
                             ? 'bg-amber-100 border-amber-400 scale-105'
                             : 'bg-pink-100 border-pink-400 scale-105'
                           : isSultanTable
                             ? 'bg-gradient-to-br from-purple-50 to-pink-100 border-purple-300 hover:border-purple-400 hover:scale-105'
+                            : isGeceTable
+                            ? 'bg-gradient-to-br from-slate-50 to-slate-100 border-slate-300 hover:border-slate-400 hover:scale-105'
                             : isOutside
                             ? 'bg-gradient-to-br from-amber-50 to-amber-100 border-amber-300 hover:border-amber-400 hover:scale-105'
                             : 'bg-gradient-to-br from-pink-50 to-pink-100 border-pink-200 hover:border-pink-300 hover:scale-105'
@@ -287,12 +301,14 @@ const TableTransferModal = ({
                           className={`w-8 h-8 rounded-full flex items-center justify-center ${
                             isSultanTable
                               ? 'bg-gradient-to-br from-purple-200 to-pink-300 text-purple-900'
+                              : isGeceTable
+                              ? 'bg-gradient-to-br from-slate-200 to-slate-300 text-slate-900'
                               : isOutside
                               ? 'bg-gradient-to-br from-amber-200 to-amber-300 text-amber-900'
                               : 'bg-gradient-to-br from-pink-100 to-pink-200 text-pink-900'
                           }`}
                         >
-                          {isSultanTable ? (
+                          {isSultanTable || isGeceTable ? (
                             <span className="text-sm">{table.icon}</span>
                           ) : (
                             <span className="text-xs font-bold">{table.number}</span>
@@ -300,14 +316,14 @@ const TableTransferModal = ({
                         </div>
                         <span
                           className={`text-xs mt-1 font-semibold ${
-                            isSultanTable ? 'text-purple-900' : isOutside ? 'text-amber-900' : 'text-pink-900'
+                            isSultanTable ? 'text-purple-900' : isGeceTable ? 'text-slate-900' : isOutside ? 'text-amber-900' : 'text-pink-900'
                           }`}
                         >
                           {table.name}
                         </span>
                         <span
                           className={`text-[10px] mt-0.5 ${
-                            isSultanTable ? 'text-purple-800' : isOutside ? 'text-amber-800' : 'text-pink-700'
+                            isSultanTable ? 'text-purple-800' : isGeceTable ? 'text-slate-700' : isOutside ? 'text-amber-800' : 'text-pink-700'
                           }`}
                         >
                           Boş

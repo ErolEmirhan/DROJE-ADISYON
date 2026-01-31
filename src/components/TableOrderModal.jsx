@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { isGeceDonercisi } from '../utils/sultanSomatTables';
 
-const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPayment, onRequestAdisyon, onAddItems, onItemCancelled, onCancelEntireTable }) => {
+const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPayment, onRequestAdisyon, onAddItems, onItemCancelled, onCancelEntireTable, tenantId }) => {
   const [sessionDuration, setSessionDuration] = useState('');
   const [selectedItemDetail, setSelectedItemDetail] = useState(null);
   const [cancellingItemId, setCancellingItemId] = useState(null);
@@ -140,6 +141,23 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
     }
   };
 
+  // İptal işlemini gerçekleştir (tek veya toplu)
+  const performCancel = async (itemId, quantity, reason) => {
+    const groupedItem = groupedItems.find(item => item.id === itemId || item.allItemIds?.includes(itemId));
+    if (groupedItem && groupedItem.originalItems && groupedItem.originalItems.length > 1) {
+      let remainingQuantity = quantity;
+      const itemsToCancel = [];
+      for (const originalItem of groupedItem.originalItems) {
+        if (remainingQuantity <= 0) break;
+        const quantityToCancel = Math.min(remainingQuantity, originalItem.quantity);
+        itemsToCancel.push({ itemId: originalItem.id, quantity: quantityToCancel });
+        remainingQuantity -= quantityToCancel;
+      }
+      return await window.electronAPI.cancelTableOrderItemsBulk(itemsToCancel, reason);
+    }
+    return await window.electronAPI.cancelTableOrderItem(itemId, quantity, reason);
+  };
+
   // İptal onayı
   const confirmCancelItem = async () => {
     if (!cancelConfirmItem) return;
@@ -149,7 +167,30 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
       return;
     }
 
-    // İlk istek: Açıklama boş, sadece açıklama modal'ını aç (fiş yazdırma)
+    // Gece Dönercisi: Açıklama modalı açmadan doğrudan iptal et
+    if (tenantId && isGeceDonercisi(tenantId)) {
+      setCancellingItemId(cancelConfirmItem.id);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const result = await performCancel(cancelConfirmItem.id, cancelQuantity, '');
+        if (result.success) {
+          setCancelConfirmItem(null);
+          setShowCancelReceiptPreview(false);
+          setCancelReceiptHTML(null);
+          if (onItemCancelled) onItemCancelled();
+        } else {
+          alert(result.error || 'İptal kaydedilemedi');
+        }
+      } catch (error) {
+        console.error('İptal hatası:', error);
+        alert('İptal sırasında bir hata oluştu');
+      } finally {
+        setCancellingItemId(null);
+      }
+      return;
+    }
+
+    // Diğer tenant'lar: Açıklama modal'ını aç
     setPendingCancelItemId(cancelConfirmItem.id);
     setPendingCancelQuantity(cancelQuantity);
     setCancelConfirmItem(null);
@@ -162,7 +203,8 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
 
   // İptal açıklaması gönder
   const submitCancelReason = async () => {
-    if (!cancelReason.trim()) {
+    const isGece = tenantId && isGeceDonercisi(tenantId);
+    if (!isGece && !cancelReason.trim()) {
       alert('Lütfen iptal açıklaması yazın');
       return;
     }
@@ -196,12 +238,13 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
       }
       
       setCancellingItemId(pendingCancelItemId);
+      const reason = (cancelReason || '').trim();
       
       try {
         // Toplu iptal işlemi (tek fiş)
         const result = await window.electronAPI.cancelTableOrderItemsBulk(
           itemsToCancel,
-          cancelReason.trim()
+          reason
         );
         
         if (result.success) {
@@ -225,11 +268,12 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
     } else {
       // Normal iptal (tek item veya gruplanmamış)
       setCancellingItemId(pendingCancelItemId);
+      const reason = (cancelReason || '').trim();
       try {
         // Kısa bir delay ekleyerek UI donmasını önle
         await new Promise(resolve => setTimeout(resolve, 100));
         
-        const result = await window.electronAPI.cancelTableOrderItem(pendingCancelItemId, pendingCancelQuantity, cancelReason.trim());
+        const result = await window.electronAPI.cancelTableOrderItem(pendingCancelItemId, pendingCancelQuantity, reason);
         
         if (result.success) {
           // Başarılı

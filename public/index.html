@@ -124,7 +124,7 @@
 
     // Tenant bilgileri (dinamik olarak yüklenecek)
     let currentTenantInfo = null;
-    let businessName = 'Yaka\'s Grill'; // Varsayılan
+    let businessName = 'Gece Dönercisi'; // Varsayılan
     let firebaseConfig = null;
     let tablesFirebaseConfig = null;
     let insideTablesCount = 20; // Varsayılan
@@ -146,6 +146,9 @@
     let tablesUnsubscribe = null; // Masalar için real-time listener
     let activeTablesUnsubscribe = null; // Aktif masa sayısı için real-time listener
     let allStaticTables = {}; // Tüm masaları sakla (iç, dış, paket)
+    let isGeceDonercisi = false; // Gece Dönercisi tenant'ında salon/bahçe masaları gösterilir
+    let tenantDbRef = null; // Tenant config Firestore (PIN güncelleme için)
+    let tenantDocId = null; // Tenant doküman ID (PIN güncelleme için)
     
     // PIN girişi (tenant'a göre dinamik olarak yüklenecek)
     let adminPin = '1234'; // Varsayılan
@@ -175,6 +178,9 @@
         // URL'den veya localStorage'dan tenant ID'yi al
         const urlParams = new URLSearchParams(window.location.search);
         let tenantId = urlParams.get('tenantId') || localStorage.getItem('admin_tenant_id');
+        // Veriler Gece Dönercisi tenant'ı ile çekilsin
+        tenantId = 'TENANT-1769602125250';
+        isGeceDonercisi = true;
         
         console.log('🔍 Tenant ID kaynakları:', {
           url: urlParams.get('tenantId'),
@@ -348,6 +354,9 @@
             adminPin = tenantData.adminPin;
             console.log('✅ Admin PIN güncellendi');
           }
+
+          tenantDbRef = tenantDb;
+          tenantDocId = tenantDoc.id;
 
           // UI'ı güncelle
           updateUIWithTenantInfo();
@@ -748,6 +757,8 @@
       const dashboard = document.getElementById('dashboard');
       if (loginSection) loginSection.style.display = 'block';
       if (dashboard) dashboard.style.display = 'none';
+      if (document.body) document.body.classList.add('login-view');
+      applyRememberedPin();
       if (realtimeUnsubscribe) {
         realtimeUnsubscribe();
         realtimeUnsubscribe = null;
@@ -760,75 +771,43 @@
       
       if (!tablesDb) {
         console.warn('⚠️ tablesDb bulunamadı - sadece statik masalar oluşturulacak');
-        // Firebase olmasa bile tüm masaları oluştur (dinamik)
         allStaticTables = {};
-        const totalTablesCount = insideTablesCount + outsideTablesCount;
-        
-        // Masalar (masa-1, masa-2 formatında)
-        for (let i = 1; i <= totalTablesCount; i++) {
-          allStaticTables[`masa-${i}`] = {
-            table_id: `masa-${i}`,
-            table_name: `Masa ${i}`,
-            table_type: 'table',
-            table_number: i,
-            is_occupied: false,
-            total_amount: 0,
-            items: []
-          };
+        if (isGeceDonercisi) {
+          for (let i = 1; i <= 30; i++) {
+            allStaticTables[`salon-${i}`] = { table_id: `salon-${i}`, table_name: `Salon ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+            allStaticTables[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          }
+        } else {
+          const totalTablesCount = insideTablesCount + outsideTablesCount;
+          for (let i = 1; i <= totalTablesCount; i++) {
+            allStaticTables[`masa-${i}`] = { table_id: `masa-${i}`, table_name: `Masa ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          }
+          for (let i = 1; i <= packageTablesCount; i++) {
+            allStaticTables[`paket-${i}`] = { table_id: `paket-${i}`, table_name: `Paket ${i}`, table_type: 'package', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          }
         }
-        
-        // Paket masaları (paket-1, paket-2 formatında)
-        for (let i = 1; i <= packageTablesCount; i++) {
-          allStaticTables[`paket-${i}`] = {
-            table_id: `paket-${i}`,
-            table_name: `Paket ${i}`,
-            table_type: 'package',
-            table_number: i,
-            is_occupied: false,
-            total_amount: 0,
-            items: []
-          };
-        }
-        
-        // Aktif masa sayısını güncelle
         updateActiveTablesCount(calculateActiveTablesCount());
         return;
       }
 
       console.log('✅ tablesDb mevcut, masa verileri çekiliyor...');
 
-      // TÜM masaları statik olarak oluştur
       allStaticTables = {};
-      
-      // Toplam masa sayısı (iç + dış)
-      const totalTablesCount = insideTablesCount + outsideTablesCount;
-      
-      // Masalar (masa-1, masa-2 formatında)
-      for (let i = 1; i <= totalTablesCount; i++) {
-        const tableId = `masa-${i}`;
-        allStaticTables[tableId] = {
-          table_id: tableId,
-          table_name: `Masa ${i}`,
-          table_type: 'table',
-          table_number: i,
-          is_occupied: false,
-          total_amount: 0,
-          items: []
-        };
-      }
-      
-      // Paket masaları (paket-1, paket-2 formatında)
-      for (let i = 1; i <= packageTablesCount; i++) {
-        const tableId = `paket-${i}`;
-        allStaticTables[tableId] = {
-          table_id: tableId,
-          table_name: `Paket ${i}`,
-          table_type: 'package',
-          table_number: i,
-          is_occupied: false,
-          total_amount: 0,
-          items: []
-        };
+      if (isGeceDonercisi) {
+        for (let i = 1; i <= 30; i++) {
+          allStaticTables[`salon-${i}`] = { table_id: `salon-${i}`, table_name: `Salon ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          allStaticTables[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+        }
+      } else {
+        const totalTablesCount = insideTablesCount + outsideTablesCount;
+        for (let i = 1; i <= totalTablesCount; i++) {
+          const tableId = `masa-${i}`;
+          allStaticTables[tableId] = { table_id: tableId, table_name: `Masa ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+        }
+        for (let i = 1; i <= packageTablesCount; i++) {
+          const tableId = `paket-${i}`;
+          allStaticTables[tableId] = { table_id: tableId, table_name: `Paket ${i}`, table_type: 'package', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+        }
       }
 
       console.log(`📋 Toplam ${Object.keys(allStaticTables).length} statik masa oluşturuldu (istatistikler için)`);
@@ -903,19 +882,29 @@
       const dashboard = document.getElementById('dashboard');
       if (loginSection) loginSection.style.display = 'none';
       if (dashboard) dashboard.style.display = 'block';
+      if (document.body) document.body.classList.remove('login-view');
       loadSales();
       startRealtimeListener();
       // Dashboard açılır açılmaz masa verilerini çek (aktif masa sayısı için)
       loadTablesDataForStats();
     }
 
+    const REMEMBER_PIN_KEY = 'admin_remember_pin';
+    const REMEMBER_ME_KEY = 'admin_remember_me';
+
     function verifyPin() {
       const pinInput = document.getElementById('pinInput');
+      const rememberMe = document.getElementById('rememberMe');
       if (!pinInput) return;
       
       const pin = pinInput.value;
       
       if (pin === adminPin) {
+        if (rememberMe && rememberMe.checked) {
+          try { localStorage.setItem(REMEMBER_PIN_KEY, pin); localStorage.setItem(REMEMBER_ME_KEY, '1'); } catch (e) {}
+        } else {
+          try { localStorage.removeItem(REMEMBER_PIN_KEY); localStorage.removeItem(REMEMBER_ME_KEY); } catch (e) {}
+        }
         isAuthenticated = true;
         sessionStorage.setItem('adminAuthenticated', 'true');
         showDashboard();
@@ -923,6 +912,98 @@
       } else {
         alert('PIN hatalı!');
         pinInput.value = '';
+      }
+    }
+
+    function applyRememberedPin() {
+      try {
+        if (localStorage.getItem(REMEMBER_ME_KEY) !== '1') return;
+        const saved = localStorage.getItem(REMEMBER_PIN_KEY);
+        if (!saved) return;
+        const pinInput = document.getElementById('pinInput');
+        const rememberMe = document.getElementById('rememberMe');
+        if (pinInput) { pinInput.value = saved; pinInput.focus(); }
+        if (rememberMe) rememberMe.checked = true;
+      } catch (e) {}
+    }
+
+    function showChangePinModal() {
+      const overlay = document.getElementById('changePinOverlay');
+      if (overlay) overlay.classList.add('show');
+      const cur = document.getElementById('changePinCurrent');
+      const neu = document.getElementById('changePinNew');
+      if (cur) cur.value = '';
+      if (neu) neu.value = '';
+      if (cur) cur.focus();
+    }
+
+    function hideChangePinModal() {
+      const overlay = document.getElementById('changePinOverlay');
+      if (overlay) overlay.classList.remove('show');
+    }
+
+    function showSuccessPopup(title, subtitle) {
+      var t = title || 'Şifreniz Başarıyla Değiştirildi';
+      var s = subtitle || 'Bir sonraki girişte yeni PIN geçerli olacak.';
+      var titleEl = document.getElementById('successPopupTitle');
+      var subtitleEl = document.getElementById('successPopupSubtitle');
+      var overlay = document.getElementById('successPopupOverlay');
+      if (titleEl) titleEl.textContent = t;
+      if (subtitleEl) subtitleEl.textContent = s;
+      if (overlay) overlay.classList.add('show');
+    }
+
+    function hideSuccessPopup() {
+      var overlay = document.getElementById('successPopupOverlay');
+      if (overlay) overlay.classList.remove('show');
+    }
+
+    function submitChangePin() {
+      const curInput = document.getElementById('changePinCurrent');
+      const newInput = document.getElementById('changePinNew');
+      if (!curInput || !newInput) return;
+      const cur = curInput.value;
+      const newPin = newInput.value;
+      if (!cur || !newPin) {
+        alert('Mevcut PIN ve yeni PIN girin.');
+        return;
+      }
+      if (cur !== adminPin) {
+        const saved = localStorage.getItem(REMEMBER_PIN_KEY);
+        if (cur !== saved) {
+          alert('Mevcut PIN hatalı.');
+          return;
+        }
+      }
+      if (tenantDbRef && tenantDocId) {
+        var submitBtnEl = document.getElementById('changePinSubmit');
+        if (submitBtnEl) { submitBtnEl.disabled = true; submitBtnEl.textContent = 'Kaydediliyor...'; }
+        tenantDbRef.collection('tenants').doc(tenantDocId).update({ adminPin: newPin })
+          .then(function() {
+            adminPin = newPin;
+            try { localStorage.setItem(REMEMBER_PIN_KEY, newPin); localStorage.setItem(REMEMBER_ME_KEY, '1'); } catch (e) {}
+            hideChangePinModal();
+            const pinInput = document.getElementById('pinInput');
+            if (pinInput) pinInput.value = newPin;
+            const rememberMe = document.getElementById('rememberMe');
+            if (rememberMe) rememberMe.checked = true;
+            showSuccessPopup('Şifreniz Başarıyla Değiştirildi', 'Bir sonraki girişte yeni PIN geçerli olacak.');
+          })
+          .catch(function(err) {
+            alert('Firebase\'e kaydedilemedi: ' + (err.message || err));
+            console.error('PIN güncelleme hatası:', err);
+          })
+          .finally(function() {
+            if (submitBtnEl) { submitBtnEl.disabled = false; submitBtnEl.textContent = 'Kaydet'; }
+          });
+      } else {
+        try { localStorage.setItem(REMEMBER_PIN_KEY, newPin); localStorage.setItem(REMEMBER_ME_KEY, '1'); } catch (e) {}
+        hideChangePinModal();
+        const pinInput = document.getElementById('pinInput');
+        if (pinInput) pinInput.value = newPin;
+        const rememberMe = document.getElementById('rememberMe');
+        if (rememberMe) rememberMe.checked = true;
+        alert('Tenant bilgisi yüklenmediği için sadece "Beni hatırla" güncellendi.');
       }
     }
 
@@ -1828,15 +1909,13 @@
       }
     }
 
-    // Aktif masa sayısını hesapla (sadece iç ve dış masalar)
+    // Aktif masa sayısını hesapla (sadece iç ve dış masalar; Gece Dönercisi: salon + bahçe)
     function calculateActiveTablesCount() {
       let activeCount = 0;
       
-      // allStaticTables objesindeki tüm masaları kontrol et
       Object.values(allStaticTables).forEach(table => {
-        // Sadece masaları say (paket masalarını hariç tut)
         const tableId = table.table_id || '';
-        const isTable = tableId.startsWith('masa-');
+        const isTable = tableId.startsWith('masa-') || (isGeceDonercisi && (tableId.startsWith('salon-') || tableId.startsWith('bahce-')));
         const isPackage = tableId.startsWith('paket-');
         
         if (isTable && !isPackage) {
@@ -3966,20 +4045,36 @@
         return;
       }
 
-      // Sadece masaları filtrele (paketleri hariç tut)
-      const tables = [];
-
-      Object.values(allStaticTables).forEach(table => {
-        if (table.table_id.startsWith('masa-')) {
-          tables.push(table);
-        }
-      });
-
-      // Sırala
-      tables.sort((a, b) => a.table_number - b.table_number);
-
-      // Render
-      let html = `
+      // Gece Dönercisi: Salon ve Bahçe ayrı bölümler; diğer tenant'lar: tek Masalar listesi
+      let html = '';
+      if (isGeceDonercisi) {
+        const salonTables = Object.values(allStaticTables)
+          .filter(t => t.table_id.startsWith('salon-'))
+          .sort((a, b) => a.table_number - b.table_number);
+        const bahceTables = Object.values(allStaticTables)
+          .filter(t => t.table_id.startsWith('bahce-'))
+          .sort((a, b) => a.table_number - b.table_number);
+        html = `
+        <div class="tables-container">
+          <div class="tables-section">
+            <h2 class="section-title">🪑 Salon</h2>
+            <div class="tables-grid">
+              ${salonTables.map(table => renderTableCard(table)).join('')}
+            </div>
+          </div>
+          <div class="tables-section">
+            <h2 class="section-title">🌿 Bahçe</h2>
+            <div class="tables-grid">
+              ${bahceTables.map(table => renderTableCard(table)).join('')}
+            </div>
+          </div>
+        </div>
+        `;
+      } else {
+        const tables = Object.values(allStaticTables)
+          .filter(table => table.table_id.startsWith('masa-'))
+          .sort((a, b) => a.table_number - b.table_number);
+        html = `
         <div class="tables-container">
           <div class="tables-section">
             <h2 class="section-title">🪑 Masalar</h2>
@@ -3989,6 +4084,7 @@
           </div>
         </div>
       `;
+      }
 
       container.innerHTML = html;
       console.log('✅ Tüm masalar render edildi');
@@ -4019,32 +4115,19 @@
         console.warn('⚠️ tablesDb bulunamadı - sadece statik masalar gösterilecek');
         // Firebase olmasa bile tüm masaları göster (dinamik)
         allStaticTables = {};
-        const totalTablesCount = insideTablesCount + outsideTablesCount;
-        
-        // Masalar (masa-1, masa-2 formatında)
-        for (let i = 1; i <= totalTablesCount; i++) {
-          allStaticTables[`masa-${i}`] = {
-            table_id: `masa-${i}`,
-            table_name: `Masa ${i}`,
-            table_type: 'table',
-            table_number: i,
-            is_occupied: false,
-            total_amount: 0,
-            items: []
-          };
-        }
-        
-        // Paket masaları (paket-1, paket-2 formatında)
-        for (let i = 1; i <= packageTablesCount; i++) {
-          allStaticTables[`paket-${i}`] = {
-            table_id: `paket-${i}`,
-            table_name: `Paket ${i}`,
-            table_type: 'package',
-            table_number: i,
-            is_occupied: false,
-            total_amount: 0,
-            items: []
-          };
+        if (isGeceDonercisi) {
+          for (let i = 1; i <= 30; i++) {
+            allStaticTables[`salon-${i}`] = { table_id: `salon-${i}`, table_name: `Salon ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+            allStaticTables[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          }
+        } else {
+          const totalTablesCount = insideTablesCount + outsideTablesCount;
+          for (let i = 1; i <= totalTablesCount; i++) {
+            allStaticTables[`masa-${i}`] = { table_id: `masa-${i}`, table_name: `Masa ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          }
+          for (let i = 1; i <= packageTablesCount; i++) {
+            allStaticTables[`paket-${i}`] = { table_id: `paket-${i}`, table_name: `Paket ${i}`, table_type: 'package', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          }
         }
         renderAllTables(allStaticTables);
         // Aktif masa sayısını güncelle
@@ -4064,39 +4147,25 @@
       const totalTablesCount = insideTablesCount + outsideTablesCount;
       const expectedTablesCount = totalTablesCount + packageTablesCount;
       
-      if (Object.keys(allStaticTables).length === 0 || Object.keys(allStaticTables).length !== expectedTablesCount) {
+      const geceExpectedCount = 60; // salon 30 + bahce 30
+      if (Object.keys(allStaticTables).length === 0 || (!isGeceDonercisi && Object.keys(allStaticTables).length !== expectedTablesCount) || (isGeceDonercisi && Object.keys(allStaticTables).length !== geceExpectedCount)) {
       // TÜM masaları statik olarak oluştur (masaüstü uygulamasındaki gibi)
-      // Global allStaticTables objesini kullan
       allStaticTables = {};
-      
-        // Masalar (masa-1, masa-2 formatında)
+      if (isGeceDonercisi) {
+        for (let i = 1; i <= 30; i++) {
+          allStaticTables[`salon-${i}`] = { table_id: `salon-${i}`, table_name: `Salon ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          allStaticTables[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+        }
+      } else {
         for (let i = 1; i <= totalTablesCount; i++) {
           const tableId = `masa-${i}`;
-        allStaticTables[tableId] = {
-          table_id: tableId,
-            table_name: `Masa ${i}`,
-            table_type: 'table',
-          table_number: i,
-          is_occupied: false,
-          total_amount: 0,
-          items: []
-        };
-      }
-      
-        // Paket masaları (paket-1, paket-2 formatında)
-      for (let i = 1; i <= packageTablesCount; i++) {
+          allStaticTables[tableId] = { table_id: tableId, table_name: `Masa ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+        }
+        for (let i = 1; i <= packageTablesCount; i++) {
           const tableId = `paket-${i}`;
-        allStaticTables[tableId] = {
-          table_id: tableId,
-          table_name: `Paket ${i}`,
-            table_type: 'package',
-          table_number: i,
-          is_occupied: false,
-          total_amount: 0,
-          items: []
-        };
+          allStaticTables[tableId] = { table_id: tableId, table_name: `Paket ${i}`, table_type: 'package', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+        }
       }
-      
         console.log(`📋 Toplam ${Object.keys(allStaticTables).length} statik masa oluşturuldu`);
       } else {
         console.log(`📋 Mevcut ${Object.keys(allStaticTables).length} statik masa kullanılıyor (zaten oluşturulmuş)`);
@@ -5601,6 +5670,35 @@
       }, 25);
     }
 
+    window.showChangePinModal = showChangePinModal;
+    window.hideChangePinModal = hideChangePinModal;
+
+    function setupChangePinModal() {
+      const btn = document.getElementById('btnChangePin');
+      const cancel = document.getElementById('changePinCancel');
+      const submit = document.getElementById('changePinSubmit');
+      const overlay = document.getElementById('changePinOverlay');
+      if (btn) btn.addEventListener('click', showChangePinModal);
+      if (cancel) cancel.addEventListener('click', hideChangePinModal);
+      if (submit) submit.addEventListener('click', submitChangePin);
+      if (overlay) overlay.addEventListener('click', function(e) { if (e.target === overlay) hideChangePinModal(); });
+    }
+    function setupSuccessPopup() {
+      var okBtn = document.getElementById('successPopupOk');
+      var overlay = document.getElementById('successPopupOverlay');
+      if (okBtn) okBtn.addEventListener('click', hideSuccessPopup);
+      if (overlay) overlay.addEventListener('click', function(e) { if (e.target === overlay) hideSuccessPopup(); });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function() {
+        setupChangePinModal();
+        setupSuccessPopup();
+      });
+    } else {
+      setupChangePinModal();
+      setupSuccessPopup();
+    }
+
     // Global fonksiyonlar
     window.verifyPin = verifyPin;
     window.loadSales = loadSales;
@@ -5676,6 +5774,10 @@
       align-items: stretch;
     }
 
+    body.login-view {
+      align-items: center;
+    }
+
     .container {
       width: 100%;
       max-width: 1240px;
@@ -5694,187 +5796,161 @@
 
     /* Header kaldırıldı - navbar kullanılıyor */
 
-    /* Login - Profesyonel ve Kurumsal */
+    /* Login - Basit, profesyonel ve kurumsal */
     .pin-section {
-      background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-      padding: 48px 40px;
-      border-radius: 24px;
+      background: #ffffff;
+      padding: 40px 36px;
+      border-radius: 16px;
       text-align: center;
-      border: 1px solid rgba(0, 0, 0, 0.08);
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.08), 0 0 1px rgba(0, 0, 0, 0.1);
-      max-width: 480px;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+      max-width: 400px;
       margin: 0 auto;
       position: relative;
-      overflow: hidden;
-    }
-
-    .pin-section::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 4px;
-      background: linear-gradient(90deg, var(--primary) 0%, var(--primary-strong) 100%);
-    }
-
-    .pin-section::after {
-      content: '';
-      position: absolute;
-      top: -100px;
-      right: -100px;
-      width: 200px;
-      height: 200px;
-      background: radial-gradient(circle, rgba(249, 115, 22, 0.08) 0%, transparent 70%);
-      pointer-events: none;
     }
 
     .login-header {
-      position: relative;
-      z-index: 1;
-      margin-bottom: 40px;
+      margin-bottom: 28px;
     }
 
-    .login-icon {
-      width: 80px;
-      height: 80px;
-      margin: 0 auto 24px;
-      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
-      border-radius: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 10px 30px rgba(249, 115, 22, 0.25);
-    }
-
-    .login-icon svg {
-      width: 40px;
-      height: 40px;
-      color: white;
+    .login-logo {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 20px;
+      border-radius: 50%;
+      object-fit: cover;
+      display: block;
+      border: 1px solid #e5e7eb;
     }
 
     .pin-section h2 {
-      font-size: 28px;
-      font-weight: 700;
-      margin-bottom: 12px;
-      color: #1e293b;
-      letter-spacing: -0.5px;
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: #1f2937;
+      letter-spacing: -0.3px;
     }
 
     .pin-section .login-subtitle {
-      font-size: 15px;
-      color: #64748b;
+      font-size: 14px;
+      color: #6b7280;
       font-weight: 500;
-      margin-bottom: 8px;
+      margin-bottom: 0;
     }
 
     .pin-form {
-      position: relative;
-      z-index: 1;
+      text-align: left;
     }
 
     .input-group {
-      position: relative;
-      margin-bottom: 32px;
+      margin-bottom: 20px;
     }
 
     .input-label {
       display: block;
-      text-align: left;
-      font-size: 14px;
-      font-weight: 600;
-      color: #475569;
-      margin-bottom: 10px;
-      padding-left: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #374151;
+      margin-bottom: 8px;
     }
 
     .pin-input {
-      padding: 16px 20px;
-      font-size: 20px;
-      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 18px;
+      border-radius: 10px;
       width: 100%;
-      max-width: 100%;
+      box-sizing: border-box;
       text-align: center;
-      margin: 0;
-      font-weight: 600;
-      letter-spacing: 8px;
-      border: 2px solid #e2e8f0;
-      background: #ffffff;
-      color: #1e293b;
-      transition: all 0.2s ease;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-    }
-
-    .pin-input::placeholder {
-      color: #cbd5e1;
-      letter-spacing: 2px;
-      font-size: 16px;
+      font-weight: 500;
+      letter-spacing: 6px;
+      border: 1px solid #d1d5db;
+      background: #f9fafb;
+      color: #111827;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
 
     .pin-input:focus {
       outline: none;
-      border-color: var(--primary);
-      box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.1), 0 4px 12px rgba(249, 115, 22, 0.15);
-      transform: translateY(-2px);
+      border-color: #4b5563;
+      box-shadow: 0 0 0 3px rgba(75, 85, 99, 0.12);
+    }
+
+    .login-options {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .login-remember {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #6b7280;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .login-remember input {
+      width: 16px;
+      height: 16px;
+      accent-color: #4b5563;
+      cursor: pointer;
+    }
+
+    .login-change-pin {
+      font-size: 13px;
+      color: #4b5563;
+      text-decoration: none;
+      font-weight: 500;
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+    }
+
+    .login-change-pin:hover {
+      color: #1f2937;
+      text-decoration: underline;
     }
 
     .pin-btn {
-      padding: 16px 48px;
-      margin-top: 0;
-      border-radius: 12px;
+      padding: 14px 24px;
+      border-radius: 10px;
       border: none;
-      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
+      background: #374151;
       color: #ffffff;
-      font-size: 16px;
-      font-weight: 700;
+      font-size: 15px;
+      font-weight: 600;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 10px;
-      box-shadow: 0 10px 25px rgba(249, 115, 22, 0.3);
-      transition: all 0.2s ease;
+      gap: 8px;
       width: 100%;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .pin-btn::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: -100%;
-      width: 100%;
-      height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-      transition: left 0.5s ease;
-    }
-
-    .pin-btn:hover::before {
-      left: 100%;
+      transition: background 0.2s;
     }
 
     .pin-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 15px 35px rgba(249, 115, 22, 0.4);
+      background: #1f2937;
     }
 
     .pin-btn:active {
-      transform: translateY(0);
-      box-shadow: 0 5px 15px rgba(249, 115, 22, 0.3);
+      background: #111827;
     }
 
     .login-footer {
-      margin-top: 32px;
-      padding-top: 24px;
-      border-top: 1px solid #e2e8f0;
-      position: relative;
-      z-index: 1;
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid #e5e7eb;
     }
 
     .login-footer-text {
-      font-size: 13px;
-      color: #94a3b8;
+      font-size: 12px;
+      color: #9ca3af;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -5882,40 +5958,171 @@
     }
 
     .login-footer-text svg {
-      width: 16px;
-      height: 16px;
-      color: #64748b;
+      width: 14px;
+      height: 14px;
+      color: #9ca3af;
+    }
+
+    /* Şifre değiştir modal */
+    .change-pin-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .change-pin-overlay.show {
+      display: flex;
+    }
+
+    .change-pin-modal {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 360px;
+      width: 100%;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+    }
+
+    .change-pin-modal h3 {
+      margin: 0 0 20px 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: #1f2937;
+    }
+
+    .change-pin-modal .input-group {
+      margin-bottom: 16px;
+    }
+
+    .change-pin-modal .pin-input {
+      letter-spacing: 4px;
+    }
+
+    .change-pin-modal-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .change-pin-modal-actions button {
+      flex: 1;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+    }
+
+    .change-pin-cancel {
+      background: #f3f4f6;
+      color: #374151;
+    }
+
+    .change-pin-cancel:hover {
+      background: #e5e7eb;
+    }
+
+    .change-pin-submit {
+      background: #374151;
+      color: #fff;
+    }
+
+    .change-pin-submit:hover {
+      background: #1f2937;
+    }
+
+    /* Başarı popup - modern ve profesyonel */
+    .success-popup-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.5);
+      backdrop-filter: blur(6px);
+      z-index: 10000;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      animation: successPopupFadeIn 0.25s ease-out;
+    }
+    .success-popup-overlay.show {
+      display: flex;
+    }
+    @keyframes successPopupFadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .success-popup-card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 32px 40px;
+      max-width: 380px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.04);
+      animation: successPopupScaleIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    @keyframes successPopupScaleIn {
+      from { opacity: 0; transform: scale(0.9); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .success-popup-icon {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 20px;
+      background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 24px rgba(5, 150, 105, 0.35);
+    }
+    .success-popup-icon svg {
+      width: 28px;
+      height: 28px;
+      color: #fff;
+    }
+    .success-popup-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #111827;
+      margin: 0 0 8px 0;
+      letter-spacing: -0.3px;
+    }
+    .success-popup-subtitle {
+      font-size: 14px;
+      color: #6b7280;
+      margin: 0 0 24px 0;
+      line-height: 1.5;
+    }
+    .success-popup-btn {
+      display: inline-block;
+      padding: 12px 28px;
+      background: #111827;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .success-popup-btn:hover {
+      background: #1f2937;
     }
 
     @media (max-width: 600px) {
       .pin-section {
-        padding: 36px 28px;
-        border-radius: 20px;
+        padding: 32px 24px;
       }
-      
-      .login-icon {
-        width: 70px;
-        height: 70px;
-        border-radius: 18px;
-      }
-      
-      .login-icon svg {
-        width: 35px;
-        height: 35px;
-      }
-      
       .pin-section h2 {
-        font-size: 24px;
-      }
-      
-      .pin-input {
-        font-size: 18px;
-        letter-spacing: 6px;
-      }
-      
-      .pin-btn {
-        padding: 14px 36px;
-        font-size: 15px;
+        font-size: 20px;
       }
     }
 
@@ -7129,7 +7336,8 @@
     .splash-logo {
       width: 120px;
       height: 120px;
-      object-fit: contain;
+      object-fit: cover;
+      border-radius: 50%;
       margin-bottom: 32px;
       animation: logoFadeIn 0.8s ease-out forwards;
       opacity: 0;
@@ -9436,8 +9644,8 @@
 <body>
   <div id="loader" class="admin-splash-screen">
     <div class="splash-content">
-      <img src="logo.png" alt="Logo" class="splash-logo" onerror="this.style.display='none';">
-      <h1 class="splash-main-text" id="splashBusinessName">Yaka's Grill</h1>
+      <img src="tenant.png" alt="Logo" class="splash-logo" onerror="this.style.display='none';">
+      <h1 class="splash-main-text" id="splashBusinessName">Gece Dönercisi</h1>
       <div class="splash-decorative-line"></div>
       <p class="splash-subtitle-text">Admin Dashboard</p>
     </div>
@@ -9446,13 +9654,9 @@
   <div class="container">
     <div id="loginSection" class="pin-section">
       <div class="login-header">
-        <div class="login-icon">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/>
-          </svg>
-        </div>
+        <img src="tenant.png" alt="Logo" class="login-logo" onerror="this.style.display='none';">
         <h2>Admin Girişi</h2>
-        <p class="login-subtitle" id="loginBusinessName">Yaka's Grill</p>
+        <p class="login-subtitle" id="loginBusinessName">Gece Dönercisi</p>
       </div>
       
       <div class="pin-form">
@@ -9460,10 +9664,14 @@
           <label class="input-label">Güvenlik PIN'i</label>
           <input type="password" id="pinInput" class="pin-input" placeholder="••••" maxlength="10" autofocus>
         </div>
+        <div class="login-options">
+          <label class="login-remember">
+            <input type="checkbox" id="rememberMe" name="rememberMe">
+            Beni hatırla
+          </label>
+          <button type="button" class="login-change-pin" id="btnChangePin">Şifreyi değiştir</button>
+        </div>
         <button onclick="verifyPin()" class="pin-btn">
-          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75M3.75 21.75h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H3.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/>
-          </svg>
           Giriş Yap
         </button>
       </div>
@@ -9478,12 +9686,46 @@
       </div>
     </div>
 
+    <!-- Şifre değiştir modal -->
+    <div id="changePinOverlay" class="change-pin-overlay">
+      <div class="change-pin-modal">
+        <h3>Şifreyi değiştir</h3>
+        <p style="font-size: 13px; color: #6b7280; margin: 0 0 16px 0;">Yeni PIN hem Firebase'e kaydedilir hem de “Beni hatırla” ile kullanılır.</p>
+        <div class="input-group">
+          <label class="input-label">Mevcut PIN</label>
+          <input type="password" id="changePinCurrent" class="pin-input" placeholder="••••" maxlength="10">
+        </div>
+        <div class="input-group">
+          <label class="input-label">Yeni PIN</label>
+          <input type="password" id="changePinNew" class="pin-input" placeholder="••••" maxlength="10">
+        </div>
+        <div class="change-pin-modal-actions">
+          <button type="button" class="change-pin-cancel" id="changePinCancel">İptal</button>
+          <button type="button" class="change-pin-submit" id="changePinSubmit">Kaydet</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Başarı popup (şifre değişti) -->
+    <div id="successPopupOverlay" class="success-popup-overlay">
+      <div class="success-popup-card">
+        <div class="success-popup-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 13l4 4L19 7"/>
+          </svg>
+        </div>
+        <h3 class="success-popup-title" id="successPopupTitle">Şifreniz Başarıyla Değiştirildi</h3>
+        <p class="success-popup-subtitle" id="successPopupSubtitle">Bir sonraki girişte yeni PIN geçerli olacak.</p>
+        <button type="button" class="success-popup-btn" id="successPopupOk">Tamam</button>
+      </div>
+    </div>
+
     <div id="dashboard" class="dashboard">
       <!-- Modern Navbar -->
       <nav class="admin-navbar">
         <div class="navbar-content">
           <div class="navbar-brand">
-            <img src="logo.png" alt="MAKARA Logo" class="navbar-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <img src="tenant.png" alt="Gece Dönercisi Logo" class="navbar-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
             <div class="navbar-logo" style="display: none;">M</div>
             <div class="navbar-title-group">
               <h1 class="navbar-title" id="navbarBusinessName">Yaka's Grill Admin Dashboard</h1>

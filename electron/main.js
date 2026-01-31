@@ -1686,13 +1686,15 @@ ipcMain.handle('delete-all-sales', async (event) => {
 ipcMain.handle('create-table-order', async (event, orderData) => {
   const { items, totalAmount, tableId, tableName, tableType, orderNote, orderSource } = orderData;
   
-  // Eğer orderSource gönderilmemişse, tableType'a göre otomatik belirle
+  // Eğer orderSource gönderilmemişse, tableType'a göre otomatik belirle (mobil personel senkronu için)
   let finalOrderSource = orderSource;
   if (!finalOrderSource && tableType) {
     if (tableType === 'yemeksepeti') {
       finalOrderSource = 'Yemeksepeti';
     } else if (tableType === 'trendyolgo') {
       finalOrderSource = 'Trendyol';
+    } else if (tableType === 'migros-yemek') {
+      finalOrderSource = 'Migros Yemek';
     }
   }
   
@@ -1862,7 +1864,6 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity, 
   }
 
   // Müdür kontrolü (sadece mobil personel arayüzünden gelen istekler için)
-  // Desktop uygulamasından gelen istekler için kontrol yapılmaz (admin yetkisi var)
   if (staffId) {
     const staff = (db.staff || []).find(s => s.id === staffId);
     if (!staff || !staff.is_manager) {
@@ -1904,13 +1905,17 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity, 
     return { success: false, error: 'Bu ürünün kategorisine yazıcı atanmamış' };
   }
 
-      // İptal açıklaması kontrolü - açıklama yoksa fiş yazdırma, sadece açıklama iste
-      if (!cancelReason || cancelReason.trim() === '') {
-        return { success: false, requiresReason: true, error: 'İptal açıklaması zorunludur' };
-      }
-
-      // Açıklama var, işleme devam et - fiş yazdır
-      cancelReason = cancelReason.trim();
+  // Gece Dönercisi (TENANT-1769602125250): iptal açıklaması zorunlu değil
+  const tenantId = tenantManager.getCurrentTenantInfo()?.tenantId || null;
+  const isGeceDonercisi = tenantId === 'TENANT-1769602125250';
+  if (!isGeceDonercisi) {
+    if (!cancelReason || cancelReason.trim() === '') {
+      return { success: false, requiresReason: true, error: 'İptal açıklaması zorunludur' };
+    }
+    cancelReason = cancelReason.trim();
+  } else {
+    cancelReason = (cancelReason && cancelReason.trim()) ? cancelReason.trim() : '';
+  }
       
       // İptal fişi yazdır (sadece açıklama varsa) - arka planda
       const now = new Date();
@@ -2057,11 +2062,13 @@ ipcMain.handle('cancel-table-order-items-bulk', async (event, itemsToCancel, can
     }
   }
 
-  if (!cancelReason || cancelReason.trim() === '') {
+  // Gece Dönercisi: iptal açıklaması zorunlu değil
+  const tenantIdBulk = tenantManager.getCurrentTenantInfo()?.tenantId || null;
+  const isGeceDonercisiBulk = tenantIdBulk === 'TENANT-1769602125250';
+  if (!isGeceDonercisiBulk && (!cancelReason || cancelReason.trim() === '')) {
     return { success: false, requiresReason: true, error: 'İptal açıklaması zorunludur' };
   }
-
-  cancelReason = cancelReason.trim();
+  cancelReason = (cancelReason && cancelReason.trim()) ? cancelReason.trim() : '';
 
   // Tüm item'ları iptal et ve toplam bilgilerini topla
   let totalCancelAmount = 0;
@@ -2269,7 +2276,7 @@ ipcMain.handle('transfer-table-order', async (event, sourceTableId, targetTableI
   let targetTableName = '';
   let targetTableType = sourceOrder.table_type; // Varsayılan olarak kaynak masanın tipi
 
-  // Masa ID'sinden masa bilgilerini çıkar
+  // Masa ID'sinden masa bilgilerini çıkar (Gece Dönercisi: salon-1, bahce-1, paket-1, trendyolgo-1, yemeksepeti-1, migros-yemek-1)
   if (targetTableId.startsWith('inside-')) {
     targetTableName = `İçeri ${targetTableId.replace('inside-', '')}`;
     targetTableType = 'inside';
@@ -2280,6 +2287,13 @@ ipcMain.handle('transfer-table-order', async (event, sourceTableId, targetTableI
     const parts = targetTableId.split('-');
     targetTableName = `Paket ${parts[parts.length - 1]}`;
     targetTableType = parts[1] || sourceOrder.table_type; // package-{type}-{number}
+  } else if (/^(salon|bahce|paket|trendyolgo|yemeksepeti|migros-yemek)-\d+$/.test(targetTableId)) {
+    const parts = targetTableId.split('-');
+    const num = parts.pop();
+    const categoryId = parts.join('-');
+    const displayNames = { salon: 'Salon', bahce: 'Bahçe', paket: 'Paket', trendyolgo: 'TrendyolGO', yemeksepeti: 'Yemeksepeti', 'migros-yemek': 'Migros Yemek' };
+    targetTableName = `${displayNames[categoryId] || categoryId} ${num}`;
+    targetTableType = categoryId;
   }
 
   // Kaynak siparişin tüm bilgilerini koru (order_date, order_time, order_note, total_amount)
@@ -6359,7 +6373,18 @@ function generateMobileHTML(serverURL) {
   const tenantId = tenantInfo?.tenantId || null;
   const isSultanSomati = tenantId === 'TENANT-1766611377865';
   const isYakasGrill = tenantId === 'TENANT-1766340222641';
+  const isGeceDonercisi = tenantId === 'TENANT-1769602125250';
   const themeColor = tenantInfo?.themeColor || '#f97316';
+  
+  // Gece Dönercisi: 6 genel kategori (salon, bahçe, paket, trendyolgo, yemeksepeti, migros yemek) — 30'ar masa, mobil personel senkron
+  const geceDonercisiCategories = isGeceDonercisi ? [
+    { id: 'salon', name: 'Salon', count: 30, icon: '🪑' },
+    { id: 'bahce', name: 'Bahçe', count: 30, icon: '🌿' },
+    { id: 'paket', name: 'Paket', count: 30, icon: '📦' },
+    { id: 'trendyolgo', name: 'TrendyolGO', count: 30, icon: '🛒' },
+    { id: 'yemeksepeti', name: 'Yemeksepeti', count: 30, icon: '🍽️' },
+    { id: 'migros-yemek', name: 'Migros Yemek', count: 30, icon: '🛍️' }
+  ] : [];
   
   // Sultan Somatı için salon yapısı
   const sultanSomatiSalons = [
@@ -6416,8 +6441,8 @@ function generateMobileHTML(serverURL) {
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="${tenantManager.getBusinessName()} Mobil">
   <link rel="manifest" href="${serverURL}/mobile-manifest.json">
-  <link rel="icon" type="image/png" href="${serverURL}/mobilpersonel.png">
-  <link rel="apple-touch-icon" href="${serverURL}/mobilpersonel.png">
+  <link rel="icon" type="image/png" href="${serverURL}/${isGeceDonercisi ? 'tenant.png' : 'mobilpersonel.png'}">
+  <link rel="apple-touch-icon" href="${serverURL}/${isGeceDonercisi ? 'tenant.png' : 'mobilpersonel.png'}">
   <title>${tenantManager.getBusinessName()} - Mobil Sipariş</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -6477,18 +6502,18 @@ function generateMobileHTML(serverURL) {
     }
     .table-grid {
       display: grid;
-      grid-template-columns: ${isSultanSomati ? 'repeat(2, 1fr)' : (isYakasGrill ? 'repeat(6, 1fr)' : 'repeat(4, 1fr)')};
-      gap: ${isSultanSomati ? '12px' : (isYakasGrill ? '6px' : '8px')};
+      grid-template-columns: ${isSultanSomati ? 'repeat(2, 1fr)' : isGeceDonercisi ? 'repeat(5, 1fr)' : (isYakasGrill ? 'repeat(6, 1fr)' : 'repeat(4, 1fr)')};
+      gap: ${isSultanSomati ? '12px' : isGeceDonercisi ? '12px' : (isYakasGrill ? '6px' : '8px')};
       margin-bottom: 20px;
       ${isSultanSomati ? 'padding-top: 10px;' : ''}
-      ${isYakasGrill ? 'padding: 8px; max-height: calc(100vh - 120px); overflow-y: auto;' : ''}
+      ${(isYakasGrill || isGeceDonercisi) ? 'padding: 8px; max-height: calc(100vh - 120px); overflow-y: auto;' : ''}
     }
     .table-btn {
-      ${isSultanSomati ? 'min-height: 120px;' : (isYakasGrill ? 'aspect-ratio: 1; min-height: 60px;' : 'aspect-ratio: 1;')}
-      border: ${isSultanSomati ? '1px' : (isYakasGrill ? '1px' : '2px')} solid #e0e0e0;
-      border-radius: ${isYakasGrill ? '8px' : '12px'};
+      ${isSultanSomati ? 'min-height: 120px;' : isGeceDonercisi ? 'aspect-ratio: 1; min-height: 88px;' : (isYakasGrill ? 'aspect-ratio: 1; min-height: 60px;' : 'aspect-ratio: 1;')}
+      border: ${isSultanSomati ? '1px' : (isYakasGrill || isGeceDonercisi ? '1px' : '2px')} solid #e0e0e0;
+      border-radius: ${isGeceDonercisi ? '14px' : (isYakasGrill ? '8px' : '12px')};
       background: white;
-      font-size: ${isSultanSomati ? '18px' : (isYakasGrill ? '11px' : '14px')};
+      font-size: ${isSultanSomati ? '18px' : isGeceDonercisi ? '14px' : (isYakasGrill ? '11px' : '14px')};
       font-weight: bold;
       color: #333;
       cursor: pointer;
@@ -6498,7 +6523,7 @@ function generateMobileHTML(serverURL) {
       align-items: center;
       justify-content: center;
       flex-direction: column;
-      padding: ${isSultanSomati ? '20px' : (isYakasGrill ? '8px 4px' : '5px')};
+      padding: ${isSultanSomati ? '20px' : isGeceDonercisi ? '14px 10px' : (isYakasGrill ? '8px 4px' : '5px')};
     }
     .table-btn.outside-empty {
       background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
@@ -7667,7 +7692,7 @@ function generateMobileHTML(serverURL) {
   <div class="container">
     <!-- PIN Giriş Ekranı - Kurumsal ve Profesyonel -->
     <div id="pinSection" class="pin-section">
-      <img src="${serverURL}/assets/login.png" alt="Login" class="login-image" onerror="this.style.display='none';">
+      <img src="${serverURL}/${isGeceDonercisi ? 'tenant.png' : 'assets/login.png'}" alt="Login" class="login-image" onerror="this.style.display='none';">
       <h2>Personel Girişi</h2>
       <p class="subtitle">Lütfen şifrenizi giriniz</p>
       <div class="pin-input-wrapper">
@@ -7703,8 +7728,8 @@ function generateMobileHTML(serverURL) {
         <span>Çıkış Yap</span>
       </button>
       
-      <!-- Masa Tipi Seçim Ekranı - Sadece Normal Mod için -->
-      ${!isSultanSomati && !isYakasGrill ? `
+      <!-- Masa Tipi Seçim Ekranı (İç/Dış) - Sadece Normal Mod için; Gece Dönercisi'nde gösterilmez -->
+      ${!isSultanSomati && !isYakasGrill && !isGeceDonercisi ? `
       <div id="tableTypeSelection" style="display: block; position: fixed; inset: 0; background: white; z-index: 1000; overflow-y: auto; display: flex; flex-direction: column; padding: 20px;">
         <!-- Çıkış Yap Butonu - Sadece bu ekranda görünsün -->
         <div style="position: fixed; top: 20px; right: 20px; z-index: 1001;">
@@ -7737,9 +7762,9 @@ function generateMobileHTML(serverURL) {
       </div>
       ` : ''}
       
-      <div id="tableSelection" style="display: ${isSultanSomati || isYakasGrill ? 'block' : 'none'};">
-        ${isSultanSomati || isYakasGrill ? `
-        <!-- Sultan Somatı / Yaka's Grill - Üst Header (Koyu Gri) -->
+      <div id="tableSelection" style="display: ${isSultanSomati || isYakasGrill || isGeceDonercisi ? 'block' : 'none'};">
+        ${isSultanSomati || isYakasGrill || isGeceDonercisi ? `
+        <!-- Sultan Somatı / Yaka's Grill / Gece Dönercisi - Üst Header (Koyu Gri) -->
         <div style="position: fixed; top: 0; left: 0; right: 0; height: 50px; background: #2d2d2d; z-index: 1000; display: flex; align-items: center; justify-content: space-between; padding: 0 15px;">
           <!-- Sol: Headphone İkonu -->
           <div style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">
@@ -7764,7 +7789,7 @@ function generateMobileHTML(serverURL) {
         </div>
         
         ${isSultanSomati ? `
-        <!-- Salon Sekmeleri (Beyaz, Yuvarlatılmış) - Sadece Sultan Somatı için -->
+        <!-- Salon Sekmeleri - Sultan Somatı -->
         <div id="salonTabsContainer" style="position: fixed; top: 50px; left: 0; right: 0; background: white; z-index: 999; padding: 12px 15px; overflow-x: auto; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
           <div style="display: flex; gap: 8px; min-width: max-content;">
             ${sultanSomatiSalons.map((salon, index) => `
@@ -7789,6 +7814,55 @@ function generateMobileHTML(serverURL) {
               onmouseout="if(!this.classList.contains('active')) { this.style.background='white'; }"
             >
               ${salon.name} (<span id="salonCount_${salon.id}">0</span>)
+            </button>
+            `).join('')}
+          </div>
+        </div>
+        ` : ''}
+        ${isGeceDonercisi ? `
+        <!-- Gece Dönercisi - Profesyonel üst bar (koyu, minimal) -->
+        <div id="geceHeaderBar" style="position: fixed; top: 0; left: 0; right: 0; height: 56px; background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%); z-index: 1000; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.25);">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 36px; height: 36px; border-radius: 10px; background: rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: center;">
+              <svg width="20" height="20" fill="none" stroke="rgba(255,255,255,0.9)" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/></svg>
+            </div>
+            <span style="font-size: 17px; font-weight: 700; color: rgba(255,255,255,0.95); letter-spacing: 0.3px;">Masalar</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <button onclick="loadData()" style="width: 40px; height: 40px; border-radius: 12px; background: rgba(255,255,255,0.08); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.14)'" onmouseout="this.style.background='rgba(255,255,255,0.08)'">
+              <svg width="20" height="20" fill="none" stroke="rgba(255,255,255,0.9)" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            </button>
+            <button onclick="showLogoutModal()" style="width: 40px; height: 40px; border-radius: 12px; background: rgba(255,255,255,0.08); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.14)'" onmouseout="this.style.background='rgba(255,255,255,0.08)'">
+              <svg width="20" height="20" fill="none" stroke="rgba(255,255,255,0.9)" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/></svg>
+            </button>
+          </div>
+        </div>
+        <!-- Gece Dönercisi - 6 kategori sekmeleri: Salon, Bahçe, Paket, TrendyolGO, Yemeksepeti, Migros Yemek (elit / modern) -->
+        <div id="geceCategoryTabsContainer" style="position: fixed; top: 56px; left: 0; right: 0; background: #f8fafc; z-index: 999; padding: 12px 14px; overflow-x: auto; white-space: nowrap; box-shadow: 0 2px 12px rgba(0,0,0,0.06); -webkit-overflow-scrolling: touch;">
+          <div style="display: flex; gap: 10px; min-width: max-content; padding-bottom: 2px;">
+            ${geceDonercisiCategories.map((cat, index) => `
+            <button 
+              id="salonTab_${cat.id}" 
+              onclick="selectSalon('${cat.id}')" 
+              class="salon-tab gece-tab"
+              style="
+                padding: 12px 18px; 
+                border: none; 
+                border-radius: 14px; 
+                background: ${index === 0 ? 'linear-gradient(135deg, #334155 0%, #475569 100%)' : '#fff'}; 
+                color: ${index === 0 ? '#fff' : '#475569'}; 
+                font-size: 13px; 
+                font-weight: 700; 
+                cursor: pointer; 
+                transition: all 0.25s ease; 
+                white-space: nowrap;
+                box-shadow: ${index === 0 ? '0 4px 14px rgba(51,65,85,0.35)' : '0 1px 3px rgba(0,0,0,0.08)'};
+                border: 1px solid ${index === 0 ? 'transparent' : '#e2e8f0'};
+              "
+              onmouseover="if(!this.classList.contains('active')) { this.style.background=this.classList.contains('active')?'linear-gradient(135deg, #334155 0%, #475569 100%)':'#f1f5f9'; this.style.color='#334155'; this.style.borderColor='#cbd5e1'; }"
+              onmouseout="if(!this.classList.contains('active')) { this.style.background='#fff'; this.style.color='#475569'; this.style.borderColor='#e2e8f0'; }"
+            >
+              <span style="margin-right: 6px; font-size: 15px;">${cat.icon}</span>${cat.name} <span id="salonCount_${cat.id}" style="opacity: 0.85; font-weight: 600;">0</span>
             </button>
             `).join('')}
           </div>
@@ -7821,9 +7895,9 @@ function generateMobileHTML(serverURL) {
         `}
         
         <!-- Masa Grid -->
-        <div class="table-grid" id="tablesGrid" style="margin-top: ${isSultanSomati ? '80px' : isYakasGrill ? '50px' : '0'}; margin-bottom: ${isSultanSomati || isYakasGrill ? '80px' : '20px'};"></div>
+        <div class="table-grid" id="tablesGrid" style="margin-top: ${isSultanSomati ? '80px' : isGeceDonercisi ? '130px' : isYakasGrill ? '50px' : '0'}; margin-bottom: ${(isSultanSomati || isYakasGrill || isGeceDonercisi) ? '80px' : '20px'};"></div>
         
-        ${isSultanSomati || isYakasGrill ? `
+        ${isSultanSomati || isYakasGrill || isGeceDonercisi ? `
         <!-- Alt Navigasyon Bar (Koyu Gri) -->
         <div id="bottomNavBar" style="position: fixed; bottom: 0; left: 0; right: 0; height: 60px; background: #2d2d2d; z-index: 1000; display: flex; align-items: center; justify-content: space-around; padding: 0 10px; box-shadow: 0 -2px 10px rgba(0,0,0,0.2);">
           <button onclick="showTablesView()" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: transparent; border: none; color: #fbbf24; cursor: pointer; padding: 8px; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
@@ -8407,7 +8481,9 @@ function generateMobileHTML(serverURL) {
     const packageTablesCount = ${packageTablesCount};
     const isSultanSomatiMode = ${isSultanSomati ? 'true' : 'false'};
     const isYakasGrillMode = ${isYakasGrill ? 'true' : 'false'};
+    const isGeceDonercisiMode = ${isGeceDonercisi ? 'true' : 'false'};
     const sultanSomatiSalons = ${isSultanSomati ? JSON.stringify(sultanSomatiSalons) : '[]'};
+    const geceDonercisiCategories = ${isGeceDonercisi ? JSON.stringify(geceDonercisiCategories) : '[]'};
     let selectedTable = null;
     let categories = [];
     let products = [];
@@ -8416,7 +8492,7 @@ function generateMobileHTML(serverURL) {
     let currentStaff = null;
     let socket = null;
     let tables = [];
-    let currentTableType = ${isSultanSomati ? `'disari'` : isYakasGrill ? `'masa'` : `'inside'`};
+    let currentTableType = ${isSultanSomati ? `'disari'` : isYakasGrill ? `'masa'` : isGeceDonercisi ? `'salon'` : `'inside'`};
     let orderNote = '';
     
     // PIN oturum yönetimi (1 saat)
@@ -8493,6 +8569,22 @@ function generateMobileHTML(serverURL) {
           if (tableSelection) tableSelection.style.display = 'block';
           const cart = document.getElementById('cart');
           if (cart) cart.style.display = 'block';
+        } else if (isGeceDonercisiMode) {
+          const tableSelection = document.getElementById('tableSelection');
+          if (tableSelection) tableSelection.style.display = 'block';
+          const cart = document.getElementById('cart');
+          if (cart) cart.style.display = 'block';
+          if (geceDonercisiCategories.length > 0) {
+            currentTableType = geceDonercisiCategories[0].id;
+            const firstTab = document.getElementById('salonTab_' + geceDonercisiCategories[0].id);
+            if (firstTab) {
+              firstTab.classList.add('active');
+              firstTab.style.background = 'linear-gradient(135deg, #334155 0%, #475569 100%)';
+              firstTab.style.color = '#fff';
+              firstTab.style.borderColor = 'transparent';
+              firstTab.style.boxShadow = '0 4px 14px rgba(51,65,85,0.35)';
+            }
+          }
         } else {
           const tableTypeSelection = document.getElementById('tableTypeSelection');
           if (tableTypeSelection) tableTypeSelection.style.display = 'flex';
@@ -8574,6 +8666,22 @@ function generateMobileHTML(serverURL) {
               if (tableSelection) tableSelection.style.display = 'block';
               const cart = document.getElementById('cart');
               if (cart) cart.style.display = 'block';
+            } else if (isGeceDonercisiMode) {
+              const tableSelection = document.getElementById('tableSelection');
+              if (tableSelection) tableSelection.style.display = 'block';
+              const cart = document.getElementById('cart');
+              if (cart) cart.style.display = 'block';
+              if (geceDonercisiCategories.length > 0) {
+                currentTableType = geceDonercisiCategories[0].id;
+                const firstTab = document.getElementById('salonTab_' + geceDonercisiCategories[0].id);
+                if (firstTab) {
+                  firstTab.classList.add('active');
+                  firstTab.style.background = 'linear-gradient(135deg, #334155 0%, #475569 100%)';
+                  firstTab.style.color = '#fff';
+                  firstTab.style.borderColor = 'transparent';
+                  firstTab.style.boxShadow = '0 4px 14px rgba(51,65,85,0.35)';
+                }
+              }
             } else {
               const tableTypeSelection = document.getElementById('tableTypeSelection');
               if (tableTypeSelection) tableTypeSelection.style.display = 'flex';
@@ -8613,8 +8721,7 @@ function generateMobileHTML(serverURL) {
             if (tableIndex !== -1) {
               tables[tableIndex].hasOrder = data.hasOrder;
               renderTables(); // Anında render et
-              // Sultan Somatı için salon sayılarını güncelle
-              if (isSultanSomatiMode) {
+              if (isSultanSomatiMode || isGeceDonercisiMode) {
                 updateSalonCounts();
               }
             }
@@ -8735,7 +8842,7 @@ function generateMobileHTML(serverURL) {
     
     // Geri dönüş butonu (Normal Mod için)
     function goBackToTypeSelection() {
-      if (isSultanSomatiMode || isYakasGrillMode) return; // Sultan Somatı ve Yaka's Grill için bu fonksiyon kullanılmaz
+      if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return; // Özel tenant modları için geri dönüş yok
       const tableSelection = document.getElementById('tableSelection');
       if (tableSelection) tableSelection.style.display = 'none';
       const tableTypeSelection = document.getElementById('tableTypeSelection');
@@ -8756,42 +8863,54 @@ function generateMobileHTML(serverURL) {
       renderTables();
     }
     
-    // Sultan Somatı için salon seçimi
+    // Sultan Somatı / Gece Dönercisi için salon veya kategori seçimi
     function selectSalon(salonId) {
-      if (!isSultanSomatiMode) return;
+      if (!isSultanSomatiMode && !isGeceDonercisiMode) return;
       currentTableType = salonId;
-      // Tüm salon sekmelerini güncelle
       document.querySelectorAll('.salon-tab').forEach(tab => {
         tab.classList.remove('active');
         tab.style.background = 'white';
         tab.style.boxShadow = 'none';
+        if (isGeceDonercisiMode) {
+          tab.style.color = '#475569';
+          tab.style.borderColor = '#e2e8f0';
+        }
       });
       const selectedTab = document.getElementById('salonTab_' + salonId);
       if (selectedTab) {
         selectedTab.classList.add('active');
-        selectedTab.style.background = '#e5e5e5';
-        selectedTab.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+        selectedTab.style.background = isGeceDonercisiMode ? 'linear-gradient(135deg, #334155 0%, #475569 100%)' : '#e5e5e5';
+        selectedTab.style.color = isGeceDonercisiMode ? '#fff' : '';
+        selectedTab.style.borderColor = isGeceDonercisiMode ? 'transparent' : '';
+        selectedTab.style.boxShadow = isGeceDonercisiMode ? '0 4px 14px rgba(51,65,85,0.35)' : '0 2px 4px rgba(0,0,0,0.1)';
       }
       renderTables();
       updateSalonCounts();
     }
     
-    // Salon sekmelerindeki sipariş sayılarını güncelle
+    // Salon / kategori sekmelerindeki sipariş sayılarını güncelle
     function updateSalonCounts() {
-      if (!isSultanSomatiMode) return;
-      sultanSomatiSalons.forEach(salon => {
-        const salonTables = tables.filter(t => t.id && t.id.startsWith('salon-' + salon.id + '-'));
-        const occupiedCount = salonTables.filter(t => t.hasOrder).length;
-        const countEl = document.getElementById('salonCount_' + salon.id);
-        if (countEl) {
-          countEl.textContent = occupiedCount;
-        }
-      });
+      if (isSultanSomatiMode) {
+        sultanSomatiSalons.forEach(salon => {
+          const salonTables = tables.filter(t => t.id && t.id.startsWith('salon-' + salon.id + '-'));
+          const occupiedCount = salonTables.filter(t => t.hasOrder).length;
+          const countEl = document.getElementById('salonCount_' + salon.id);
+          if (countEl) countEl.textContent = occupiedCount;
+        });
+      }
+      if (isGeceDonercisiMode && geceDonercisiCategories.length > 0) {
+        geceDonercisiCategories.forEach(cat => {
+          const catTables = tables.filter(t => t.type === cat.id);
+          const occupiedCount = catTables.filter(t => t.hasOrder).length;
+          const countEl = document.getElementById('salonCount_' + cat.id);
+          if (countEl) countEl.textContent = occupiedCount;
+        });
+      }
     }
     
     // Masa tipi seçimi (masalar ekranında - Normal Mod için)
     function selectTableType(type) {
-      if (isSultanSomatiMode || isYakasGrillMode) return; // Sultan Somatı ve Yaka's Grill için bu fonksiyon kullanılmaz
+      if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return; // Özel tenant modları için salon/kategori sekmeleri kullanılır
       currentTableType = type;
       document.querySelectorAll('.table-type-tab').forEach(tab => {
         tab.classList.remove('active');
@@ -8814,11 +8933,9 @@ function generateMobileHTML(serverURL) {
         tables = await tablesRes.json();
         renderTables();
         renderCategories();
-        // Sultan Somatı için salon sayılarını güncelle
-        if (isSultanSomatiMode) {
+        if (isSultanSomatiMode || isGeceDonercisiMode) {
           updateSalonCounts();
         }
-        // Yaka's Grill için özel işlem yok, direkt masalar gösterilecek
       } catch (error) {
         console.error('Veri yükleme hatası:', error);
         document.getElementById('tablesGrid').innerHTML = '<div class="loading">❌ Bağlantı hatası</div>';
@@ -8829,11 +8946,13 @@ function generateMobileHTML(serverURL) {
       const grid = document.getElementById('tablesGrid');
       if (!grid) return;
       
-      // Sultan Somatı için salon ID'sine göre filtrele, Yaka's Grill için masa ID'sine göre filtrele, normal mod için type'a göre filtrele
+      // Sultan Somatı: salon ID; Yaka's Grill: masa-; Gece Dönercisi: kategori type; normal: currentTableType
       const filteredTables = isSultanSomatiMode 
         ? tables.filter(t => t.id && t.id.startsWith('salon-') && t.id.includes('-' + currentTableType + '-'))
         : isYakasGrillMode
         ? tables.filter(t => t.id && t.id.startsWith('masa-'))
+        : isGeceDonercisiMode
+        ? tables.filter(t => t.type === currentTableType)
         : tables.filter(t => t.type === currentTableType);
       
       // Normal masalar (paket olmayanlar)
@@ -8899,6 +9018,19 @@ function generateMobileHTML(serverURL) {
             '</button>';
           }
           
+          // Gece Dönercisi: 5x6 dağılım, büyük masa kartları (30 masa)
+          if (isGeceDonercisiMode && table.id && table.type) {
+            const displayText = table.name || (table.type + ' ' + table.number);
+            const bgColor = table.hasOrder ? 'linear-gradient(145deg, #fef2f2 0%, #fee2e2 100%)' : 'linear-gradient(145deg, #ffffff 0%, #f8fafc 100%)';
+            const borderColor = selectedClass ? '#334155' : (table.hasOrder ? '#dc2626' : '#e2e8f0');
+            const borderWidth = selectedClass ? '2px' : '1px';
+            const textColor = table.hasOrder ? '#991b1b' : '#334155';
+            const boxShadow = selectedClass ? '0 4px 14px rgba(51,65,85,0.2)' : (table.hasOrder ? '0 2px 8px rgba(220,38,38,0.15)' : '0 2px 6px rgba(0,0,0,0.06)');
+            return '<button class="table-btn' + hasOrderClass + selectedClass + '" onclick="selectTable(' + tableIdStr + ', \\'' + nameStr + '\\', \\'' + typeStr + '\\')" style="background: ' + bgColor + '; border: ' + borderWidth + ' solid ' + borderColor + '; border-radius: 14px; padding: 14px 10px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: ' + textColor + '; aspect-ratio: 1; min-height: 88px; transition: all 0.25s ease; cursor: pointer; box-shadow: ' + boxShadow + '; letter-spacing: 0.2px;" onmouseover="if(!this.classList.contains(\\'selected\\')) { this.style.transform=\\'scale(1.03)\\'; this.style.boxShadow=\\'0 6px 18px rgba(0,0,0,0.12)\\'; }" onmouseout="if(!this.classList.contains(\\'selected\\')) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'0 2px 6px rgba(0,0,0,0.06)\\'; }">' +
+              '<div style="text-align: center; line-height: 1.3;">' + displayText + '</div>' +
+            '</button>';
+          }
+          
           // Normal mod için eski tasarım
           // Masa numaralandırması: İç Masa 1, Dış Masa 1 gibi
           const tableTypeLabel = table.type === 'inside' ? 'İç Masa' : 'Dış Masa';
@@ -8918,7 +9050,7 @@ function generateMobileHTML(serverURL) {
       }
       
       // PAKET Başlığı - Premium ve Modern (Sadece normal mod için)
-      if (packageTables.length > 0 && !isSultanSomatiMode && !isYakasGrillMode) {
+      if (packageTables.length > 0 && !isSultanSomatiMode && !isYakasGrillMode && !isGeceDonercisiMode) {
         html += '<div style="grid-column: 1 / -1; margin-top: 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center;">';
         html += '<div style="display: flex; align-items: center; gap: 8px; padding: 10px 20px; background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 30%, ${primaryLight}CC 70%, ${primaryLight}DD 100%); border-radius: 16px; box-shadow: 0 4px 16px ${rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.35)` : 'rgba(249, 115, 22, 0.35)'}, 0 0 0 1px rgba(255, 255, 255, 0.2) inset; position: relative; overflow: hidden;">';
         html += '<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%); pointer-events: none;"></div>';
@@ -8960,8 +9092,7 @@ function generateMobileHTML(serverURL) {
       
       grid.innerHTML = html;
       
-      // Sultan Somatı için salon sayılarını güncelle
-      if (isSultanSomatiMode) {
+      if (isSultanSomatiMode || isGeceDonercisiMode) {
         updateSalonCounts();
       }
     }
@@ -9184,16 +9315,14 @@ function generateMobileHTML(serverURL) {
       // Alt navigasyon bar'ı göster (masa görünümüne dönüldüğünde)
       const bottomNavBar = document.getElementById('bottomNavBar');
       if (bottomNavBar) bottomNavBar.style.display = 'flex';
-      // Sultan Somatı ve Yaka's Grill için direkt masa ekranını göster, normal mod için seçim ekranını göster
-      if (isSultanSomatiMode || isYakasGrillMode) {
+      // Sultan Somatı, Yaka's Grill ve Gece Dönercisi için direkt masa ekranını göster (6 kategori + 30 masa); normal mod için iç/dış seçim ekranı
+      if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) {
         const tableSelection = document.getElementById('tableSelection');
         if (tableSelection) tableSelection.style.display = 'block';
-        // Sultan Somatı için bottom nav aktif durumunu güncelle
         if (isSultanSomatiMode) {
           updateBottomNavActive('tables');
         }
-        // Yaka's Grill için masaları yeniden render et
-        if (isYakasGrillMode) {
+        if (isYakasGrillMode || isGeceDonercisiMode) {
           renderTables();
         }
       } else {
@@ -11171,6 +11300,7 @@ function startAPIServer() {
     const tenantId = tenantInfo?.tenantId || null;
     const isSultanSomati = tenantId === 'TENANT-1766611377865';
     const isYakasGrill = tenantId === 'TENANT-1766340222641';
+    const isGeceDonercisi = tenantId === 'TENANT-1769602125250';
     
     // Sultan Somatı için salon yapısı
     const sultanSomatiSalons = [
@@ -11182,9 +11312,37 @@ function startAPIServer() {
       { id: 'ask-odasi', name: 'Aşk Odası', count: 1, icon: '💕' }
     ];
     
+    const geceDonercisiCategories = [
+      { id: 'salon', name: 'Salon', count: 30, icon: '🪑' },
+      { id: 'bahce', name: 'Bahçe', count: 30, icon: '🌿' },
+      { id: 'paket', name: 'Paket', count: 30, icon: '📦' },
+      { id: 'trendyolgo', name: 'TrendyolGO', count: 30, icon: '🛒' },
+      { id: 'yemeksepeti', name: 'Yemeksepeti', count: 30, icon: '🍽️' },
+      { id: 'migros-yemek', name: 'Migros Yemek', count: 30, icon: '🛍️' }
+    ];
+    
     const tables = [];
     
-    if (isSultanSomati) {
+    if (isGeceDonercisi) {
+      geceDonercisiCategories.forEach(cat => {
+        for (let i = 1; i <= cat.count; i++) {
+          const tableId = `${cat.id}-${i}`;
+          const hasPendingOrder = (db.tableOrders || []).some(
+            o => o.table_id === tableId && o.status === 'pending'
+          );
+          tables.push({
+            id: tableId,
+            number: i,
+            type: cat.id,
+            categoryId: cat.id,
+            categoryName: cat.name,
+            name: `${cat.name} ${i}`,
+            icon: cat.icon,
+            hasOrder: hasPendingOrder
+          });
+        }
+      });
+    } else if (isSultanSomati) {
       // Sultan Somatı için salon bazlı masalar
       sultanSomatiSalons.forEach(salon => {
         for (let i = 1; i <= salon.count; i++) {
@@ -11458,21 +11616,19 @@ function startAPIServer() {
         return res.status(400).json({ success: false, error: 'Bu ürünün kategorisine yazıcı atanmamış' });
       }
 
-      // İptal açıklaması kontrolü - açıklama yoksa fiş yazdırma, sadece açıklama iste
+      // Gece Dönercisi: iptal açıklaması zorunlu değil
       let { cancelReason } = req.body;
+      const tenantIdApi = tenantManager.getCurrentTenantInfo()?.tenantId || null;
+      const isGeceDonercisiApi = tenantIdApi === 'TENANT-1769602125250';
       const hasCancelReason = cancelReason && cancelReason.trim() !== '';
-      
-      if (!hasCancelReason) {
-        // Açıklama yok, fiş yazdırma - sadece açıklama iste
+      if (!isGeceDonercisiApi && !hasCancelReason) {
         return res.status(200).json({ 
           success: false, 
           requiresReason: true,
           message: 'Lütfen iptal açıklaması girin.' 
         });
       }
-      
-      // Açıklama var, işleme devam et - fiş yazdır
-      cancelReason = cancelReason.trim();
+      cancelReason = hasCancelReason ? cancelReason.trim() : '';
       
       // İptal fişi yazdır (sadece açıklama varsa) - arka planda
       const now = new Date();
@@ -11770,10 +11926,12 @@ function startAPIServer() {
 
   // Mobil personel arayüzü için static dosyalar
   appExpress.get('/mobile-manifest.json', (req, res) => {
-    // Manifest'i dinamik olarak oluştur - icon path'leri tam URL olmalı
     const protocol = req.protocol || 'http';
     const host = req.get('host') || 'localhost:3000';
     const baseURL = `${protocol}://${host}`;
+    const tenantInfo = tenantManager.getCurrentTenantInfo();
+    const isGeceDonercisi = tenantInfo?.tenantId === 'TENANT-1769602125250';
+    const iconPath = isGeceDonercisi ? 'tenant.png' : 'mobilpersonel.png';
     
     const manifest = {
       "name": `${tenantManager.getBusinessName()} Mobil Sipariş`,
@@ -11781,22 +11939,12 @@ function startAPIServer() {
       "description": `${tenantManager.getBusinessName()} Satış Sistemi - Mobil Personel Arayüzü`,
       "start_url": `${baseURL}/mobile`,
       "display": "standalone",
-      "background_color": "#f97316", // tenantManager.getCurrentTenantInfo()?.themeColor || "#f97316",
-      "theme_color": "#f97316", // tenantManager.getCurrentTenantInfo()?.themeColor || "#f97316",
+      "background_color": "#f97316",
+      "theme_color": "#f97316",
       "orientation": "portrait",
       "icons": [
-        {
-          "src": `${baseURL}/mobilpersonel.png`,
-          "sizes": "512x512",
-          "type": "image/png",
-          "purpose": "any maskable"
-        },
-        {
-          "src": `${baseURL}/mobilpersonel.png`,
-          "sizes": "192x192",
-          "type": "image/png",
-          "purpose": "any maskable"
-        }
+        { "src": `${baseURL}/${iconPath}`, "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+        { "src": `${baseURL}/${iconPath}`, "sizes": "192x192", "type": "image/png", "purpose": "any maskable" }
       ]
     };
     
@@ -11807,6 +11955,17 @@ function startAPIServer() {
   // Mobil personel icon'u - public klasöründen serve et
   appExpress.get('/mobilpersonel.png', (req, res) => {
     const iconPath = path.join(__dirname, '..', 'public', 'mobilpersonel.png');
+    if (fs.existsSync(iconPath)) {
+      res.setHeader('Content-Type', 'image/png');
+      res.sendFile(iconPath);
+    } else {
+      res.status(404).send('Icon not found');
+    }
+  });
+
+  // Gece Dönercisi tenant logosu - public/tenant.png
+  appExpress.get('/tenant.png', (req, res) => {
+    const iconPath = path.join(__dirname, '..', 'public', 'tenant.png');
     if (fs.existsSync(iconPath)) {
       res.setHeader('Content-Type', 'image/png');
       res.sendFile(iconPath);
