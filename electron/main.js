@@ -8703,14 +8703,6 @@ function generateMobileHTML(serverURL) {
         <p style="margin: 0 0 18px 0; font-size: 15px; color: #6b7280; font-weight: 600; text-align: center;" id="donerProductName"></p>
         
         <div style="margin-bottom: 18px;">
-          <div style="font-size: 13px; font-weight: 800; color: #374151; margin-bottom: 10px;">Ekmek / Lavaş</div>
-          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
-            <button id="donerBreadEkmek" onclick="setDonerBread('Ekmek')" style="padding: 14px 16px; background: white; border: 2px solid ${primary}; border-radius: 16px; font-size: 16px; font-weight: 800; color: ${primary}; cursor: pointer; transition: all 0.2s;">Ekmek</button>
-            <button id="donerBreadLavas" onclick="setDonerBread('Lavaş')" style="padding: 14px 16px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 16px; font-weight: 800; color: #111827; cursor: pointer; transition: all 0.2s;">Lavaş</button>
-          </div>
-        </div>
-        
-        <div style="margin-bottom: 18px;">
           <div style="font-size: 13px; font-weight: 800; color: #374151; margin-bottom: 10px;">İçerik</div>
           <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
             <button id="donerSogansizBtn" onclick="toggleDonerOption('sogansiz')" style="padding: 14px 16px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 15px; font-weight: 800; color: #111827; cursor: pointer; transition: all 0.2s;">Soğansız</button>
@@ -10691,13 +10683,11 @@ function generateMobileHTML(serverURL) {
     
     // Gece Dönercisi: Tavuk Döner / Et Döner için seçim modalı
     let pendingDonerProduct = null;
-    let donerBread = 'Ekmek';
     let donerSogansiz = false;
     let donerDomatessiz = false;
     
     function showDonerOptionsModal(productId, name, price) {
       pendingDonerProduct = { id: productId, name: name, price: price };
-      donerBread = 'Ekmek';
       donerSogansiz = false;
       donerDomatessiz = false;
       const nameEl = document.getElementById('donerProductName');
@@ -10711,11 +10701,6 @@ function generateMobileHTML(serverURL) {
       pendingDonerProduct = null;
     }
     
-    function setDonerBread(bread) {
-      donerBread = bread;
-      updateDonerButtons();
-    }
-    
     function toggleDonerOption(which) {
       if (which === 'sogansiz') donerSogansiz = !donerSogansiz;
       if (which === 'domatessiz') donerDomatessiz = !donerDomatessiz;
@@ -10723,17 +10708,6 @@ function generateMobileHTML(serverURL) {
     }
     
     function updateDonerButtons() {
-      const ekmekBtn = document.getElementById('donerBreadEkmek');
-      const lavasBtn = document.getElementById('donerBreadLavas');
-      if (ekmekBtn && lavasBtn) {
-        if (donerBread === 'Ekmek') {
-          ekmekBtn.style.borderColor = themePrimary; ekmekBtn.style.color = themePrimary; ekmekBtn.style.background = 'white';
-          lavasBtn.style.borderColor = '#e5e7eb'; lavasBtn.style.color = '#111827'; lavasBtn.style.background = 'linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)';
-        } else {
-          lavasBtn.style.borderColor = themePrimary; lavasBtn.style.color = themePrimary; lavasBtn.style.background = 'white';
-          ekmekBtn.style.borderColor = '#e5e7eb'; ekmekBtn.style.color = '#111827'; ekmekBtn.style.background = 'linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)';
-        }
-      }
       const soganBtn = document.getElementById('donerSogansizBtn');
       const domatesBtn = document.getElementById('donerDomatessizBtn');
       const applyToggleStyle = (btn, active) => {
@@ -10764,9 +10738,9 @@ function generateMobileHTML(serverURL) {
         }
       }
       
-      const parts = [donerBread, donerSogansiz ? 'Soğansız' : null, donerDomatessiz ? 'Domatessiz' : null].filter(Boolean);
+      const parts = [donerSogansiz ? 'Soğansız' : null, donerDomatessiz ? 'Domatessiz' : null].filter(Boolean);
       const donerOptionsText = parts.join(' • ');
-      const donerKey = donerBread + '|' + (donerSogansiz ? 'S' : 's') + '|' + (donerDomatessiz ? 'D' : 'd');
+      const donerKey = (donerSogansiz ? 'S' : 's') + '|' + (donerDomatessiz ? 'D' : 'd');
       
       const existing = cart.find(item => item.id === pendingDonerProduct.id && item.donerKey === donerKey);
       if (existing) {

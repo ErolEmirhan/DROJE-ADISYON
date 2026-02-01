@@ -47,6 +47,27 @@
     @apply backdrop-blur-md bg-white/90 border border-slate-200 rounded-3xl p-6 cursor-pointer transition-all duration-200 shadow-md hover:shadow-xl active:scale-95;
   }
 
+  /* Gece Dönercisi: isimler tam görünsün (kırpma yok) */
+  .product-name-gece {
+    font-weight: 900;
+    color: #0f172a;
+    letter-spacing: -0.2px;
+    line-height: 1.15;
+    font-size: clamp(16px, 1.05vw, 22px);
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    word-break: break-word;
+  }
+
+  .product-price-gece {
+    font-weight: 950;
+    color: #0f172a;
+    letter-spacing: -0.6px;
+    font-size: clamp(18px, 1.2vw, 26px);
+    line-height: 1;
+  }
+
   .cart-item {
     @apply flex items-center justify-between p-4 rounded-xl bg-white border border-purple-100 mb-2 transition-all hover:shadow-md;
   }

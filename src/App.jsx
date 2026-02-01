@@ -358,9 +358,9 @@ function App() {
       setShowDonerOptionsModal(false);
       return;
     }
-    const parts = [opts.bread, opts.sogansiz ? 'Soğansız' : null, opts.domatessiz ? 'Domatessiz' : null].filter(Boolean);
+    const parts = [opts.sogansiz ? 'Soğansız' : null, opts.domatessiz ? 'Domatessiz' : null].filter(Boolean);
     const donerOptionsText = parts.join(' • ');
-    const donerKey = `${opts.bread}|${opts.sogansiz ? 'S' : 's'}|${opts.domatessiz ? 'D' : 'd'}`;
+    const donerKey = `${opts.sogansiz ? 'S' : 's'}|${opts.domatessiz ? 'D' : 'd'}`;
 
     setCart((prevCart) => {
       const existingItem = prevCart.find(
@@ -1196,6 +1196,7 @@ function App() {
               products={filteredProducts}
               onAddToCart={addToCart}
               tenantId={tenantId}
+              categories={categories}
             />
           </div>
 

@@ -3,7 +3,6 @@ import { getThemeColors } from '../utils/themeUtils';
 
 const DonerOptionsModal = ({ productName, themeColor = '#f97316', onClose, onConfirm }) => {
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
-  const [bread, setBread] = useState('Ekmek'); // 'Ekmek' | 'Lavaş'
   const [sogansiz, setSogansiz] = useState(false);
   const [domatessiz, setDomatessiz] = useState(false);
 
@@ -28,32 +27,6 @@ const DonerOptionsModal = ({ productName, themeColor = '#f97316', onClose, onCon
         </div>
 
         <div className="p-6 space-y-5">
-          <div>
-            <div className="text-sm font-extrabold text-gray-800 mb-2">Ekmek / Lavaş</div>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setBread('Ekmek')}
-                className={`py-3 rounded-2xl border font-extrabold transition-all ${
-                  bread === 'Ekmek' ? 'bg-white shadow-md' : 'bg-gray-50 hover:bg-white'
-                }`}
-                style={bread === 'Ekmek' ? { borderColor: theme.primary500, color: theme.primary700 } : { borderColor: '#e5e7eb', color: '#111827' }}
-              >
-                Ekmek
-              </button>
-              <button
-                type="button"
-                onClick={() => setBread('Lavaş')}
-                className={`py-3 rounded-2xl border font-extrabold transition-all ${
-                  bread === 'Lavaş' ? 'bg-white shadow-md' : 'bg-gray-50 hover:bg-white'
-                }`}
-                style={bread === 'Lavaş' ? { borderColor: theme.primary500, color: theme.primary700 } : { borderColor: '#e5e7eb', color: '#111827' }}
-              >
-                Lavaş
-              </button>
-            </div>
-          </div>
-
           <div>
             <div className="text-sm font-extrabold text-gray-800 mb-2">İçerik</div>
             <div className="grid grid-cols-2 gap-3">
@@ -90,7 +63,7 @@ const DonerOptionsModal = ({ productName, themeColor = '#f97316', onClose, onCon
             </button>
             <button
               type="button"
-              onClick={() => onConfirm?.({ bread, sogansiz, domatessiz })}
+              onClick={() => onConfirm?.({ sogansiz, domatessiz })}
               className="flex-1 py-3 rounded-2xl text-white font-extrabold shadow-md"
               style={{ backgroundImage: theme.gradient.main }}
             >
