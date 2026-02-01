@@ -1,22 +1,45 @@
 import React, { useMemo } from 'react';
 import { getThemeColors } from '../utils/themeUtils';
+import { isGeceDonercisi } from '../utils/sultanSomatTables';
 
-const CategoryPanel = ({ categories, selectedCategory, onSelectCategory, themeColor = '#f97316' }) => {
+const CategoryPanel = ({ categories, selectedCategory, onSelectCategory, themeColor = '#f97316', tenantId = null, onCariMaliyetClick = null }) => {
   // Tema renklerini hesapla
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
+  const isGeceDonercisiMode = tenantId && isGeceDonercisi(tenantId);
   return (
     <div className="mb-4">
       <div className="mb-3 pb-2 relative">
         <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full shadow-sm" style={{ backgroundImage: theme.gradient.horizontal }}></div>
-        <div className="flex items-center space-x-2">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center shadow-md" style={{ backgroundImage: theme.gradient.main }}>
-            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-            </svg>
-          </div>
-          <h2 className="text-lg font-bold bg-clip-text text-transparent" style={{ backgroundImage: theme.gradient.main }}>
+        <div className="flex items-center gap-2 w-full">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center shadow-md" style={{ backgroundImage: theme.gradient.main }}>
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+              </svg>
+            </div>
+            <h2 className="text-lg font-bold bg-clip-text text-transparent truncate" style={{ backgroundImage: theme.gradient.main }}>
               Kategoriler
             </h2>
+          </div>
+
+          {isGeceDonercisiMode && (
+            <button
+              type="button"
+              onClick={onCariMaliyetClick || undefined}
+              className="ml-auto px-4 py-2 rounded-xl text-xs font-black tracking-widest shadow-lg transition-all border border-white/20 hover:shadow-xl active:scale-[0.99] inline-flex items-center gap-2"
+              style={{
+                backgroundImage: theme.gradient.main,
+                color: '#fff',
+                boxShadow: `0 12px 26px ${theme.primary700}2A, 0 0 0 1px rgba(255,255,255,0.14) inset`,
+              }}
+              title="Cari Maliyet"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m3-9H9" />
+              </svg>
+              CARİ MAALİYET
+            </button>
+          )}
         </div>
       </div>
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10 gap-2">

@@ -446,6 +446,32 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       }, 1000);
     } else {
       // Normal masa için ödeme yöntemi seçimi modal'ı göster
+      const confirmPaymentMethodIfNeeded = (method) => {
+        if (!isGeceDonercisiMode || (method !== 'Nakit' && method !== 'Kredi Kartı')) return Promise.resolve(true);
+        return new Promise((resolveConfirm) => {
+          const overlay = document.createElement('div');
+          overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[2500]';
+          overlay.innerHTML = `
+            <div class="bg-white rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl border border-gray-200">
+              <div class="text-base font-extrabold text-gray-900 mb-1">Emin misiniz?</div>
+              <div class="text-sm text-gray-600 mb-4">Ödeme yöntemi: <span class="font-bold text-gray-900">${method}</span></div>
+              <div class="flex gap-3">
+                <button id="noBtn" class="flex-1 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-800 font-bold transition-all">Vazgeç</button>
+                <button id="yesBtn" class="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 rounded-xl text-white font-extrabold transition-all shadow-md">Evet</button>
+              </div>
+            </div>
+          `;
+          document.body.appendChild(overlay);
+          const cleanup = (val) => {
+            if (document.body.contains(overlay)) document.body.removeChild(overlay);
+            resolveConfirm(val);
+          };
+          overlay.querySelector('#yesBtn').onclick = () => cleanup(true);
+          overlay.querySelector('#noBtn').onclick = () => cleanup(false);
+          overlay.onclick = (e) => e.target === overlay && cleanup(false);
+        });
+      };
+
       paymentMethod = await new Promise((resolve) => {
       const modal = document.createElement('div');
       modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
@@ -480,12 +506,16 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       
       document.body.appendChild(modal);
       
-      modal.querySelector('#cashBtn').onclick = () => {
+      modal.querySelector('#cashBtn').onclick = async () => {
+        const ok = await confirmPaymentMethodIfNeeded('Nakit');
+        if (!ok) return;
         document.body.removeChild(modal);
         resolve('Nakit');
       };
       
-      modal.querySelector('#cardBtn').onclick = () => {
+      modal.querySelector('#cardBtn').onclick = async () => {
+        const ok = await confirmPaymentMethodIfNeeded('Kredi Kartı');
+        if (!ok) return;
         document.body.removeChild(modal);
         resolve('Kredi Kartı');
       };
@@ -1161,6 +1191,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
           order={selectedOrder}
           items={orderItems}
           totalAmount={selectedOrder.total_amount}
+          tenantId={tenantId}
           onClose={() => {
             setShowPartialPaymentModal(false);
             setShowModal(true);

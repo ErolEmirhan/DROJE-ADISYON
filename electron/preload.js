@@ -106,6 +106,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Tenant Management API
   setTenantInfo: (tenantInfo) => ipcRenderer.invoke('set-tenant-info', tenantInfo),
   getTenantInfo: () => ipcRenderer.invoke('get-tenant-info'),
+  // Gece Dönercisi - Şube seçimi (main process'e aktar)
+  setGeceBranchSelection: (payload) => ipcRenderer.invoke('set-gece-branch-selection', payload),
   getBusinessName: () => ipcRenderer.invoke('get-business-name'),
   onTenantSuspended: (callback) => {
     console.log('🔧 preload.js: onTenantSuspended listener kuruluyor...');

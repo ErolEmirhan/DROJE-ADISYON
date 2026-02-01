@@ -17,6 +17,11 @@ import ExitSplash from './components/ExitSplash';
 import UpdateModal from './components/UpdateModal';
 import ExpenseModal from './components/ExpenseModal';
 import LauncherClient from './components/LauncherClient';
+import CariMaliyetModal from './components/CariMaliyetModal';
+import DonerOptionsModal from './components/DonerOptionsModal';
+import BranchSelectModal from './components/BranchSelectModal';
+import { getGeceSelectedBranch, getOrCreateGeceDeviceId, setGeceSelectedBranch } from './utils/geceDonercisiBranchSelection';
+import { upsertDeviceBranchSelection } from './utils/geceDonercisiMasalarFirestore';
 
 function App() {
   const [showLauncher, setShowLauncher] = useState(true);
@@ -51,6 +56,11 @@ function App() {
   const [pendingOnionProduct, setPendingOnionProduct] = useState(null);
   const [showPortionModal, setShowPortionModal] = useState(false);
   const [pendingPortionProduct, setPendingPortionProduct] = useState(null);
+  const [showCariMaliyetModal, setShowCariMaliyetModal] = useState(false);
+  const [showDonerOptionsModal, setShowDonerOptionsModal] = useState(false);
+  const [pendingDonerProduct, setPendingDonerProduct] = useState(null);
+  const [showBranchSelectModal, setShowBranchSelectModal] = useState(false);
+  const [selectedBranch, setSelectedBranch] = useState(() => getGeceSelectedBranch());
   const searchInputRef = useRef(null);
   const triggerRoleSplash = (role) => {
     setActiveRoleSplash(role);
@@ -88,6 +98,37 @@ function App() {
   
   // Tema renklerini hesapla
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
+  const isGeceDonercisiMode = tenantId && isGeceDonercisi(tenantId);
+
+  const getActiveBranchForGece = () => {
+    // Şube seçimi Settings'ten değiştirilebildiği için her işlem anında localStorage'tan oku
+    return getGeceSelectedBranch();
+  };
+
+  // SettingsModal içinde şube değiştiğinde App state'ini güncelle
+  useEffect(() => {
+    const handler = () => {
+      const b = getGeceSelectedBranch();
+      setSelectedBranch(b);
+      if (window.electronAPI && window.electronAPI.setGeceBranchSelection && isGeceDonercisiMode && b) {
+        window.electronAPI.setGeceBranchSelection({ branch: b, deviceId: getOrCreateGeceDeviceId() }).catch(() => {});
+      }
+    };
+    window.addEventListener('gece-branch-changed', handler);
+    return () => window.removeEventListener('gece-branch-changed', handler);
+  }, [isGeceDonercisiMode]);
+
+  // Gece Dönercisi: cihaz bazlı şube seçimi (tek seferlik zorunlu popup)
+  useEffect(() => {
+    if (!tenantId || !isGeceDonercisiMode) return;
+    const existing = getGeceSelectedBranch();
+    setSelectedBranch(existing);
+    if (!existing) {
+      setShowBranchSelectModal(true);
+    } else if (window.electronAPI && window.electronAPI.setGeceBranchSelection) {
+      window.electronAPI.setGeceBranchSelection({ branch: existing, deviceId: getOrCreateGeceDeviceId() }).catch(() => {});
+    }
+  }, [tenantId, isGeceDonercisiMode]);
   
   // Debug: Tenant bilgilerini kontrol et
   useEffect(() => {
@@ -287,18 +328,67 @@ function App() {
         productPrice = product.migros_yemek_price;
       }
     }
+
+    // Gece Dönercisi: Tavuk Döner / Et Döner kategorileri için özel seçim modalı
+    if (tenantId && isGeceDonercisi(tenantId)) {
+      const cat = categories.find((c) => c.id === product.category_id);
+      const catName = (cat?.name || '').toLowerCase();
+      if (catName.includes('tavuk döner') || catName.includes('et döner')) {
+        setPendingDonerProduct({ ...product, price: productPrice });
+        setShowDonerOptionsModal(true);
+        return;
+      }
+    }
     
     setCart(prevCart => {
-      const existingItem = prevCart.find(item => item.id === product.id && !item.onionOption && !item.portion);
+      const existingItem = prevCart.find(item => item.id === product.id && !item.onionOption && !item.portion && !item.donerKey);
       if (existingItem) {
         return prevCart.map(item =>
-          item.id === product.id && !item.onionOption && !item.portion
+          item.id === product.id && !item.onionOption && !item.portion && !item.donerKey
             ? { ...item, quantity: item.quantity + 1 }
             : item
         );
       }
       return [...prevCart, { ...product, price: productPrice, quantity: 1 }];
     });
+  };
+
+  const handleDonerOptionsConfirm = (opts) => {
+    if (!pendingDonerProduct) {
+      setShowDonerOptionsModal(false);
+      return;
+    }
+    const parts = [opts.bread, opts.sogansiz ? 'Soğansız' : null, opts.domatessiz ? 'Domatessiz' : null].filter(Boolean);
+    const donerOptionsText = parts.join(' • ');
+    const donerKey = `${opts.bread}|${opts.sogansiz ? 'S' : 's'}|${opts.domatessiz ? 'D' : 'd'}`;
+
+    setCart((prevCart) => {
+      const existingItem = prevCart.find(
+        (item) =>
+          item.id === pendingDonerProduct.id &&
+          !item.onionOption &&
+          !item.portion &&
+          item.donerKey === donerKey
+      );
+      if (existingItem) {
+        return prevCart.map((item) =>
+          item.id === pendingDonerProduct.id && item.donerKey === donerKey ? { ...item, quantity: item.quantity + 1 } : item
+        );
+      }
+      return [
+        ...prevCart,
+        {
+          ...pendingDonerProduct,
+          quantity: 1,
+          donerKey,
+          donerOptions: opts,
+          donerOptionsText,
+        },
+      ];
+    });
+
+    setShowDonerOptionsModal(false);
+    setPendingDonerProduct(null);
   };
   
   const handleOnionSelect = (option) => {
@@ -383,9 +473,9 @@ function App() {
     setPendingPortionProduct(null);
   };
 
-  const updateCartItemQuantity = (productId, newQuantity, onionOption = null, portion = null) => {
+  const updateCartItemQuantity = (productId, newQuantity, onionOption = null, portion = null, donerKey = null) => {
     if (newQuantity <= 0) {
-      removeFromCart(productId, onionOption, portion);
+      removeFromCart(productId, onionOption, portion, donerKey);
       return;
     }
     setCart(prevCart =>
@@ -394,8 +484,9 @@ function App() {
         const matchesId = item.id === productId;
         const matchesOnion = onionOption ? item.onionOption === onionOption : !item.onionOption;
         const matchesPortion = portion !== null ? item.portion === portion : !item.portion;
+        const matchesDoner = donerKey ? item.donerKey === donerKey : !item.donerKey;
         
-        if (matchesId && matchesOnion && matchesPortion) {
+        if (matchesId && matchesOnion && matchesPortion && matchesDoner) {
           return { ...item, quantity: newQuantity };
         }
         return item;
@@ -403,16 +494,17 @@ function App() {
     );
   };
 
-  const removeFromCart = (productId, onionOption = null, portion = null) => {
+  const removeFromCart = (productId, onionOption = null, portion = null, donerKey = null) => {
     setCart(prevCart => {
       return prevCart.filter(item => {
         // Eşleşme kontrolü: hem ID, hem onionOption (varsa), hem de portion (varsa) eşleşmemeli
         const matchesId = item.id === productId;
         const matchesOnion = onionOption ? item.onionOption === onionOption : !item.onionOption;
         const matchesPortion = portion !== null ? item.portion === portion : !item.portion;
+        const matchesDoner = donerKey ? item.donerKey === donerKey : !item.donerKey;
         
         // Eğer tüm kriterler eşleşiyorsa, bu item'ı filtrele (sil)
-        return !(matchesId && matchesOnion && matchesPortion);
+        return !(matchesId && matchesOnion && matchesPortion && matchesDoner);
       });
     });
   };
@@ -425,15 +517,16 @@ function App() {
     );
   };
 
-  const updateItemNote = (productId, note, onionOption = null, portion = null) => {
+  const updateItemNote = (productId, note, onionOption = null, portion = null, donerKey = null) => {
     setCart(prevCart =>
       prevCart.map(item => {
         // Eşleşme kontrolü: hem ID, hem onionOption (varsa), hem de portion (varsa) eşleşmeli
         const matchesId = item.id === productId;
         const matchesOnion = onionOption ? item.onionOption === onionOption : !item.onionOption;
         const matchesPortion = portion !== null ? item.portion === portion : !item.portion;
+        const matchesDoner = donerKey ? item.donerKey === donerKey : !item.donerKey;
         
-        if (matchesId && matchesOnion && matchesPortion) {
+        if (matchesId && matchesOnion && matchesPortion && matchesDoner) {
           return { ...item, extraNote: note || null };
         }
         return item;
@@ -513,6 +606,15 @@ function App() {
 
   const completeTableOrder = async () => {
     if (cart.length === 0 || !selectedTable) return;
+
+    // Gece Dönercisi: şube seçimi zorunlu (stok düşümü şube bazlı)
+    const activeBranch = isGeceDonercisiMode ? getActiveBranchForGece() : null;
+    if (isGeceDonercisiMode && !activeBranch) {
+      setShowBranchSelectModal(true);
+      setErrorToast({ message: 'Şube seçimi zorunludur. Lütfen önce şube seçin.' });
+      setTimeout(() => setErrorToast(null), 3500);
+      return;
+    }
     
     if (!window.electronAPI || !window.electronAPI.createTableOrder) {
       console.error('createTableOrder API mevcut değil. Lütfen uygulamayı yeniden başlatın.');
@@ -534,7 +636,10 @@ function App() {
       tableName: selectedTable.name,
       tableType: selectedTable.type,
       orderNote: orderNote || null,
-      orderSource: getOrderSourceFromTable(selectedTable) // 'Trendyol', 'Yemeksepeti', or null
+      orderSource: getOrderSourceFromTable(selectedTable), // 'Trendyol', 'Yemeksepeti', or null
+      ...(isGeceDonercisiMode
+        ? { branch: activeBranch, deviceId: getOrCreateGeceDeviceId() }
+        : {})
     };
 
     try {
@@ -624,13 +729,25 @@ function App() {
       if (item.isGift) return sum;
       return sum + (item.price * item.quantity);
     }, 0);
+
+    // Gece Dönercisi: şube seçimi zorunlu (stok düşümü şube bazlı)
+    const activeBranch = isGeceDonercisiMode ? getActiveBranchForGece() : null;
+    if (isGeceDonercisiMode && !activeBranch) {
+      setShowBranchSelectModal(true);
+      setErrorToast({ message: 'Şube seçimi zorunludur. Lütfen önce şube seçin.' });
+      setTimeout(() => setErrorToast(null), 3500);
+      return;
+    }
     
     const saleData = {
       items: cart,
       totalAmount,
       paymentMethod,
       orderNote: orderNote || null,
-      orderSource: selectedTable ? getOrderSourceFromTable(selectedTable) : null // 'Trendyol', 'Yemeksepeti', or null
+      orderSource: selectedTable ? getOrderSourceFromTable(selectedTable) : null, // 'Trendyol', 'Yemeksepeti', or null
+      ...(isGeceDonercisiMode
+        ? { branch: activeBranch, deviceId: getOrCreateGeceDeviceId() }
+        : {})
     };
 
     const result = await window.electronAPI.createSale(saleData);
@@ -706,6 +823,15 @@ function App() {
       if (item.isGift) return sum;
       return sum + (item.price * item.quantity);
     }, 0);
+
+    // Gece Dönercisi: şube seçimi zorunlu (stok düşümü şube bazlı)
+    const activeBranch = isGeceDonercisiMode ? getActiveBranchForGece() : null;
+    if (isGeceDonercisiMode && !activeBranch) {
+      setShowBranchSelectModal(true);
+      setErrorToast({ message: 'Şube seçimi zorunludur. Lütfen önce şube seçin.' });
+      setTimeout(() => setErrorToast(null), 3500);
+      return;
+    }
     
     // Ödeme yöntemlerini birleştir (örn: "Nakit + Kredi Kartı")
     const paymentMethods = [...new Set(payments.map(p => p.method))];
@@ -718,7 +844,10 @@ function App() {
       items: cart,
       totalAmount,
       paymentMethod: `Parçalı Ödeme (${paymentDetails})`,
-      orderNote: orderNote || null
+      orderNote: orderNote || null,
+      ...(isGeceDonercisiMode
+        ? { branch: activeBranch, deviceId: getOrCreateGeceDeviceId() }
+        : {})
     };
 
     const result = await window.electronAPI.createSale(saleData);
@@ -857,6 +986,13 @@ function App() {
       isExpense: true // Satış değil, masraf
     };
 
+    // Gece Dönercisi: meta ekle (stoktan düşmez; sadece kayıt amaçlı)
+    const activeBranch = isGeceDonercisiMode ? getActiveBranchForGece() : null;
+    if (isGeceDonercisiMode && activeBranch) {
+      saleData.branch = activeBranch;
+      saleData.deviceId = getOrCreateGeceDeviceId();
+    }
+
     const result = await window.electronAPI.createSale(saleData);
     
     if (result.success) {
@@ -877,6 +1013,42 @@ function App() {
     <>
       {showSplash && (
         <SplashScreen onComplete={() => setShowSplash(false)} businessName={businessName} />
+      )}
+
+      {/* Gece Dönercisi: Şube seçimi zorunlu popup (cihaz bazlı, tek seferlik) */}
+      {isGeceDonercisiMode && (
+        <BranchSelectModal
+          open={showBranchSelectModal}
+          themeColor="#0f172a"
+          selectedBranch={selectedBranch}
+          onSelectBranch={(b) => setSelectedBranch(b)}
+          onConfirm={async (branch) => {
+            // Local (zorunlu)
+            setGeceSelectedBranch(branch);
+            setSelectedBranch(branch);
+            setShowBranchSelectModal(false);
+            try {
+              window.dispatchEvent(new CustomEvent('gece-branch-changed', { detail: { branch } }));
+            } catch {}
+
+            // Remote (gecedonercisimasalar) — başarısız olursa UI'yi kilitlemeyelim, sadece logla
+            try {
+              const deviceId = getOrCreateGeceDeviceId();
+              if (window.electronAPI && window.electronAPI.setGeceBranchSelection) {
+                await window.electronAPI.setGeceBranchSelection({ branch, deviceId });
+              }
+              await upsertDeviceBranchSelection({
+                tenantId,
+                deviceId,
+                branch,
+                platform: 'desktop',
+              });
+            } catch (e) {
+              console.error('Şube seçimi Firebase kaydı başarısız:', e);
+            }
+          }}
+          confirmText="Kaydet ve devam et"
+        />
       )}
 
       {showExitSplash && (
@@ -950,6 +1122,10 @@ function App() {
                 setSearchQuery(''); // Kategori değiştiğinde aramayı temizle
               }}
               themeColor={themeColor}
+              tenantId={tenantId}
+              onCariMaliyetClick={() => {
+                if (isGeceDonercisiMode) setShowCariMaliyetModal(true);
+              }}
             />
             
             {/* Arama Çubuğu ve (sadece Admin için) Masraf Ekle Butonu */}
@@ -1072,6 +1248,27 @@ function App() {
         <ExpenseModal
           onClose={() => setShowExpenseModal(false)}
           onSave={handleSaveExpense}
+        />
+      )}
+
+      {showCariMaliyetModal && isGeceDonercisiMode && (
+        <CariMaliyetModal
+          tenantId={tenantId}
+          themeColor={themeColor}
+          products={allProducts}
+          onClose={() => setShowCariMaliyetModal(false)}
+        />
+      )}
+
+      {showDonerOptionsModal && pendingDonerProduct && isGeceDonercisiMode && (
+        <DonerOptionsModal
+          productName={pendingDonerProduct.name}
+          themeColor={themeColor}
+          onClose={() => {
+            setShowDonerOptionsModal(false);
+            setPendingDonerProduct(null);
+          }}
+          onConfirm={handleDonerOptionsConfirm}
         />
       )}
 

@@ -1,11 +1,41 @@
 import React, { useState, useEffect } from 'react';
+import { isGeceDonercisi } from '../utils/sultanSomatTables';
 
-const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComplete }) => {
+const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComplete, tenantId = null }) => {
   const [itemsWithPayment, setItemsWithPayment] = useState([]);
   const [processingItemId, setProcessingItemId] = useState(null);
   const [selectedItems, setSelectedItems] = useState(new Set());
   const [selectedQuantities, setSelectedQuantities] = useState({}); // { itemId: quantity }
   const [isProcessingBulk, setIsProcessingBulk] = useState(false);
+  const isGeceDonercisiMode = tenantId && isGeceDonercisi(tenantId);
+
+  const confirmPaymentMethodIfNeeded = (method) => {
+    if (!isGeceDonercisiMode || (method !== 'Nakit' && method !== 'Kredi Kartı')) {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[2500]';
+      overlay.innerHTML = `
+        <div class="bg-white rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl border border-gray-200">
+          <div class="text-base font-extrabold text-gray-900 mb-1">Emin misiniz?</div>
+          <div class="text-sm text-gray-600 mb-4">Ödeme yöntemi: <span class="font-bold text-gray-900">${method}</span></div>
+          <div class="flex gap-3">
+            <button id="noBtn" class="flex-1 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-800 font-bold transition-all">Vazgeç</button>
+            <button id="yesBtn" class="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 rounded-xl text-white font-extrabold transition-all shadow-md">Evet</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      const cleanup = (val) => {
+        if (document.body.contains(overlay)) document.body.removeChild(overlay);
+        resolve(val);
+      };
+      overlay.querySelector('#yesBtn').onclick = () => cleanup(true);
+      overlay.querySelector('#noBtn').onclick = () => cleanup(false);
+      overlay.onclick = (e) => e.target === overlay && cleanup(false);
+    });
+  };
 
   useEffect(() => {
     // Items'ı ödeme durumuna göre hazırla
@@ -130,12 +160,16 @@ const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComple
       
       document.body.appendChild(modal);
       
-      modal.querySelector('#cashBtn').onclick = () => {
+      modal.querySelector('#cashBtn').onclick = async () => {
+        const ok = await confirmPaymentMethodIfNeeded('Nakit');
+        if (!ok) return;
         document.body.removeChild(modal);
         resolve('Nakit');
       };
       
-      modal.querySelector('#cardBtn').onclick = () => {
+      modal.querySelector('#cardBtn').onclick = async () => {
+        const ok = await confirmPaymentMethodIfNeeded('Kredi Kartı');
+        if (!ok) return;
         document.body.removeChild(modal);
         resolve('Kredi Kartı');
       };
@@ -305,12 +339,16 @@ const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComple
       
       document.body.appendChild(modal);
       
-      modal.querySelector('#cashBtn').onclick = () => {
+      modal.querySelector('#cashBtn').onclick = async () => {
+        const ok = await confirmPaymentMethodIfNeeded('Nakit');
+        if (!ok) return;
         document.body.removeChild(modal);
         resolve('Nakit');
       };
       
-      modal.querySelector('#cardBtn').onclick = () => {
+      modal.querySelector('#cardBtn').onclick = async () => {
+        const ok = await confirmPaymentMethodIfNeeded('Kredi Kartı');
+        if (!ok) return;
         document.body.removeChild(modal);
         resolve('Kredi Kartı');
       };

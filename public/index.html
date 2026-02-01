@@ -135,6 +135,7 @@
     // Global değişkenler (Firebase ve PIN için)
     let app, db;
     let tablesApp, tablesDb;
+    let geceMasalarApp, geceMasalarDb;
     let isAuthenticated = false;
     let realtimeUnsubscribe = null;
     let allSales = []; // Tüm satışları sakla
@@ -149,6 +150,20 @@
     let isGeceDonercisi = false; // Gece Dönercisi tenant'ında salon/bahçe masaları gösterilir
     let tenantDbRef = null; // Tenant config Firestore (PIN güncelleme için)
     let tenantDocId = null; // Tenant doküman ID (PIN güncelleme için)
+
+    // Gece Dönercisi - Şube bazlı stok/fiyat yönetimi (Admin Dashboard)
+    const GECE_TENANT_ID = 'TENANT-1769602125250';
+    const MGMT_BRANCH_STORAGE_KEY = 'gece_donercisi_branch';
+    const MGMT_DEVICE_ID_STORAGE_KEY = 'gece_donercisi_device_id';
+    const GECE_MASALAR_FIREBASE_CONFIG = {
+      apiKey: "AIzaSyB9RzR5HMVDTUfduW1ix-871k5gSM55VkU",
+      authDomain: "gecedonercisimasalar.firebaseapp.com",
+      projectId: "gecedonercisimasalar",
+      storageBucket: "gecedonercisimasalar.firebasestorage.app",
+      messagingSenderId: "772077442379",
+      appId: "1:772077442379:web:cd19d6c85810ceda93c4ce",
+      measurementId: "G-689BHMKQ7X"
+    };
     
     // PIN girişi (tenant'a göre dinamik olarak yüklenecek)
     let adminPin = '1234'; // Varsayılan
@@ -680,6 +695,23 @@
         } catch (tablesError) {
           console.error('❌ Masalar Firebase başlatma hatası:', tablesError);
         }
+
+        // Gece Dönercisi: şube bazlı stok/fiyat yönetimi için ayrı Firebase (gecedonercisimasalar)
+        if (isGeceDonercisi) {
+          try {
+            try {
+              geceMasalarApp = firebase.app('gece-masalar');
+              firebase.app('gece-masalar').delete();
+            } catch (e) {
+              // App yok, devam et
+            }
+            geceMasalarApp = firebase.initializeApp(GECE_MASALAR_FIREBASE_CONFIG, 'gece-masalar');
+            geceMasalarDb = firebase.firestore(geceMasalarApp);
+            console.log('✅ Gece Masalar Firebase başarıyla başlatıldı:', GECE_MASALAR_FIREBASE_CONFIG.projectId);
+          } catch (geceError) {
+            console.error('❌ Gece Masalar Firebase başlatma hatası:', geceError);
+          }
+        }
         
         document.getElementById('errorMessage')?.remove();
       } catch (error) {
@@ -883,6 +915,13 @@
       if (loginSection) loginSection.style.display = 'none';
       if (dashboard) dashboard.style.display = 'block';
       if (document.body) document.body.classList.remove('login-view');
+      
+      // Gece Dönercisi özel: Yönetim butonu göster
+      const mgmtBtn = document.getElementById('managementBtn');
+      if (mgmtBtn) {
+        mgmtBtn.style.display = isGeceDonercisi ? 'inline-flex' : 'none';
+      }
+
       loadSales();
       startRealtimeListener();
       // Dashboard açılır açılmaz masa verilerini çek (aktif masa sayısı için)
@@ -1978,11 +2017,14 @@
           order_source: s.order_source
         });
       });
-      // Online siparişler: payment_method === 'Online' veya order_source === 'Trendyol' || 'Yemeksepeti'
+      // Online siparişler: payment_method === 'Online' veya order_source === 'Trendyol' || 'Yemeksepeti' || 'Migros Yemek'
       const onlineSales = todaySales.filter(s => 
         s.payment_method === 'Online' || 
         s.order_source === 'Trendyol' || 
-        s.order_source === 'Yemeksepeti'
+        s.order_source === 'Yemeksepeti' ||
+        s.order_source === 'Migros Yemek' ||
+        s.order_source === 'MigrosYemek' ||
+        s.order_source === 'Migros'
       );
       
       // Nakit: payment_method === 'Nakit' ve online değil
@@ -2210,6 +2252,365 @@
       return `${year}-${month}-${day}`;
     }
 
+    function getSelectedReportDateRange() {
+      // Tarih aralığını, rapor filtresindeki mantıkla birebir çıkarır.
+      const businessDay = getBusinessDayDate();
+
+      if (reportDateFilter === 'all') return null;
+
+      if (reportDateFilter === 'yesterday') {
+        const yesterday = new Date(businessDay);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const start = new Date(yesterday);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(yesterday);
+        end.setHours(23, 59, 59, 999);
+        return { start, end };
+      }
+
+      if (reportDateFilter === 'week') {
+        const weekAgo = new Date(businessDay);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        const start = new Date(weekAgo);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(businessDay);
+        end.setHours(23, 59, 59, 999);
+        return { start, end };
+      }
+
+      if (reportDateFilter === 'month') {
+        const monthAgo = new Date(businessDay);
+        monthAgo.setMonth(monthAgo.getMonth() - 1);
+        const start = new Date(monthAgo);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(businessDay);
+        end.setHours(23, 59, 59, 999);
+        return { start, end };
+      }
+
+      if (reportDateFilter === 'custom' && customDateRange.start && customDateRange.end) {
+        const start = new Date(customDateRange.start);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(customDateRange.end);
+        end.setHours(23, 59, 59, 999);
+        return { start, end };
+      }
+
+      return null;
+    }
+
+    function mgmtParseTrNumber(value) {
+      if (value == null) return 0;
+      const raw = String(value).replace(',', '.').trim();
+      const num = Number(raw);
+      return isNaN(num) ? 0 : num;
+    }
+
+    function mgmtParseTrDateToDate(dateStr) {
+      // DD.MM.YYYY
+      if (!dateStr) return null;
+      const parts = String(dateStr).split('.');
+      if (parts.length !== 3) return null;
+      const [day, month, year] = parts;
+      const d = new Date(Number(year), Number(month) - 1, Number(day));
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    function getZahiyatDocDate(docData) {
+      // Öncelik: string tarih alanları, sonra timestamp
+      const d =
+        mgmtParseTrDateToDate(docData?.date) ||
+        mgmtParseTrDateToDate(docData?.sale_date) ||
+        mgmtParseTrDateToDate(docData?.createdDate) ||
+        mgmtParseTrDateToDate(docData?.created_date);
+      if (d) return d;
+
+      const ts = docData?.createdAt || docData?.created_at || docData?.updatedAt || docData?.updated_at;
+      try {
+        if (ts && typeof ts.toDate === 'function') return ts.toDate();
+      } catch (e) {}
+
+      return null;
+    }
+
+    function getZahiyatAmount(docData) {
+      // Esnek: farklı alan isimlerine toleranslı.
+      const quantity =
+        docData?.quantity ??
+        docData?.qty ??
+        docData?.adet ??
+        docData?.count ??
+        1;
+      const qNum = Math.max(1, Math.floor(mgmtParseTrNumber(quantity) || 1));
+
+      const totalCandidates = [
+        docData?.totalAmount,
+        docData?.total_amount,
+        docData?.total,
+        docData?.amount,
+        docData?.tutar
+      ];
+
+      for (const v of totalCandidates) {
+        const n = mgmtParseTrNumber(v);
+        if (n > 0) return n;
+      }
+
+      const priceCandidates = [
+        docData?.price,
+        docData?.fiyat,
+        docData?.cost,
+        docData?.maliyet
+      ];
+      for (const v of priceCandidates) {
+        const n = mgmtParseTrNumber(v);
+        if (n > 0) return n * qNum;
+      }
+
+      // items[] varsa topla
+      if (Array.isArray(docData?.items) && docData.items.length > 0) {
+        return docData.items.reduce((sum, it) => {
+          const p = mgmtParseTrNumber(it?.price ?? it?.fiyat ?? it?.cost);
+          const q = Math.max(1, Math.floor(mgmtParseTrNumber(it?.quantity ?? it?.adet ?? 1) || 1));
+          return sum + (p * q);
+        }, 0);
+      }
+
+      return 0;
+    }
+
+    async function fetchZahiyatSummaryForSelectedPeriod() {
+      // Gece Dönercisi: gecedonercisimasalar / zahiyat koleksiyonundan okur.
+      if (!geceMasalarDb) return { total: 0, count: 0, ok: false };
+
+      const range = getSelectedReportDateRange();
+      let total = 0;
+      let count = 0;
+
+      try {
+        const snap = await geceMasalarDb.collection('zahiyat').get();
+        if (snap && snap.forEach) {
+          snap.forEach((doc) => {
+            const data = doc.data() || {};
+            const dt = getZahiyatDocDate(data);
+            if (range && dt) {
+              const d0 = new Date(dt);
+              d0.setHours(0, 0, 0, 0);
+              if (d0 < range.start || d0 > range.end) return;
+            } else if (range && !dt) {
+              // Tarih alanı yoksa seçili aralıkta sayma (yanlış toplam olmasın)
+              return;
+            }
+
+            const amount = getZahiyatAmount(data);
+            if (amount && amount > 0) {
+              total += amount;
+              count += 1;
+            }
+          });
+        }
+
+        return { total, count, ok: true };
+      } catch (e) {
+        console.warn('Zahiyat okunamadı:', e);
+        return { total: 0, count: 0, ok: false };
+      }
+    }
+
+    function ensureZahiyatModal() {
+      if (document.getElementById('zahiyatModalOverlay')) return;
+
+      const overlay = document.createElement('div');
+      overlay.id = 'zahiyatModalOverlay';
+      overlay.className = 'zahiyat-modal-overlay';
+      overlay.onclick = (e) => {
+        if (e.target === overlay) closeZahiyatModal();
+      };
+
+      overlay.innerHTML = `
+        <div class="zahiyat-modal" role="dialog" aria-modal="true">
+          <div class="zahiyat-modal-header">
+            <div style="min-width: 0;">
+              <h3 class="zahiyat-modal-title">Zahiyat Detayları</h3>
+              <p class="zahiyat-modal-subtitle" id="zahiyatModalSubtitle"></p>
+            </div>
+            <button type="button" class="zahiyat-modal-close" onclick="closeZahiyatModal()" title="Kapat">×</button>
+          </div>
+          <div class="zahiyat-modal-body">
+            <div class="zahiyat-modal-toolbar">
+              <div class="zahiyat-modal-pill" id="zahiyatModalSummary">Yükleniyor…</div>
+              <div class="zahiyat-modal-pill" id="zahiyatModalTotal">₺0,00</div>
+            </div>
+            <div id="zahiyatModalList" class="zahiyat-list"></div>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+    }
+
+    function closeZahiyatModal() {
+      const overlay = document.getElementById('zahiyatModalOverlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+
+    function formatMoneyTR(amount) {
+      const n = Number(amount || 0);
+      return '₺' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    }
+
+    function extractZahiyatPerson(data) {
+      const v =
+        data?.personel ||
+        data?.personelName ||
+        data?.staff ||
+        data?.staff_name ||
+        data?.staffName ||
+        data?.employee ||
+        data?.employeeName ||
+        data?.user ||
+        data?.userName;
+      const s = (v != null) ? String(v).trim() : '';
+      return s || 'Personel: Bilinmiyor';
+    }
+
+    function extractZahiyatProducts(data) {
+      if (Array.isArray(data?.items) && data.items.length > 0) {
+        return data.items
+          .map((it) => {
+            const name = String(it?.product || it?.product_name || it?.name || it?.urun || it?.urunAdi || '').trim() || 'Ürün';
+            const qty = Math.max(1, Math.floor(mgmtParseTrNumber(it?.quantity ?? it?.adet ?? it?.qty ?? 1) || 1));
+            const price = mgmtParseTrNumber(it?.price ?? it?.fiyat ?? it?.cost ?? it?.maliyet);
+            return { name, qty, price };
+          })
+          .filter(x => x && x.name);
+      }
+
+      const name = String(data?.product || data?.product_name || data?.productName || data?.urun || data?.urunAdi || '').trim();
+      const qty = Math.max(1, Math.floor(mgmtParseTrNumber(data?.quantity ?? data?.adet ?? data?.qty ?? 1) || 1));
+      const price = mgmtParseTrNumber(data?.price ?? data?.fiyat ?? data?.cost ?? data?.maliyet);
+      if (name) return [{ name, qty, price }];
+      return [];
+    }
+
+    async function openZahiyatModal() {
+      ensureZahiyatModal();
+
+      const overlay = document.getElementById('zahiyatModalOverlay');
+      const subtitle = document.getElementById('zahiyatModalSubtitle');
+      const summaryEl = document.getElementById('zahiyatModalSummary');
+      const totalEl = document.getElementById('zahiyatModalTotal');
+      const listEl = document.getElementById('zahiyatModalList');
+
+      if (!overlay || !subtitle || !summaryEl || !totalEl || !listEl) return;
+
+      overlay.style.display = 'flex';
+      subtitle.textContent = (typeof periodInfo === 'string' && periodInfo) ? periodInfo : '';
+      summaryEl.textContent = 'Yükleniyor…';
+      totalEl.textContent = formatMoneyTR(0);
+      listEl.innerHTML = '';
+
+      if (!isGeceDonercisi || !geceMasalarDb) {
+        summaryEl.textContent = 'Zahiyat kaynağı hazır değil';
+        listEl.innerHTML = `<div class="error-message"><div style="font-size:24px; margin-bottom:10px;">⚠️</div><div>Zahiyat veritabanı bağlantısı bulunamadı.</div></div>`;
+        return;
+      }
+
+      try {
+        const range = getSelectedReportDateRange();
+        const snap = await geceMasalarDb.collection('zahiyat').get();
+
+        const entries = [];
+        let total = 0;
+
+        if (snap && snap.forEach) {
+          snap.forEach((doc) => {
+            const data = doc.data() || {};
+            const dt = getZahiyatDocDate(data);
+
+            if (range && dt) {
+              const d0 = new Date(dt);
+              d0.setHours(0, 0, 0, 0);
+              if (d0 < range.start || d0 > range.end) return;
+            } else if (range && !dt) {
+              return;
+            }
+
+            const amount = getZahiyatAmount(data);
+            if (!amount || amount <= 0) return;
+
+            const person = extractZahiyatPerson(data);
+            const products = extractZahiyatProducts(data);
+
+            const dtText = dt
+              ? new Date(dt).toLocaleString('tr-TR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+              : (data?.date || data?.sale_date || 'Tarih yok');
+
+            entries.push({
+              id: doc.id,
+              person,
+              dtText,
+              products,
+              amount
+            });
+            total += amount;
+          });
+        }
+
+        entries.sort((a, b) => (b.dtText || '').localeCompare((a.dtText || ''), 'tr'));
+
+        summaryEl.textContent = `${entries.length} kayıt`;
+        totalEl.textContent = formatMoneyTR(total);
+
+        if (!entries.length) {
+          listEl.innerHTML = `<div class="error-message"><div style="font-size:24px; margin-bottom:10px;">🔎</div><div>Bu zaman diliminde zahiyat bulunamadı</div></div>`;
+          return;
+        }
+
+        listEl.innerHTML = entries.map((e) => {
+          const products = (e.products || []).slice(0, 6);
+          const productsHtml = products.length
+            ? `
+              <div class="zahiyat-products">
+                ${products.map(p => {
+                  const right = (p.price && p.price > 0) ? formatMoneyTR(p.price) : '';
+                  return `
+                    <div>
+                      <div class="zahiyat-product-line">
+                        <span>${p.qty} × ${String(p.name).toUpperCase()}</span>
+                        <span>${right}</span>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+                ${(e.products && e.products.length > products.length) ? `<div class="zahiyat-product-sub">+${e.products.length - products.length} ürün daha…</div>` : ''}
+              </div>
+            `
+            : `<div class="zahiyat-products"><div class="zahiyat-product-sub">Ürün detayı yok</div></div>`;
+
+          return `
+            <div class="zahiyat-item-card">
+              <div class="zahiyat-item-top">
+                <div style="min-width:0;">
+                  <div class="zahiyat-item-person">${e.person}</div>
+                  <div class="zahiyat-item-meta">${e.dtText}</div>
+                </div>
+                <div class="zahiyat-item-amount">${formatMoneyTR(e.amount)}</div>
+              </div>
+              ${productsHtml}
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        console.error('Zahiyat modal yükleme hatası:', e);
+        summaryEl.textContent = 'Hata';
+        listEl.innerHTML = `<div class="error-message"><div style="font-size:24px; margin-bottom:10px;">❌</div><div>Zahiyat verileri yüklenemedi</div><div style="font-size:12px; margin-top:8px; color:#9ca3af;">${(e && e.message) ? e.message : ''}</div></div>`;
+      }
+    }
+
+    window.openZahiyatModal = openZahiyatModal;
+    window.closeZahiyatModal = closeZahiyatModal;
+
     // Tarih formatını dönüştür (DD.MM.YYYY -> YYYY-MM-DD)
     function parseDateFromInput(dateStr) {
       if (!dateStr) return null;
@@ -2311,8 +2712,14 @@
         const paymentMethod = sale.payment_method || '';
         const orderSource = sale.order_source || '';
         
-        // Online: payment_method === 'Online' veya order_source === 'Trendyol' || 'Yemeksepeti'
-        const isOnline = paymentMethod === 'Online' || orderSource === 'Trendyol' || orderSource === 'Yemeksepeti';
+        // Online: payment_method === 'Online' veya order_source === 'Trendyol' || 'Yemeksepeti' || 'Migros Yemek'
+        const isOnline =
+          paymentMethod === 'Online' ||
+          orderSource === 'Trendyol' ||
+          orderSource === 'Yemeksepeti' ||
+          orderSource === 'Migros Yemek' ||
+          orderSource === 'MigrosYemek' ||
+          orderSource === 'Migros';
         // Nakit: payment_method === 'Nakit' ve online değil
         const isCash = !isOnline && paymentMethod === 'Nakit';
         // Diğerleri: Kart (Online değil, Nakit değil, Masraf değil)
@@ -2746,7 +3153,10 @@
         const onlineSales = daySales.filter(s => 
           s.payment_method === 'Online' || 
           s.order_source === 'Trendyol' || 
-          s.order_source === 'Yemeksepeti'
+          s.order_source === 'Yemeksepeti' ||
+          s.order_source === 'Migros Yemek' ||
+          s.order_source === 'MigrosYemek' ||
+          s.order_source === 'Migros'
         );
         const cashSales = daySales.filter(s => 
           s.payment_method === 'Nakit' && 
@@ -2977,13 +3387,23 @@
         totalRevenue = reportSales.reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
       }
 
-      // Trendyol ve Yemeksepeti cirolarını hesapla (items_array'den gerçek fiyatlar)
+      // Trendyol / Yemeksepeti / Migros Yemek cirolarını hesapla (items_array'den gerçek fiyatlar)
       const trendyolRevenue = reportSales
         .filter(sale => sale.order_source === 'Trendyol')
         .reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
       
       const yemeksepetiRevenue = reportSales
         .filter(sale => sale.order_source === 'Yemeksepeti')
+        .reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
+
+      const migrosYemekRevenue = reportSales
+        .filter(sale => {
+          const src = String(sale.order_source || '')
+            .toLocaleLowerCase('tr-TR')
+            .replace(/\s+/g, ' ')
+            .trim();
+          return src === 'migros yemek' || src === 'migrosyemek' || src === 'migros';
+        })
         .reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
 
       // Görsellerin path'lerini dinamik olarak oluştur
@@ -2997,6 +3417,7 @@
       }
       const trendyolImageUrl = baseUrl + '/trendyol.webp';
       const yemeksepetiImageUrl = baseUrl + '/yemeksepeti.png';
+      const migrosImageUrl = baseUrl + '/migros.png';
 
       // Seçilen zaman dilimindeki masrafları hesapla
       let periodExpenses = allSales.filter(sale => 
@@ -3004,6 +3425,15 @@
       );
       periodExpenses = filterSalesByDate(periodExpenses);
       const totalExpense = periodExpenses.reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+
+      // Seçilen zaman dilimi zahiyatı (Gece Dönercisi - gecedonercisimasalar)
+      let zahiyatTotal = 0;
+      let zahiyatCount = 0;
+      if (isGeceDonercisi && geceMasalarDb) {
+        const z = await fetchZahiyatSummaryForSelectedPeriod();
+        zahiyatTotal = z.total || 0;
+        zahiyatCount = z.count || 0;
+      }
 
       const filterLabels = {
         'all': 'Tüm Zamanlar',
@@ -3126,39 +3556,50 @@
                 </svg>
               </div>
             </div>
-            <div class="period-expense-card">
-              <div class="period-card-background"></div>
-              <div class="period-card-icon">
-                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </div>
-              <div class="period-revenue-content">
-                <div class="period-revenue-label">
-                  <span class="period-label-icon">📉</span>
-                  <span>Seçilen Zaman Dilimi Masrafı</span>
+            <div class="period-expense-stack">
+              <div class="period-expense-card">
+                <div class="period-card-background"></div>
+                <div class="period-card-icon">
+                  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
                 </div>
-                <div class="period-revenue-period">${periodInfo}</div>
-                <div class="period-revenue-amount">₺${totalExpense.toFixed(2)}</div>
+                <div class="period-revenue-content">
+                  <div class="period-revenue-label">
+                    <span class="period-label-icon">📉</span>
+                    <span>Seçilen Zaman Dilimi Masrafı</span>
+                  </div>
+                  <div class="period-revenue-period">${periodInfo}</div>
+                  <div class="period-revenue-amount">₺${totalExpense.toFixed(2)}</div>
+                </div>
+                <div class="period-card-decoration">
+                  <svg viewBox="0 0 200 200" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="expenseGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style="stop-color:rgba(255,255,255,0.15);stop-opacity:1" />
+                        <stop offset="100%" style="stop-color:rgba(255,255,255,0);stop-opacity:1" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M0,200 Q50,150 100,120 T200,80 L200,200 Z" fill="url(#expenseGradient)"/>
+                  </svg>
+                </div>
               </div>
-              <div class="period-card-decoration">
-                <svg viewBox="0 0 200 200" preserveAspectRatio="none">
-                  <defs>
-                    <linearGradient id="expenseGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" style="stop-color:rgba(255,255,255,0.15);stop-opacity:1" />
-                      <stop offset="100%" style="stop-color:rgba(255,255,255,0);stop-opacity:1" />
-                    </linearGradient>
-                  </defs>
-                  <path d="M0,200 Q50,150 100,120 T200,80 L200,200 Z" fill="url(#expenseGradient)"/>
-                </svg>
+
+              <div class="period-zahiyat-card" onclick="openZahiyatModal()" style="cursor: pointer;">
+                <div class="period-zahiyat-accent"></div>
+                <div class="period-zahiyat-badge">
+                  <span>Seçilen Zaman Dilimi Zahiyatı</span>
+                </div>
+                <div class="period-zahiyat-meta">${periodInfo}${zahiyatCount ? ` • ${zahiyatCount} kayıt` : ''}</div>
+                <div class="period-zahiyat-amount">₺${zahiyatTotal.toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.')}</div>
               </div>
             </div>
           </div>
           
           <!-- Trendyol ve Yemeksepeti Ciroları - Profesyonel Kurumsal Tasarım -->
-          <div class="period-revenue-container" style="margin-top: 20px;">
+          <div class="period-revenue-container platform-revenue-container" style="margin-top: 20px;">
             <!-- Trendyol Ciro Kartı -->
             <div class="period-revenue-card" style="background: white; padding: 0; border-radius: 16px; box-shadow: 0 8px 32px rgba(251, 191, 36, 0.15), 0 2px 8px rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.2); overflow: hidden; position: relative;">
               <!-- Gradient Border Effect -->
@@ -3231,6 +3672,45 @@
                     </div>
                     <div style="margin-top: 8px; font-size: 10px; font-weight: 600; color: #64748b; opacity: 0.8;">
                       ${totalRevenue > 0 ? ((yemeksepetiRevenue / totalRevenue) * 100).toFixed(1) : '0'}% toplam cirodan
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Migros Yemek Ciro Kartı -->
+            <div class="period-revenue-card" style="background: white; padding: 0; border-radius: 16px; box-shadow: 0 8px 32px rgba(37, 99, 235, 0.14), 0 2px 8px rgba(37, 99, 235, 0.10); border: 1px solid rgba(37, 99, 235, 0.18); overflow: hidden; position: relative;">
+              <!-- Gradient Border Effect -->
+              <div style="position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #2563eb 0%, #1d4ed8 50%, #1e40af 100%);"></div>
+              
+              <div style="background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%); padding: 28px 24px; height: 100%; position: relative; overflow: hidden;">
+                <!-- Decorative Background Pattern -->
+                <div style="position: absolute; top: -20px; right: -20px; width: 120px; height: 120px; background: radial-gradient(circle, rgba(37, 99, 235, 0.08) 0%, transparent 70%); border-radius: 50%;"></div>
+                <div style="position: absolute; bottom: -30px; left: -30px; width: 100px; height: 100px; background: radial-gradient(circle, rgba(37, 99, 235, 0.06) 0%, transparent 70%); border-radius: 50%;"></div>
+                
+                <!-- Icon Container -->
+                <div style="position: absolute; top: 24px; right: 24px; width: 64px; height: 64px; display: flex; align-items: center; justify-content: center; border-radius: 14px; background: linear-gradient(135deg, rgba(37, 99, 235, 0.15) 0%, rgba(30, 64, 175, 0.10) 100%); backdrop-filter: blur(10px); border: 1px solid rgba(37, 99, 235, 0.2); box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);">
+                  <img src="${migrosImageUrl}" alt="Migros Yemek" onerror="this.onerror=null; this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath fill=%22%232563eb%22 d=%22M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.6 14.6h-1.8V7.4h1.8v9.2zm6.2 0h-1.8V12c0-.87-.71-1.58-1.58-1.58-.88 0-1.62.7-1.62 1.58v4.6h-1.8V12c0-1.86 1.52-3.38 3.42-3.38 1.88 0 3.38 1.52 3.38 3.38v4.6z%22/%3E%3C/svg%3E';" style="width: 44px; height: 44px; border-radius: 10px; object-fit: cover; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));">
+                </div>
+                
+                <!-- Content -->
+                <div style="position: relative; z-index: 1;">
+                  <div style="margin-bottom: 12px;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                      <div style="width: 6px; height: 6px; border-radius: 50%; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); box-shadow: 0 0 8px rgba(37, 99, 235, 0.45);"></div>
+                      <span style="font-size: 11px; font-weight: 700; color: #1e40af; text-transform: uppercase; letter-spacing: 1px;">MİGROS YEMEK</span>
+                    </div>
+                    <div style="font-size: 15px; font-weight: 800; color: #1e293b; letter-spacing: -0.3px; margin-bottom: 4px;">Toplam Ciro</div>
+                    <div style="font-size: 11px; font-weight: 600; color: #64748b; letter-spacing: 0.2px;">${periodInfo}</div>
+                  </div>
+                  
+                  <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(37, 99, 235, 0.15);">
+                    <div style="display: flex; align-items: baseline; gap: 6px;">
+                      <span style="font-size: 13px; font-weight: 700; color: #10b981; margin-right: 2px;">₺</span>
+                      <span style="font-size: 32px; font-weight: 900; color: #10b981; letter-spacing: -1px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif; line-height: 1;">${migrosYemekRevenue.toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, '.')}</span>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 10px; font-weight: 600; color: #64748b; opacity: 0.8;">
+                      ${totalRevenue > 0 ? ((migrosYemekRevenue / totalRevenue) * 100).toFixed(1) : '0'}% toplam cirodan
                     </div>
                   </div>
                 </div>
@@ -4663,6 +5143,473 @@
         setTimeout(() => {
           toast.remove();
         }, 300);
+      }
+    }
+
+    // ——————————— Yönetim (Stok / Fiyat) ———————————
+    let mgmtProducts = []; // { docId, name, price, category_id, categoryName, trackStock, ... }
+    let mgmtCategoriesMap = {}; // id -> name
+    let mgmtBranch = null; // 'SANCAK' | 'SEKER'
+    let mgmtBranchStocks = {}; // productId(string) -> number
+    let mgmtLoading = false;
+    let mgmtPriceCategoryId = 'ALL'; // 'ALL' | category_id(string) | 'no-category'
+    const MGMT_ALLOWED_STOCK_CATEGORIES = new Set(['icecekler', 'yan urunler']); // sadece bu iki kategori
+
+    function mgmtNormalizeText(input) {
+      try {
+        return String(input || '')
+          .toLocaleLowerCase('tr-TR')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '') // diacritics
+          .replace(/\s+/g, ' ')
+          .trim();
+      } catch (e) {
+        return String(input || '').toLowerCase().trim();
+      }
+    }
+
+    function mgmtIsAllowedStockCategory(product) {
+      const catName =
+        (product && product.categoryName) ||
+        (product && product.category_id != null ? (mgmtCategoriesMap[String(product.category_id)] || '') : '') ||
+        '';
+      const norm = mgmtNormalizeText(catName);
+      return MGMT_ALLOWED_STOCK_CATEGORIES.has(norm);
+    }
+
+    function mgmtGetCategoryInfo(product) {
+      const id = (product && product.category_id != null) ? String(product.category_id) : 'no-category';
+      const name =
+        (product && product.categoryName) ||
+        (id !== 'no-category' ? (mgmtCategoriesMap[String(id)] || ('Kategori #' + String(id))) : 'Diğer');
+      return { id, name };
+    }
+
+    function mgmtGetPriceCategories() {
+      const map = new Map(); // id -> { id, name, count }
+      (mgmtProducts || []).forEach((p) => {
+        const info = mgmtGetCategoryInfo(p);
+        if (!map.has(info.id)) map.set(info.id, { id: info.id, name: info.name, count: 0 });
+        map.get(info.id).count += 1;
+      });
+      return Array.from(map.values()).sort((a, b) => (a.name || '').localeCompare((b.name || ''), 'tr'));
+    }
+
+    function mgmtSelectPriceCategory(categoryId) {
+      mgmtPriceCategoryId = categoryId || 'ALL';
+      mgmtRenderPriceCategoryTabs();
+      mgmtRenderPriceList();
+    }
+
+    function mgmtRenderPriceCategoryTabs() {
+      const tabsEl = document.getElementById('mgmtPriceCategoryTabs');
+      if (!tabsEl) return;
+
+      const cats = mgmtGetPriceCategories();
+      const allCount = (mgmtProducts || []).length;
+      const tabs = [{ id: 'ALL', name: 'Tümü', count: allCount }, ...cats];
+      const activeId = mgmtPriceCategoryId || 'ALL';
+
+      tabsEl.innerHTML = tabs.map((t) => {
+        const isActive = String(t.id) === String(activeId);
+        return `
+          <button type="button" class="mgmt-tab ${isActive ? 'active' : ''}" onclick="mgmtSelectPriceCategory('${String(t.id).replace(/'/g, "\\'")}')">
+            <span>${t.name}</span>
+            <span class="mgmt-tab-count">${t.count}</span>
+          </button>
+        `;
+      }).join('');
+
+      const hint = document.getElementById('mgmtPriceHint');
+      if (hint) {
+        const activeTab = tabs.find(t => String(t.id) === String(activeId)) || tabs[0];
+        hint.textContent = `Kategori: ${activeTab?.name || 'Tümü'} • ${activeTab?.count ?? allCount} ürün`;
+      }
+    }
+
+    function getOrCreateMgmtDeviceId() {
+      try {
+        const existing = localStorage.getItem(MGMT_DEVICE_ID_STORAGE_KEY);
+        if (existing) return existing;
+        const id = (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function')
+          ? crypto.randomUUID()
+          : ('dev_' + Date.now() + '_' + Math.random().toString(16).slice(2));
+        localStorage.setItem(MGMT_DEVICE_ID_STORAGE_KEY, id);
+        return id;
+      } catch (e) {
+        return 'dev_' + Date.now() + '_' + Math.random().toString(16).slice(2);
+      }
+    }
+
+    function getSavedMgmtBranch() {
+      try {
+        const v = localStorage.getItem(MGMT_BRANCH_STORAGE_KEY);
+        return (v === 'SANCAK' || v === 'SEKER') ? v : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function mgmtPersistBranchSelection(branch) {
+      try {
+        localStorage.setItem(MGMT_BRANCH_STORAGE_KEY, branch);
+      } catch (e) {
+        // ignore
+      }
+
+      // Firebase'e cihaz şube kaydı (gecedonercisimasalar)
+      try {
+        if (!geceMasalarDb) return;
+        const deviceId = getOrCreateMgmtDeviceId();
+        await geceMasalarDb.collection('deviceBranches').doc(String(deviceId)).set({
+          tenantId: GECE_TENANT_ID,
+          deviceId: String(deviceId),
+          branch: branch,
+          source: 'admin-dashboard',
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      } catch (e) {
+        console.warn('deviceBranches yazılamadı:', e);
+      }
+    }
+
+    function openManagementOverlay() {
+      const overlay = document.getElementById('managementOverlay');
+      if (!overlay) return;
+      overlay.style.display = 'flex';
+      openManagementSection('home');
+    }
+
+    function closeManagementOverlay() {
+      const overlay = document.getElementById('managementOverlay');
+      if (!overlay) return;
+      overlay.style.display = 'none';
+    }
+
+    async function openManagementSection(section) {
+      const home = document.getElementById('managementHome');
+      const stock = document.getElementById('managementStock');
+      const price = document.getElementById('managementPrice');
+      if (!home || !stock || !price) return;
+
+      home.style.display = section === 'home' ? 'block' : 'none';
+      stock.style.display = section === 'stock' ? 'block' : 'none';
+      price.style.display = section === 'price' ? 'block' : 'none';
+
+      if (section === 'stock') {
+        await mgmtInitIfNeeded();
+        const saved = getSavedMgmtBranch();
+        if (saved) {
+          mgmtSelectBranch(saved);
+        } else {
+          mgmtBranch = null;
+          mgmtBranchStocks = {};
+          const b1 = document.getElementById('branchBtn_SANCAK');
+          const b2 = document.getElementById('branchBtn_SEKER');
+          if (b1) b1.classList.remove('active');
+          if (b2) b2.classList.remove('active');
+          const hint = document.getElementById('mgmtStockHint');
+          if (hint) hint.textContent = 'Şube seçimi zorunludur. Lütfen SANCAK veya ŞEKER şubesini seçin.';
+          showToast('error', 'Zorunlu', 'Stok işlemleri için önce şube seçiniz.');
+          mgmtRenderStockList();
+        }
+      }
+
+      if (section === 'price') {
+        await mgmtInitIfNeeded();
+        mgmtRenderPriceCategoryTabs();
+        mgmtRenderPriceList();
+      }
+    }
+
+    async function mgmtInitIfNeeded() {
+      if (mgmtLoading) return;
+      if (!db || !db.collection) {
+        showToast('error', 'Hata', 'Veritabanı bağlantısı hazır değil.');
+        return;
+      }
+      if (mgmtProducts && mgmtProducts.length > 0) return;
+
+      mgmtLoading = true;
+      try {
+        // Kategoriler
+        mgmtCategoriesMap = {};
+        try {
+          const catSnap = await db.collection('categories').get();
+          if (catSnap && catSnap.forEach) {
+            catSnap.forEach((doc) => {
+              const data = doc.data() || {};
+              const id = data.id != null ? String(data.id) : String(doc.id);
+              if (data.name) mgmtCategoriesMap[id] = data.name;
+            });
+          }
+        } catch (e) {
+          // kategori yoksa sorun değil
+        }
+
+        // Ürünler
+        const prodSnap = await db.collection('products').get();
+        const list = [];
+        if (prodSnap && prodSnap.forEach) {
+          prodSnap.forEach((doc) => {
+            const p = doc.data() || {};
+            const productId = (p.id != null) ? String(p.id) : String(doc.id);
+            const categoryId = p.category_id != null ? String(p.category_id) : '';
+            list.push({
+              docId: doc.id,
+              productId,
+              name: p.name || ('Ürün #' + productId),
+              category_id: categoryId,
+              categoryName: p.categoryName || mgmtCategoriesMap[categoryId] || '',
+              price: (p.price != null) ? Number(p.price) : 0,
+              trackStock: p.trackStock === true,
+              stock: (p.stock != null) ? Number(p.stock) : 0,
+              // opsiyonel platform fiyatları (varsa)
+              yemeksepeti_price: (p.yemeksepeti_price != null) ? Number(p.yemeksepeti_price) : null,
+              trendyolgo_price: (p.trendyolgo_price != null) ? Number(p.trendyolgo_price) : null,
+              migros_yemek_price: (p.migros_yemek_price != null) ? Number(p.migros_yemek_price) : null
+            });
+          });
+        }
+
+        list.sort((a, b) => (a.name || '').localeCompare((b.name || ''), 'tr'));
+        mgmtProducts = list;
+      } catch (e) {
+        console.error('Yönetim ürünleri yüklenemedi:', e);
+        showToast('error', 'Hata', 'Ürünler yüklenemedi: ' + (e.message || 'Bilinmeyen hata'));
+      } finally {
+        mgmtLoading = false;
+      }
+    }
+
+    async function mgmtSelectBranch(branch) {
+      if (branch !== 'SANCAK' && branch !== 'SEKER') return;
+      mgmtBranch = branch;
+      await mgmtPersistBranchSelection(branch);
+
+      const b1 = document.getElementById('branchBtn_SANCAK');
+      const b2 = document.getElementById('branchBtn_SEKER');
+      if (b1) b1.classList.toggle('active', branch === 'SANCAK');
+      if (b2) b2.classList.toggle('active', branch === 'SEKER');
+
+      await mgmtLoadBranchStocks();
+      mgmtRenderStockList();
+    }
+
+    async function mgmtLoadBranchStocks() {
+      mgmtBranchStocks = {};
+      const hint = document.getElementById('mgmtStockHint');
+      if (hint) hint.textContent = `Şube: ${mgmtBranch === 'SEKER' ? 'ŞEKER' : 'SANCAK'} • Sadece “İçecekler” ve “Yan Ürünler” listelenir.`;
+
+      if (!geceMasalarDb) {
+        if (hint) hint.textContent = 'Şube stok veritabanı bağlantısı hazır değil. (gecedonercisimasalar)';
+        return;
+      }
+
+      try {
+        const snap = await geceMasalarDb.collection('branchStocks').where('branch', '==', mgmtBranch).get();
+        if (snap && snap.forEach) {
+          snap.forEach((doc) => {
+            const d = doc.data() || {};
+            const pid = d.productId != null ? String(d.productId) : String(doc.id).split('_').pop();
+            mgmtBranchStocks[pid] = Number(d.stock || 0);
+          });
+        }
+      } catch (e) {
+        console.warn('branchStocks okunamadı:', e);
+      }
+    }
+
+    function mgmtRenderStockList() {
+      const listEl = document.getElementById('mgmtStockList');
+      if (!listEl) return;
+      const qRaw = (document.getElementById('mgmtStockSearch')?.value || '');
+      const q = mgmtNormalizeText(qRaw);
+
+      const filtered = mgmtProducts.filter((p) => {
+        // Gece Dönercisi: stok yönetiminde sadece İçecekler + Yan Ürünler
+        if (!mgmtIsAllowedStockCategory(p)) return false;
+        if (!q) return true;
+        return mgmtNormalizeText(p.name || '').includes(q);
+      });
+
+      if (!mgmtBranch) {
+        listEl.innerHTML = `<div class="error-message"><div style="font-size:24px; margin-bottom:10px;">⚠️</div><div>Önce şube seçiniz.</div></div>`;
+        return;
+      }
+
+      if (!filtered.length) {
+        listEl.innerHTML = `<div class="error-message"><div style="font-size:24px; margin-bottom:10px;">🔎</div><div>Bu şubede stok için gösterilecek ürün bulunamadı</div><div style="font-size:12px; margin-top:8px; color:#9ca3af;">Sadece “İçecekler” ve “Yan Ürünler” kategorileri listelenir.</div></div>`;
+        return;
+      }
+
+      listEl.innerHTML = filtered.map((p) => {
+        const pid = String(p.productId);
+        const current = (mgmtBranchStocks[pid] != null) ? mgmtBranchStocks[pid] : 0;
+        const catText = p.categoryName ? p.categoryName : (p.category_id ? ('Kategori #' + p.category_id) : '');
+        const pillClass = current <= 0 ? 'management-pill is-zero' : 'management-pill';
+        return `
+          <div class="management-row stock-row">
+            <div class="mgmt-stock-left">
+              <div class="management-row-title">${p.name}</div>
+              <div class="management-row-sub">${catText}${catText ? ' • ' : ''}ID: ${pid}</div>
+            </div>
+            <div class="mgmt-stock-right">
+              <div class="${pillClass}">Stok: ${current}</div>
+              <div class="mgmt-stock-controls">
+                <input class="management-input mgmt-stock-input" id="mgmtStockAmount_${pid}" inputmode="numeric" placeholder="Miktar" autocomplete="off" />
+                <div class="mgmt-stock-actions">
+                  <button class="mgmt-action-btn add" onclick="mgmtAdjustStock('${pid}', 'add')">+ Ekle</button>
+                  <button class="mgmt-action-btn sub" onclick="mgmtAdjustStock('${pid}', 'sub')">− Çıkar</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function mgmtAdjustStock(productId, mode) {
+      if (!mgmtBranch) {
+        showToast('error', 'Hata', 'Önce şube seçiniz.');
+        return;
+      }
+      if (!geceMasalarDb) {
+        showToast('error', 'Hata', 'Şube stok veritabanı bağlantısı hazır değil.');
+        return;
+      }
+
+      const input = document.getElementById('mgmtStockAmount_' + productId);
+      const amount = parseInt((input && input.value) ? input.value : '0', 10);
+      if (!amount || amount <= 0) {
+        showToast('error', 'Hata', 'Geçerli bir miktar giriniz.');
+        return;
+      }
+
+      const delta = mode === 'sub' ? -amount : amount;
+      const docId = mgmtBranch + '_' + String(productId);
+      const ref = geceMasalarDb.collection('branchStocks').doc(docId);
+      const deviceId = getOrCreateMgmtDeviceId();
+
+      try {
+        const result = await geceMasalarDb.runTransaction(async (t) => {
+          const snap = await t.get(ref);
+          const before = snap.exists ? Number((snap.data() || {}).stock || 0) : 0;
+          let after = before + delta;
+          if (after < 0) after = 0;
+
+          t.set(ref, {
+            tenantId: GECE_TENANT_ID,
+            branch: mgmtBranch,
+            productId: String(productId),
+            stock: after,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedByDeviceId: String(deviceId)
+          }, { merge: true });
+
+          return { before, after };
+        });
+
+        // Hareket kaydı (opsiyonel)
+        try {
+          await geceMasalarDb.collection('branchStockMoves').add({
+            tenantId: GECE_TENANT_ID,
+            branch: mgmtBranch,
+            productId: String(productId),
+            delta: delta,
+            before: result.before,
+            after: result.after,
+            deviceId: String(deviceId),
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        } catch (e) {
+          // history zorunlu değil
+        }
+
+        mgmtBranchStocks[String(productId)] = result.after;
+        showToast('success', 'Başarılı', `Stok güncellendi. Yeni stok: ${result.after}`);
+        mgmtRenderStockList();
+      } catch (e) {
+        console.error('Stok güncelleme hatası:', e);
+        showToast('error', 'Hata', 'Stok güncellenemedi: ' + (e.message || 'Bilinmeyen hata'));
+      }
+    }
+
+    function mgmtRenderPriceList() {
+      const listEl = document.getElementById('mgmtPriceList');
+      if (!listEl) return;
+      const qRaw = (document.getElementById('mgmtPriceSearch')?.value || '');
+      const q = mgmtNormalizeText(qRaw);
+
+      const filtered = mgmtProducts.filter((p) => {
+        if (mgmtPriceCategoryId && mgmtPriceCategoryId !== 'ALL') {
+          const info = mgmtGetCategoryInfo(p);
+          if (String(info.id) !== String(mgmtPriceCategoryId)) return false;
+        }
+        if (!q) return true;
+        return mgmtNormalizeText(p.name || '').includes(q);
+      });
+
+      if (!filtered.length) {
+        listEl.innerHTML = `<div class="error-message"><div style="font-size:24px; margin-bottom:10px;">🔎</div><div>Ürün bulunamadı</div></div>`;
+        return;
+      }
+
+      listEl.innerHTML = filtered.map((p) => {
+        const pid = String(p.productId);
+        const currentPrice = (p.price != null && !isNaN(p.price)) ? Number(p.price) : 0;
+        const catText = p.categoryName ? p.categoryName : (p.category_id ? (mgmtCategoriesMap[String(p.category_id)] || ('Kategori #' + p.category_id)) : 'Diğer');
+        return `
+          <div class="management-row price-row">
+            <div>
+              <div class="management-row-title">${p.name}</div>
+              <div class="management-row-sub">${catText}${catText ? ' • ' : ''}ID: ${pid}</div>
+            </div>
+            <div class="mgmt-price-controls">
+              <div class="management-pill">₺ ${currentPrice.toFixed(2)}</div>
+              <input class="management-input mgmt-price-input" id="mgmtPrice_${pid}" inputmode="decimal" placeholder="Yeni fiyat" value="" />
+              <button type="button" class="mgmt-action-btn save mgmt-save-btn" onclick="mgmtSavePrice('${pid}')" title="Kaydet">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20 6L9 17l-5-5"/>
+                </svg>
+                <span class="mgmt-save-text">Kaydet</span>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function mgmtSavePrice(productId) {
+      if (!db || !db.collection) {
+        showToast('error', 'Hata', 'Veritabanı bağlantısı hazır değil.');
+        return;
+      }
+      const input = document.getElementById('mgmtPrice_' + productId);
+      const raw = (input && input.value) ? String(input.value).replace(',', '.').trim() : '';
+      const val = Number(raw);
+      if (!raw || isNaN(val) || val < 0) {
+        showToast('error', 'Hata', 'Geçerli bir fiyat giriniz.');
+        return;
+      }
+
+      const item = mgmtProducts.find((p) => String(p.productId) === String(productId));
+      if (!item) {
+        showToast('error', 'Hata', 'Ürün bulunamadı.');
+        return;
+      }
+
+      try {
+        await db.collection('products').doc(item.docId).update({
+          price: val,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        item.price = val;
+        showToast('success', 'Başarılı', 'Fiyat kaydedildi.');
+        mgmtRenderPriceList();
+      } catch (e) {
+        console.error('Fiyat kaydetme hatası:', e);
+        showToast('error', 'Hata', 'Fiyat kaydedilemedi: ' + (e.message || 'Bilinmeyen hata'));
       }
     }
 
@@ -6212,6 +7159,576 @@
       display: flex;
       align-items: center;
       gap: 10px;
+    }
+
+    .navbar-actions-stack {
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+    }
+
+    .navbar-actions-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Yönetim butonu (Gece Dönercisi) */
+    .management-btn {
+      width: 100%;
+      min-width: 240px;
+      justify-content: center;
+      border-radius: 14px;
+      padding: 12px 18px;
+      font-size: 14px;
+      font-weight: 800;
+      border: 2px solid #0f172a;
+      color: #ffffff;
+      background: linear-gradient(135deg, #0f172a 0%, #1f2937 100%);
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.22), 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+    }
+
+    .management-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 14px 34px rgba(15, 23, 42, 0.26), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+    }
+
+    .management-btn:active {
+      transform: translateY(0);
+    }
+
+    /* Yönetim overlay */
+    .management-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 10050;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(2, 6, 23, 0.62);
+      backdrop-filter: blur(6px);
+    }
+
+    .management-modal {
+      width: 100%;
+      max-width: 980px;
+      max-height: 90vh;
+      overflow: hidden;
+      background: #ffffff;
+      border-radius: 24px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+      display: flex;
+      flex-direction: column;
+      animation: slideUp 0.25s ease;
+    }
+
+    .management-header {
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(135deg, #0f172a 0%, #1f2937 100%);
+      color: #fff;
+    }
+
+    .management-header h2 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: -0.2px;
+    }
+
+    .management-close {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      cursor: pointer;
+      font-size: 24px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .management-close:hover {
+      background: rgba(255, 255, 255, 0.18);
+      transform: scale(1.03);
+    }
+
+    .management-body {
+      padding: 18px 20px 22px 20px;
+      overflow: auto;
+    }
+
+    .management-home-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .management-card {
+      border: 2px solid #e5e7eb;
+      border-radius: 20px;
+      padding: 18px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      cursor: pointer;
+      transition: all 0.25s ease;
+      text-align: left;
+    }
+
+    .management-card:hover {
+      border-color: #0f172a;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
+      transform: translateY(-1px);
+    }
+
+    .management-card-title {
+      font-size: 16px;
+      font-weight: 900;
+      color: #0f172a;
+      margin: 0 0 6px 0;
+    }
+
+    .management-card-desc {
+      margin: 0;
+      font-size: 13px;
+      color: #475569;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    .management-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border: 2px solid #e5e7eb;
+      border-radius: 18px;
+      background: #ffffff;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    .management-toolbar .branch-toggle {
+      display: flex;
+      gap: 10px;
+    }
+
+    .branch-btn {
+      padding: 10px 14px;
+      border-radius: 14px;
+      border: 2px solid #e5e7eb;
+      background: #f8fafc;
+      color: #0f172a;
+      font-weight: 900;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .branch-btn.active {
+      border-color: #0f172a;
+      background: #0f172a;
+      color: #fff;
+      box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
+    }
+
+    .management-search {
+      flex: 1;
+      max-width: 420px;
+      padding: 10px 14px;
+      border-radius: 14px;
+      border: 2px solid #e5e7eb;
+      outline: none;
+      font-weight: 700;
+    }
+
+    .management-search:focus {
+      border-color: #0f172a;
+      box-shadow: 0 0 0 4px rgba(15, 23, 42, 0.08);
+    }
+
+    .management-list {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .management-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 14px;
+      border: 1px solid #e2e8f0;
+      border-radius: 18px;
+      background: #ffffff;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+    }
+
+    /* Stok listesi: daha sade/ergonomik */
+    #managementStock .management-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    #managementStock .management-search {
+      max-width: none;
+      min-width: 220px;
+      flex: 1 1 320px;
+    }
+
+    .management-row.stock-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      padding: 16px 16px;
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      transition: box-shadow 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+    }
+
+    .management-row.stock-row:hover {
+      border-color: rgba(15, 23, 42, 0.18);
+      box-shadow: 0 14px 34px rgba(15, 23, 42, 0.10);
+      transform: translateY(-1px);
+    }
+
+    .mgmt-stock-left {
+      min-width: 240px;
+    }
+
+    .mgmt-stock-right {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .management-pill.is-zero {
+      border-color: #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .mgmt-stock-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .mgmt-stock-input {
+      width: 120px;
+      border-width: 2px;
+    }
+
+    .mgmt-stock-input:focus {
+      border-color: #0f172a;
+      box-shadow: 0 0 0 4px rgba(15, 23, 42, 0.08);
+    }
+
+    .mgmt-stock-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .management-row-title {
+      font-weight: 900;
+      color: #0f172a;
+      font-size: 14px;
+      line-height: 1.2;
+    }
+
+    .management-row-sub {
+      font-size: 12px;
+      color: #64748b;
+      font-weight: 600;
+      margin-top: 4px;
+    }
+
+    .management-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 12px;
+      border-radius: 14px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      font-weight: 900;
+      color: #0f172a;
+      text-align: center;
+      min-width: 92px;
+    }
+
+    .management-input {
+      width: 110px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid #e2e8f0;
+      outline: none;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .management-input:focus {
+      border-color: #0f172a;
+      box-shadow: 0 0 0 4px rgba(15, 23, 42, 0.08);
+    }
+
+    .management-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      min-width: 210px;
+    }
+
+    .mgmt-action-btn {
+      flex: 1;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 2px solid transparent;
+      cursor: pointer;
+      font-weight: 900;
+      transition: all 0.2s;
+    }
+
+    .mgmt-action-btn.add {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: #fff;
+    }
+
+    .mgmt-action-btn.sub {
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      color: #fff;
+    }
+
+    .mgmt-action-btn.save {
+      background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+      color: #fff;
+    }
+
+    .mgmt-back {
+      padding: 10px 14px;
+      border-radius: 14px;
+      border: 2px solid #e5e7eb;
+      background: #ffffff;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    /* Yönetim: kategori sekmeleri (özellikle Fiyat) */
+    .mgmt-tabs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      white-space: nowrap;
+      padding-bottom: 2px;
+      flex: 1 1 auto;
+      min-width: 220px;
+    }
+
+    .mgmt-tab {
+      padding: 9px 12px;
+      border-radius: 999px;
+      border: 2px solid #e5e7eb;
+      background: #f8fafc;
+      color: #0f172a;
+      font-weight: 900;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      user-select: none;
+    }
+
+    .mgmt-tab:hover {
+      border-color: rgba(15, 23, 42, 0.28);
+      background: #ffffff;
+    }
+
+    .mgmt-tab.active {
+      border-color: #0f172a;
+      background: #0f172a;
+      color: #ffffff;
+      box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18);
+    }
+
+    .mgmt-tab-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 20px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.08);
+      color: #0f172a;
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .mgmt-tab.active .mgmt-tab-count {
+      background: rgba(255, 255, 255, 0.18);
+      color: #ffffff;
+    }
+
+    /* Fiyat yönetimi: daha kompakt, daha çok ürün */
+    #managementPrice .management-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    #managementPrice .management-search {
+      max-width: none;
+      min-width: 180px;
+      flex: 1 1 220px;
+    }
+
+    .management-list.price-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .management-row.price-row {
+      padding: 12px 12px;
+      border-radius: 18px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .price-row .management-row-title {
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.25;
+    }
+
+    .mgmt-price-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .mgmt-price-controls .management-pill {
+      min-width: 0;
+      padding: 7px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+    }
+
+    .mgmt-price-input {
+      width: 110px;
+      border-width: 2px;
+      padding: 9px 10px;
+      border-radius: 12px;
+      font-weight: 900;
+    }
+
+    .mgmt-save-btn {
+      padding: 9px 10px;
+      border-radius: 12px;
+      min-width: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .mgmt-save-btn svg {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 auto;
+    }
+
+    @media (max-width: 360px) {
+      .management-list.price-list {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (min-width: 980px) {
+      .management-list.price-list {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 900px) {
+      .mgmt-save-btn .mgmt-save-text {
+        display: none;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .management-home-grid {
+        grid-template-columns: 1fr;
+      }
+      .management-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .management-actions {
+        min-width: 0;
+      }
+      .management-input {
+        width: 100%;
+      }
+
+      .management-row.stock-row {
+        grid-template-columns: 1fr;
+      }
+
+      .mgmt-stock-left {
+        min-width: 0;
+      }
+
+      .mgmt-stock-right {
+        justify-content: flex-start;
+        align-items: stretch;
+      }
+
+      .mgmt-stock-controls {
+        justify-content: flex-start;
+      }
+
+      .mgmt-stock-input {
+        width: 100%;
+      }
+
+      .mgmt-stock-actions {
+        width: 100%;
+      }
+
+      .mgmt-stock-actions .mgmt-action-btn {
+        flex: 1;
+      }
     }
 
     .refresh-btn,
@@ -7929,6 +9446,275 @@
       grid-template-columns: repeat(2, 1fr);
       gap: 18px;
       margin-bottom: 28px;
+    }
+
+    /* Trendyol / Yemeksepeti / Migros Yemek kartları için */
+    .platform-revenue-container {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    @media (max-width: 1100px) {
+      .platform-revenue-container {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 560px) {
+      .platform-revenue-container {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Masraf kartının altına Zahiyat kartı (B/W kurumsal) */
+    .period-expense-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .period-zahiyat-card {
+      position: relative;
+      border-radius: 20px;
+      padding: 22px 22px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      border: 2px solid #0f172a;
+      box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+      overflow: hidden;
+      transition: transform 0.25s ease, box-shadow 0.25s ease;
+      color: #0f172a;
+    }
+
+    .period-zahiyat-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+    }
+
+    .period-zahiyat-accent {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #0f172a 0%, #334155 50%, #0f172a 100%);
+      opacity: 0.9;
+    }
+
+    .period-zahiyat-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(15, 23, 42, 0.18);
+      background: rgba(15, 23, 42, 0.04);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: #0f172a;
+    }
+
+    .period-zahiyat-meta {
+      margin-top: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #64748b;
+    }
+
+    .period-zahiyat-amount {
+      margin-top: 14px;
+      font-size: 30px;
+      font-weight: 950;
+      letter-spacing: -1px;
+      color: #0f172a;
+      line-height: 1;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    }
+
+    /* Zahiyat modal */
+    .zahiyat-modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 20050;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(2, 6, 23, 0.62);
+      backdrop-filter: blur(8px);
+    }
+
+    .zahiyat-modal {
+      width: 100%;
+      max-width: 980px;
+      max-height: 90vh;
+      overflow: hidden;
+      border-radius: 24px;
+      background: #ffffff;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+      display: flex;
+      flex-direction: column;
+      animation: slideUp 0.22s ease;
+    }
+
+    .zahiyat-modal-header {
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: linear-gradient(135deg, #0f172a 0%, #111827 100%);
+      color: #ffffff;
+    }
+
+    .zahiyat-modal-title {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 950;
+      letter-spacing: -0.2px;
+    }
+
+    .zahiyat-modal-subtitle {
+      margin: 4px 0 0 0;
+      font-size: 12px;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.78);
+    }
+
+    .zahiyat-modal-close {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      cursor: pointer;
+      font-size: 24px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.15s ease, background 0.15s ease;
+      flex: 0 0 auto;
+    }
+
+    .zahiyat-modal-close:hover {
+      transform: scale(1.03);
+      background: rgba(255, 255, 255, 0.18);
+    }
+
+    .zahiyat-modal-body {
+      padding: 14px 16px 18px 16px;
+      overflow: auto;
+    }
+
+    .zahiyat-modal-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 2px solid #e5e7eb;
+      border-radius: 18px;
+      background: #ffffff;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    .zahiyat-modal-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      font-weight: 900;
+      color: #0f172a;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .zahiyat-list {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .zahiyat-item-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 18px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+      padding: 14px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .zahiyat-item-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .zahiyat-item-person {
+      font-weight: 950;
+      color: #0f172a;
+      font-size: 14px;
+      line-height: 1.2;
+    }
+
+    .zahiyat-item-meta {
+      margin-top: 4px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #64748b;
+    }
+
+    .zahiyat-item-amount {
+      font-weight: 950;
+      color: #0f172a;
+      font-size: 14px;
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    .zahiyat-products {
+      border-top: 1px solid rgba(15, 23, 42, 0.08);
+      padding-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .zahiyat-product-line {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .zahiyat-product-sub {
+      font-size: 11px;
+      font-weight: 700;
+      color: #64748b;
+      margin-top: 2px;
+    }
+
+    @media (min-width: 900px) {
+      .zahiyat-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
     }
 
     /* Seçilen Zaman Dilimi Ciro Kartı */
@@ -9732,18 +11518,27 @@
               <p class="navbar-subtitle">Anlık Satış Detayları ve İstatistikler</p>
             </div>
           </div>
-          <div class="navbar-actions">
-            <button onclick="loadSales()" class="refresh-btn">
-              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/>
+          <div class="navbar-actions navbar-actions-stack">
+            <div class="navbar-actions-row">
+              <button onclick="loadSales()" class="refresh-btn">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/>
+                </svg>
+                <span>Yenile</span>
+              </button>
+              <button onclick="logout()" class="logout-btn">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"/>
+                </svg>
+                <span>Çıkış</span>
+              </button>
+            </div>
+
+            <button onclick="openManagementOverlay()" class="management-btn" id="managementBtn">
+              <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m-6-9H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6.75z"/>
               </svg>
-              <span>Yenile</span>
-            </button>
-            <button onclick="logout()" class="logout-btn">
-              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"/>
-              </svg>
-              <span>Çıkış</span>
+              <span>Yönetim</span>
             </button>
           </div>
         </div>
@@ -9792,6 +11587,63 @@
       <div id="staffContainer" style="min-height: 200px; display: none;"></div>
       <div id="tablesContainer" style="min-height: 200px; display: none;"></div>
       <div id="cancelsContainer" style="min-height: 200px; display: none;"></div>
+    </div>
+  </div>
+
+  <!-- Yönetim Overlay (Stok / Fiyat) -->
+  <div id="managementOverlay" class="management-overlay" onclick="if(event.target === this) closeManagementOverlay()">
+    <div class="management-modal" onclick="event.stopPropagation()">
+      <div class="management-header">
+        <h2>🏢 Yönetim</h2>
+        <button class="management-close" onclick="closeManagementOverlay()" title="Kapat">×</button>
+      </div>
+      <div class="management-body">
+        <div id="managementHome">
+          <div class="management-home-grid">
+            <button class="management-card" onclick="openManagementSection('stock')">
+              <div class="management-card-title">1 - Stok</div>
+              <p class="management-card-desc">Şube seçin ve tüm ürünler için stok ekle/çıkar işlemlerini yönetin.</p>
+            </button>
+            <button class="management-card" onclick="openManagementSection('price')">
+              <div class="management-card-title">2 - Fiyat</div>
+              <p class="management-card-desc">Veritabanındaki ürün fiyatlarını listeleyin, düzenleyin ve kaydedin.</p>
+            </button>
+          </div>
+        </div>
+
+        <div id="managementStock" style="display:none;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px;">
+            <button class="mgmt-back" onclick="openManagementSection('home')">← Geri</button>
+            <div style="font-weight:900; color:#0f172a;">Stok Yönetimi</div>
+          </div>
+
+          <div class="management-toolbar">
+            <div class="branch-toggle" id="mgmtBranchToggle">
+              <button class="branch-btn" id="branchBtn_SANCAK" onclick="mgmtSelectBranch('SANCAK')">SANCAK</button>
+              <button class="branch-btn" id="branchBtn_SEKER" onclick="mgmtSelectBranch('SEKER')">ŞEKER</button>
+            </div>
+            <input class="management-search" id="mgmtStockSearch" placeholder="Ürün ara…" oninput="mgmtRenderStockList()" />
+          </div>
+
+          <div id="mgmtStockHint" style="margin: 0 0 10px 0; font-size: 13px; font-weight: 700; color: #64748b;"></div>
+          <div id="mgmtStockList" class="management-list"></div>
+        </div>
+
+        <div id="managementPrice" style="display:none;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px;">
+            <button class="mgmt-back" onclick="openManagementSection('home')">← Geri</button>
+            <div style="font-weight:900; color:#0f172a;">Fiyat Yönetimi</div>
+          </div>
+
+          <div class="management-toolbar">
+            <div class="mgmt-tabs" id="mgmtPriceCategoryTabs"></div>
+            <input class="management-search" id="mgmtPriceSearch" placeholder="Ürün ara…" oninput="mgmtRenderPriceList()" />
+          </div>
+
+          <div id="mgmtPriceHint" style="margin: 0 0 10px 0; font-size: 13px; font-weight: 700; color: #64748b;"></div>
+          <div id="mgmtPriceList" class="management-list price-list"></div>
+        </div>
+      </div>
     </div>
   </div>
 

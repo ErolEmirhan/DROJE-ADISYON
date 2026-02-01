@@ -72,6 +72,25 @@ let tablesFirebaseCollection = null;
 let tablesFirebaseDoc = null;
 let tablesFirebaseSetDoc = null;
 
+// Gece Dönercisi - Şube stokları için ayrı Firebase (gecedonercisimasalar)
+const GECE_TENANT_ID = 'TENANT-1769602125250';
+const GECE_MASALAR_FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyB9RzR5HMVDTUfduW1ix-871k5gSM55VkU',
+  authDomain: 'gecedonercisimasalar.firebaseapp.com',
+  projectId: 'gecedonercisimasalar',
+  storageBucket: 'gecedonercisimasalar.firebasestorage.app',
+  messagingSenderId: '772077442379',
+  appId: '1:772077442379:web:cd19d6c85810ceda93c4ce',
+  measurementId: 'G-689BHMKQ7X',
+};
+let geceStocksFirebaseApp = null;
+let geceStocksFirestore = null;
+let firebaseRunTransaction = null;
+let firebaseGetDoc = null;
+let firebaseUpdateDoc = null;
+let firebaseQuery = null;
+let firebaseWhere = null;
+
 // Tenant'a göre Firebase'leri başlat
 async function initializeTenantFirebases(tenantInfo) {
   try {
@@ -107,6 +126,11 @@ async function initializeTenantFirebases(tenantInfo) {
       firebaseDoc = firebaseFirestoreModule.doc;
       firebaseSetDoc = firebaseFirestoreModule.setDoc;
       firebaseOnSnapshot = firebaseFirestoreModule.onSnapshot;
+      firebaseRunTransaction = firebaseFirestoreModule.runTransaction;
+      firebaseGetDoc = firebaseFirestoreModule.getDoc;
+      firebaseUpdateDoc = firebaseFirestoreModule.updateDoc;
+      firebaseQuery = firebaseFirestoreModule.query;
+      firebaseWhere = firebaseFirestoreModule.where;
       storageRef = firebaseStorageModule.ref;
       storageUploadBytes = firebaseStorageModule.uploadBytes;
       storageGetDownloadURL = firebaseStorageModule.getDownloadURL;
@@ -140,6 +164,27 @@ async function initializeTenantFirebases(tenantInfo) {
       console.log(`✅ Masalar Firebase başlatıldı: ${tablesConfig.projectId}`);
     } else {
       console.warn('⚠️ Masalar Firebase config bulunamadı');
+    }
+
+    // Gece Dönercisi: şube stokları için ayrı Firebase başlat (gecedonercisimasalar)
+    if (tenantInfo?.tenantId === GECE_TENANT_ID) {
+      try {
+        try {
+          const existingApp = firebaseAppModule.getApp('gece-stocks');
+          if (existingApp) {
+            await firebaseAppModule.deleteApp(existingApp);
+          }
+        } catch (e) {
+          // App yok, devam et
+        }
+        geceStocksFirebaseApp = firebaseAppModule.initializeApp(GECE_MASALAR_FIREBASE_CONFIG, 'gece-stocks');
+        geceStocksFirestore = firebaseFirestoreModule.getFirestore(geceStocksFirebaseApp);
+        console.log(`✅ Gece şube stok Firebase başlatıldı: ${GECE_MASALAR_FIREBASE_CONFIG.projectId}`);
+      } catch (e) {
+        console.error('❌ Gece şube stok Firebase başlatma hatası:', e);
+        geceStocksFirebaseApp = null;
+        geceStocksFirestore = null;
+      }
     }
 
     return true;
@@ -190,10 +235,20 @@ async function cleanupFirebases() {
       // App zaten silinmiş
     }
 
+    try {
+      if (geceStocksFirebaseApp) {
+        await firebaseAppModule.deleteApp(geceStocksFirebaseApp);
+        geceStocksFirebaseApp = null;
+      }
+    } catch (e) {
+      // App zaten silinmiş
+    }
+
     // Değişkenleri sıfırla
     firestore = null;
     storage = null;
     tablesFirestore = null;
+    geceStocksFirestore = null;
     
     console.log('✅ Mevcut Firebase\'ler temizlendi');
   } catch (error) {
@@ -222,6 +277,169 @@ function getBusinessDayDateString(date = new Date()) {
   }
   return date.toLocaleDateString('tr-TR');
 }
+
+// ——— Gece Dönercisi: Şube stokları helpers ———
+function normalizeTrText(input) {
+  try {
+    return String(input || '')
+      .toLocaleLowerCase('tr-TR')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  } catch (e) {
+    return String(input || '').toLowerCase().trim();
+  }
+}
+
+function isAllowedGeceStockCategoryName(categoryName) {
+  const norm = normalizeTrText(categoryName);
+  return norm === 'icecekler' || norm === 'yan urunler';
+}
+
+function shouldAffectGeceBranchStock(productId) {
+  const product = db.products.find((p) => String(p.id) === String(productId));
+  if (!product) return false;
+  const category = db.categories.find((c) => String(c.id) === String(product.category_id));
+  const categoryName = category?.name || '';
+  return isAllowedGeceStockCategoryName(categoryName);
+}
+
+function isValidGeceBranch(branch) {
+  return branch === 'SANCAK' || branch === 'SEKER';
+}
+
+async function decreaseGeceBranchStockItems({ branch, deviceId, items, source }) {
+  if (!geceStocksFirestore || !firebaseRunTransaction || !firebaseDoc || !firebaseServerTimestamp || !firebaseCollection || !firebaseAddDoc) {
+    return;
+  }
+  if (!isValidGeceBranch(branch)) return;
+  const safeDeviceId = deviceId ? String(deviceId) : null;
+
+  const relevant = (items || [])
+    .filter((it) => it && !it.isGift && !it.isExpense)
+    .map((it) => ({
+      productId: String(it.id),
+      qty: Math.max(0, Number(it.quantity || 0)),
+      name: it.name || null,
+    }))
+    .filter((it) => it.qty > 0)
+    .filter((it) => shouldAffectGeceBranchStock(it.productId));
+
+  for (const it of relevant) {
+    const docId = `${branch}_${it.productId}`;
+    const ref = firebaseDoc(geceStocksFirestore, 'branchStocks', docId);
+
+    try {
+      const res = await firebaseRunTransaction(geceStocksFirestore, async (tx) => {
+        const snap = await tx.get(ref);
+        const before = snap.exists() ? Number((snap.data() || {}).stock || 0) : 0;
+        let after = before - it.qty;
+        if (after < 0) after = 0;
+        tx.set(
+          ref,
+          {
+            tenantId: GECE_TENANT_ID,
+            branch,
+            productId: it.productId,
+            stock: after,
+            updatedAt: firebaseServerTimestamp(),
+            updatedByDeviceId: safeDeviceId,
+          },
+          { merge: true }
+        );
+        return { before, after };
+      });
+
+      // Hareket kaydı (opsiyonel)
+      try {
+        const movesRef = firebaseCollection(geceStocksFirestore, 'branchStockMoves');
+        await firebaseAddDoc(movesRef, {
+          tenantId: GECE_TENANT_ID,
+          branch,
+          productId: it.productId,
+          productName: it.name,
+          delta: -it.qty,
+          before: res.before,
+          after: res.after,
+          deviceId: safeDeviceId,
+          source: source || null,
+          createdAt: firebaseServerTimestamp(),
+        });
+      } catch (e) {
+        // history zorunlu değil
+      }
+    } catch (e) {
+      // Satışı engelleme: sadece logla
+      console.warn('Gece şube stok düşme hatası:', e?.message || e);
+    }
+  }
+}
+
+async function increaseGeceBranchStockItems({ branch, deviceId, items, source }) {
+  if (!geceStocksFirestore || !firebaseRunTransaction || !firebaseDoc || !firebaseServerTimestamp || !firebaseCollection || !firebaseAddDoc) {
+    return;
+  }
+  if (!isValidGeceBranch(branch)) return;
+  const safeDeviceId = deviceId ? String(deviceId) : null;
+
+  const relevant = (items || [])
+    .filter((it) => it && !it.isGift && !it.isExpense)
+    .map((it) => ({
+      productId: String(it.id),
+      qty: Math.max(0, Number(it.quantity || 0)),
+      name: it.name || null,
+    }))
+    .filter((it) => it.qty > 0)
+    .filter((it) => shouldAffectGeceBranchStock(it.productId));
+
+  for (const it of relevant) {
+    const docId = `${branch}_${it.productId}`;
+    const ref = firebaseDoc(geceStocksFirestore, 'branchStocks', docId);
+
+    try {
+      const res = await firebaseRunTransaction(geceStocksFirestore, async (tx) => {
+        const snap = await tx.get(ref);
+        const before = snap.exists() ? Number((snap.data() || {}).stock || 0) : 0;
+        const after = before + it.qty;
+        tx.set(
+          ref,
+          {
+            tenantId: GECE_TENANT_ID,
+            branch,
+            productId: it.productId,
+            stock: after,
+            updatedAt: firebaseServerTimestamp(),
+            updatedByDeviceId: safeDeviceId,
+          },
+          { merge: true }
+        );
+        return { before, after };
+      });
+
+      // Hareket kaydı (opsiyonel)
+      try {
+        const movesRef = firebaseCollection(geceStocksFirestore, 'branchStockMoves');
+        await firebaseAddDoc(movesRef, {
+          tenantId: GECE_TENANT_ID,
+          branch,
+          productId: it.productId,
+          productName: it.name,
+          delta: it.qty,
+          before: res.before,
+          after: res.after,
+          deviceId: safeDeviceId,
+          source: source || null,
+          createdAt: firebaseServerTimestamp(),
+        });
+      } catch (e) {
+        // history zorunlu değil
+      }
+    } catch (e) {
+      console.warn('Gece şube stok iade hatası:', e?.message || e);
+    }
+  }
+}
 let db = {
   categories: [],
   products: [],
@@ -231,10 +449,15 @@ let db = {
   tableOrderItems: [],
   settings: {
     adminPin: '1234',
-    cashierPrinter: null // { printerName, printerType } - Kasa yazıcısı ayarı
+    cashierPrinter: null, // { printerName, printerType } - Kasa yazıcısı ayarı
+    geceBranch: null, // Gece Dönercisi: 'SANCAK' | 'SEKER'
+    geceDeviceId: null // Gece Dönercisi: cihaz id (renderer üretir)
   },
   printerAssignments: [] // { printerName, printerType, category_id }
 };
+
+// Gece Dönercisi: main process içinde aktif şube seçimi (mobil isteklerde de kullanılır)
+let geceBranchSelection = { branch: null, deviceId: null };
 
 function initDatabase(tenantId = null) {
   // Tenant'a göre database path'i oluştur
@@ -249,7 +472,7 @@ function initDatabase(tenantId = null) {
       
       // Eğer settings objesi yoksa ekle
       if (!db.settings) {
-        db.settings = { adminPin: '1234', cashierPrinter: null };
+        db.settings = { adminPin: '1234', cashierPrinter: null, geceBranch: null, geceDeviceId: null };
         saveDatabase();
       }
       // cashierPrinter yoksa ekle
@@ -257,6 +480,22 @@ function initDatabase(tenantId = null) {
         db.settings.cashierPrinter = null;
         saveDatabase();
       }
+
+      // Gece şube alanları yoksa ekle
+      if (db.settings && db.settings.geceBranch === undefined) {
+        db.settings.geceBranch = null;
+        saveDatabase();
+      }
+      if (db.settings && db.settings.geceDeviceId === undefined) {
+        db.settings.geceDeviceId = null;
+        saveDatabase();
+      }
+
+      // Aktif şube seçimini DB'den yükle (mobil siparişler için)
+      geceBranchSelection = {
+        branch: db.settings?.geceBranch || null,
+        deviceId: db.settings?.geceDeviceId || null,
+      };
       
       // Eksik diğer alanları kontrol et
       if (!db.categories) db.categories = [];
@@ -287,7 +526,9 @@ function initEmptyData() {
   db.printerAssignments = [];
   db.settings = {
     adminPin: '1234',
-    cashierPrinter: null
+    cashierPrinter: null,
+    geceBranch: null,
+    geceDeviceId: null
   };
   
   saveDatabase();
@@ -1204,6 +1445,35 @@ ipcMain.handle('get-business-name', () => {
   return tenantManager.getBusinessName();
 });
 
+// Gece Dönercisi: renderer -> main şube seçimi aktarımı (mobil endpoint'ler bu değeri kullanır)
+ipcMain.handle('set-gece-branch-selection', async (event, payload) => {
+  try {
+    const tenantInfo = tenantManager.getCurrentTenantInfo();
+    if (!tenantInfo || tenantInfo.tenantId !== GECE_TENANT_ID) {
+      return { success: false, error: 'Bu tenant için şube seçimi aktif değil' };
+    }
+
+    const branch = payload?.branch;
+    const deviceId = payload?.deviceId ? String(payload.deviceId) : null;
+
+    if (!isValidGeceBranch(branch)) {
+      return { success: false, error: 'Geçersiz şube. SANCAK veya ŞEKER olmalı.' };
+    }
+
+    geceBranchSelection = { branch, deviceId };
+
+    if (!db.settings) db.settings = { adminPin: '1234', cashierPrinter: null, geceBranch: null, geceDeviceId: null };
+    db.settings.geceBranch = branch;
+    db.settings.geceDeviceId = deviceId;
+    saveDatabase();
+
+    return { success: true, branch, deviceId };
+  } catch (e) {
+    console.error('set-gece-branch-selection hatası:', e);
+    return { success: false, error: e.message || 'Şube seçimi kaydedilemedi' };
+  }
+});
+
 // IPC Handlers
 ipcMain.handle('get-categories', () => {
   return db.categories.sort((a, b) => a.order_index - b.order_index);
@@ -1420,24 +1690,37 @@ ipcMain.handle('get-products', async (event, categoryId) => {
 });
 
 ipcMain.handle('create-sale', async (event, saleData) => {
-  const { items, totalAmount, paymentMethod, orderNote, orderSource, staff_name } = saleData;
+  const { items, totalAmount, paymentMethod, orderNote, orderSource, staff_name, branch, deviceId } = saleData;
   
   const now = new Date();
   const saleDate = getBusinessDayDateString(now);
   const saleTime = getFormattedTime(now);
 
-  // Stok kontrolü ve düşürme (sadece stok takibi yapılan ürünler için)
-  for (const item of items) {
-    if (!item.isGift && !item.isExpense) { // İkram ve masraf ürünleri stoktan düşmez
-      const product = db.products.find(p => p.id === item.id);
-      // Sadece stok takibi yapılan ürünler için kontrol et
-      if (product && product.trackStock) {
-        const stockDecreased = await decreaseProductStock(item.id, item.quantity);
-        if (!stockDecreased) {
-          return { 
-            success: false, 
-            error: `${item.name} için yetersiz stok` 
-          };
+  const tenantInfo = tenantManager.getCurrentTenantInfo();
+  const isGeceDonercisiTenant = tenantInfo?.tenantId === GECE_TENANT_ID;
+
+  if (isGeceDonercisiTenant) {
+    // Gece Dönercisi: stok düşümü şube bazlı (0 altına düşmez, satışı engellemez)
+    await decreaseGeceBranchStockItems({
+      branch,
+      deviceId,
+      items,
+      source: 'desktop-create-sale',
+    });
+  } else {
+    // Diğer tenant'lar: stok kontrolü ve düşürme (sadece stok takibi yapılan ürünler için)
+    for (const item of items) {
+      if (!item.isGift && !item.isExpense) { // İkram ve masraf ürünleri stoktan düşmez
+        const product = db.products.find(p => p.id === item.id);
+        // Sadece stok takibi yapılan ürünler için kontrol et
+        if (product && product.trackStock) {
+          const stockDecreased = await decreaseProductStock(item.id, item.quantity);
+          if (!stockDecreased) {
+            return { 
+              success: false, 
+              error: `${item.name} için yetersiz stok` 
+            };
+          }
         }
       }
     }
@@ -1684,7 +1967,7 @@ ipcMain.handle('delete-all-sales', async (event) => {
 
 // Table Order IPC Handlers
 ipcMain.handle('create-table-order', async (event, orderData) => {
-  const { items, totalAmount, tableId, tableName, tableType, orderNote, orderSource } = orderData;
+  const { items, totalAmount, tableId, tableName, tableType, orderNote, orderSource, branch, deviceId } = orderData;
   
   // Eğer orderSource gönderilmemişse, tableType'a göre otomatik belirle (mobil personel senkronu için)
   let finalOrderSource = orderSource;
@@ -1710,18 +1993,31 @@ ipcMain.handle('create-table-order', async (event, orderData) => {
   let orderId;
   let isNewOrder = false;
 
-  // Stok kontrolü ve düşürme (sadece stok takibi yapılan ürünler için)
-  for (const item of items) {
-    if (!item.isGift) { // İkram edilen ürünler stoktan düşmez
-      const product = db.products.find(p => p.id === item.id);
-      // Sadece stok takibi yapılan ürünler için kontrol et
-      if (product && product.trackStock) {
-        const stockDecreased = await decreaseProductStock(item.id, item.quantity);
-        if (!stockDecreased) {
-          return { 
-            success: false, 
-            error: `${item.name} için yetersiz stok` 
-          };
+  const tenantInfo = tenantManager.getCurrentTenantInfo();
+  const isGeceDonercisiTenant = tenantInfo?.tenantId === GECE_TENANT_ID;
+
+  if (isGeceDonercisiTenant) {
+    // Gece Dönercisi: masaya kaydedilen ürünlerde şube stok düşümü (0 altına düşmez, siparişi engellemez)
+    await decreaseGeceBranchStockItems({
+      branch,
+      deviceId,
+      items,
+      source: 'desktop-create-table-order',
+    });
+  } else {
+    // Diğer tenant'lar: stok kontrolü ve düşürme (sadece stok takibi yapılan ürünler için)
+    for (const item of items) {
+      if (!item.isGift) { // İkram edilen ürünler stoktan düşmez
+        const product = db.products.find(p => p.id === item.id);
+        // Sadece stok takibi yapılan ürünler için kontrol et
+        if (product && product.trackStock) {
+          const stockDecreased = await decreaseProductStock(item.id, item.quantity);
+          if (!stockDecreased) {
+            return { 
+              success: false, 
+              error: `${item.name} için yetersiz stok` 
+            };
+          }
         }
       }
     }
@@ -1744,6 +2040,11 @@ ipcMain.handle('create-table-order', async (event, orderData) => {
         product_name: newItem.name,
         quantity: newItem.quantity,
         price: newItem.price,
+        portion: newItem.portion || null,
+        onionOption: newItem.onionOption || null,
+        extraNote: newItem.extraNote || null,
+        donerOptionsText: newItem.donerOptionsText || null,
+        donerKey: newItem.donerKey || null,
         isGift: newItem.isGift || false,
         staff_id: null, // Electron'dan eklenen ürünler için staff bilgisi yok
         staff_name: null,
@@ -1795,6 +2096,11 @@ ipcMain.handle('create-table-order', async (event, orderData) => {
         product_name: item.name,
         quantity: item.quantity,
         price: item.price,
+        portion: item.portion || null,
+        onionOption: item.onionOption || null,
+        extraNote: item.extraNote || null,
+        donerOptionsText: item.donerOptionsText || null,
+        donerKey: item.donerKey || null,
         isGift: item.isGift || false,
         staff_id: null,
         staff_name: null,
@@ -1863,10 +2169,13 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity, 
     return { success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' };
   }
 
+  const tenantId = tenantManager.getCurrentTenantInfo()?.tenantId || null;
+  const isGeceDonercisi = tenantId === 'TENANT-1769602125250';
+
   // Müdür kontrolü (sadece mobil personel arayüzünden gelen istekler için)
   if (staffId) {
     const staff = (db.staff || []).find(s => s.id === staffId);
-    if (!staff || !staff.is_manager) {
+    if (!isGeceDonercisi && (!staff || !staff.is_manager)) {
       return { 
         success: false, 
         error: 'İptal yetkisi yok. İptal ettirmek için lütfen müdürle görüşünüz.' 
@@ -1878,11 +2187,6 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity, 
   const quantityToCancel = cancelQuantity || item.quantity;
   if (quantityToCancel <= 0 || quantityToCancel > item.quantity) {
     return { success: false, error: 'Geçersiz iptal miktarı' };
-  }
-  
-  // Stok iadesi (ikram edilen ürünler hariç)
-  if (!item.isGift) {
-    await increaseProductStock(item.product_id, quantityToCancel);
   }
 
   // Ürün bilgilerini al (kategori ve yazıcı için)
@@ -1905,9 +2209,7 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity, 
     return { success: false, error: 'Bu ürünün kategorisine yazıcı atanmamış' };
   }
 
-  // Gece Dönercisi (TENANT-1769602125250): iptal açıklaması zorunlu değil
-  const tenantId = tenantManager.getCurrentTenantInfo()?.tenantId || null;
-  const isGeceDonercisi = tenantId === 'TENANT-1769602125250';
+  // Gece Dönercisi: iptal açıklaması zorunlu değil
   if (!isGeceDonercisi) {
     if (!cancelReason || cancelReason.trim() === '') {
       return { success: false, requiresReason: true, error: 'İptal açıklaması zorunludur' };
@@ -1915,6 +2217,22 @@ ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity, 
     cancelReason = cancelReason.trim();
   } else {
     cancelReason = (cancelReason && cancelReason.trim()) ? cancelReason.trim() : '';
+  }
+
+  // Stok iadesi (iptal gerçekten yapılacaksa) — Gece Dönercisi: şube stoklarına, diğerleri: normal stok
+  if (!item.isGift) {
+    if (isGeceDonercisi) {
+      const activeBranch = geceBranchSelection.branch || db.settings?.geceBranch || null;
+      const activeDeviceId = geceBranchSelection.deviceId || db.settings?.geceDeviceId || null;
+      await increaseGeceBranchStockItems({
+        branch: activeBranch,
+        deviceId: activeDeviceId,
+        items: [{ id: item.product_id, quantity: quantityToCancel, name: item.product_name, isGift: false }],
+        source: 'desktop-cancel-table-order-item',
+      });
+    } else {
+      await increaseProductStock(item.product_id, quantityToCancel);
+    }
   }
       
       // İptal fişi yazdır (sadece açıklama varsa) - arka planda
@@ -2051,10 +2369,15 @@ ipcMain.handle('cancel-table-order-items-bulk', async (event, itemsToCancel, can
     return { success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' };
   }
 
+  const tenantIdBulk = tenantManager.getCurrentTenantInfo()?.tenantId || null;
+  const isGeceDonercisiBulk = tenantIdBulk === 'TENANT-1769602125250';
+  const activeBranchBulk = isGeceDonercisiBulk ? (geceBranchSelection.branch || db.settings?.geceBranch || null) : null;
+  const activeDeviceIdBulk = isGeceDonercisiBulk ? (geceBranchSelection.deviceId || db.settings?.geceDeviceId || null) : null;
+
   // Müdür kontrolü (sadece mobil personel arayüzünden gelen istekler için)
   if (staffId) {
     const staff = (db.staff || []).find(s => s.id === staffId);
-    if (!staff || !staff.is_manager) {
+    if (!isGeceDonercisiBulk && (!staff || !staff.is_manager)) {
       return { 
         success: false, 
         error: 'İptal yetkisi yok. İptal ettirmek için lütfen müdürle görüşünüz.' 
@@ -2063,8 +2386,6 @@ ipcMain.handle('cancel-table-order-items-bulk', async (event, itemsToCancel, can
   }
 
   // Gece Dönercisi: iptal açıklaması zorunlu değil
-  const tenantIdBulk = tenantManager.getCurrentTenantInfo()?.tenantId || null;
-  const isGeceDonercisiBulk = tenantIdBulk === 'TENANT-1769602125250';
   if (!isGeceDonercisiBulk && (!cancelReason || cancelReason.trim() === '')) {
     return { success: false, requiresReason: true, error: 'İptal açıklaması zorunludur' };
   }
@@ -2081,11 +2402,6 @@ ipcMain.handle('cancel-table-order-items-bulk', async (event, itemsToCancel, can
 
     const quantityToCancel = cancelItem.quantity || item.quantity;
     if (quantityToCancel <= 0 || quantityToCancel > item.quantity) continue;
-
-    // Stok iadesi (ikram edilen ürünler hariç)
-    if (!item.isGift) {
-      await increaseProductStock(item.product_id, quantityToCancel);
-    }
 
     // Ürün bilgilerini al
     const product = db.products.find(p => p.id === item.product_id);
@@ -2111,6 +2427,20 @@ ipcMain.handle('cancel-table-order-items-bulk', async (event, itemsToCancel, can
         totalQuantity: 0,
         totalAmount: 0
       });
+    }
+
+    // Stok iadesi (iptal gerçekten yapılacaksa) — Gece Dönercisi: şube stoklarına, diğerleri: normal stok
+    if (!item.isGift) {
+      if (isGeceDonercisiBulk) {
+        await increaseGeceBranchStockItems({
+          branch: activeBranchBulk,
+          deviceId: activeDeviceIdBulk,
+          items: [{ id: item.product_id, quantity: quantityToCancel, name: item.product_name, isGift: false }],
+          source: 'desktop-cancel-table-order-items-bulk',
+        });
+      } else {
+        await increaseProductStock(item.product_id, quantityToCancel);
+      }
     }
 
     const categoryGroup = categoryGroups.get(product.category_id);
@@ -2364,8 +2694,35 @@ ipcMain.handle('cancel-entire-table-order', async (event, orderId) => {
 
   // Tüm sipariş item'larını bul ve sil
   const orderItems = db.tableOrderItems.filter(oi => oi.order_id === orderId);
-  
-  // Stok iadesi yapma - hiçbir şey değişmeyecek
+
+  // Stok iadesi: masaya girilen ürünler iptal olursa stoklara geri iade edilir
+  const tenantId = tenantManager.getCurrentTenantInfo()?.tenantId || null;
+  const isGeceDonercisiTenant = tenantId === GECE_TENANT_ID;
+  if (orderItems && orderItems.length > 0) {
+    if (isGeceDonercisiTenant) {
+      const activeBranch = geceBranchSelection.branch || db.settings?.geceBranch || null;
+      const activeDeviceId = geceBranchSelection.deviceId || db.settings?.geceDeviceId || null;
+      await increaseGeceBranchStockItems({
+        branch: activeBranch,
+        deviceId: activeDeviceId,
+        items: orderItems.map((it) => ({
+          id: it.product_id,
+          quantity: it.quantity,
+          name: it.product_name,
+          isGift: it.isGift || false,
+          isExpense: false,
+        })),
+        source: 'desktop-cancel-entire-table-order',
+      });
+    } else {
+      for (const it of orderItems) {
+        if (!it.isGift) {
+          await increaseProductStock(it.product_id, it.quantity);
+        }
+      }
+    }
+  }
+
   // Fiş yazdırma - hiçbir şey yazdırılmayacak
   // Firebase kaydı - hiçbir kayıt tutulmayacak
   
@@ -5639,6 +5996,9 @@ async function printAdisyonByCategory(items, adisyonData) {
   console.log(`   Toplam ${items.length} ürün bulundu`);
   
   try {
+    const tenantInfo = tenantManager.getCurrentTenantInfo();
+    const isGeceDonercisiTenant = tenantInfo?.tenantId === GECE_TENANT_ID;
+
     // 1. ÖNCE: Ürünleri personel ve zaman bazında grupla
     // Her personel grubu için ayrı adisyon oluşturulacak
     const staffGroupsMap = new Map(); // staffKey -> { staffName, staffTime, staffDate, items: [] }
@@ -5713,7 +6073,7 @@ async function printAdisyonByCategory(items, adisyonData) {
       console.log(`   📋 Kategori grupları: ${categoryItemsMap.size} kategori`);
       
       // 3. Kategorileri yazıcılara göre grupla (aynı yazıcıya atanmış kategorileri birleştir)
-      const printerGroupsMap = new Map(); // printerKey -> { printerName, printerType, categories: [{ categoryId, categoryName, items }] }
+      const printerGroupsMap = new Map(); // printerKey -> { printerName, printerType, isBeverageOnly, categories: [{ categoryId, categoryName, items }] }
       
       categoryItemsMap.forEach((categoryItems, categoryId) => {
         const categoryIdNum = typeof categoryId === 'string' && categoryId !== 'no-category' ? parseInt(categoryId) : categoryId;
@@ -5738,12 +6098,22 @@ async function printAdisyonByCategory(items, adisyonData) {
         }
         
         // Yazıcı key'i oluştur (aynı yazıcıyı gruplamak için)
-        const printerKey = `${printerName}::${printerType}`;
+        const isBeverageCategory =
+          isGeceDonercisiTenant &&
+          normalizeTrText(categoryInfo?.name || '') === 'icecekler';
+
+        // Gece Dönercisi kuralı:
+        // "İçecekler" kategorisi hangi yazıcıya atanmış olursa olsun döner fişinden ayrı, ayrı kağıt basılsın.
+        // (Aynı yazıcı olsa bile ayrı print job)
+        const printerKey = isBeverageCategory
+          ? `${printerName}::${printerType}::ICECEKLER_ONLY`
+          : `${printerName}::${printerType}`;
         
         if (!printerGroupsMap.has(printerKey)) {
           printerGroupsMap.set(printerKey, {
             printerName,
             printerType,
+            isBeverageOnly: !!isBeverageCategory,
             categories: []
           });
         }
@@ -5759,7 +6129,11 @@ async function printAdisyonByCategory(items, adisyonData) {
       console.log(`   🖨️ Yazıcı grupları: ${printerGroupsMap.size} yazıcı`);
       
       // 4. Her yazıcı için tek bir adisyon yazdır (kategoriler başlıklarla ayrılmış)
-      const printJobs = Array.from(printerGroupsMap.values());
+      const printJobs = Array.from(printerGroupsMap.values()).sort((a, b) => {
+        // Gece Dönercisi: içecek fişi her zaman en sona
+        if (!isGeceDonercisiTenant) return 0;
+        return (a.isBeverageOnly ? 1 : 0) - (b.isBeverageOnly ? 1 : 0);
+      });
       
       for (let i = 0; i < printJobs.length; i++) {
         const job = printJobs[i];
@@ -5831,6 +6205,7 @@ function generateAdisyonHTML(items, adisyonData) {
   // Yaka's Grill kontrolü
   const tenantInfo = tenantManager.getCurrentTenantInfo();
   const isYakasGrill = tenantInfo?.tenantId === 'TENANT-1766340222641';
+  const isGeceDonercisi = tenantInfo?.tenantId === 'TENANT-1769602125250';
   
   // Garson ismini adisyonData'dan al (eğer yoksa items'dan al)
   const staffName = adisyonData.staff_name || (items.length > 0 && items[0].staff_name ? items[0].staff_name : null);
@@ -5877,6 +6252,12 @@ function generateAdisyonHTML(items, adisyonData) {
         // Soğanlı/soğansız bilgisi varsa ürünün sağına ekle
         const onionOption = item.onionOption || null;
         const onionText = onionOption ? ` ${onionOption.toUpperCase()}` : '';
+
+        // Gece Dönercisi: Döner seçimleri (ürünle aynı puntoda/kalınlıkta)
+        const donerOptionsText = isGeceDonercisi && item.donerOptionsText ? String(item.donerOptionsText) : null;
+        const donerHTML = donerOptionsText
+          ? `<div style="margin-top: 2px; font-size: 14px; font-weight: 900; color: #000; font-family: Arial, sans-serif;">${donerOptionsText.toUpperCase()}</div>`
+          : '';
         
         // Ürün notu varsa göster
         const noteHTML = item.extraNote ? `
@@ -5894,6 +6275,7 @@ function generateAdisyonHTML(items, adisyonData) {
                   <span>${itemTextValue}</span>
                   ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
                 </div>
+                ${donerHTML}
                 ${noteHTML}
               </div>
             `;
@@ -5904,6 +6286,7 @@ function generateAdisyonHTML(items, adisyonData) {
                   <span>${itemTextValue}</span>
                   ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
                 </div>
+                ${donerHTML}
                 ${noteHTML}
               </div>
             `;
@@ -5950,6 +6333,12 @@ function generateAdisyonHTML(items, adisyonData) {
       // Soğanlı/soğansız bilgisi varsa ürünün sağına ekle
       const onionOption = item.onionOption || null;
       const onionText = onionOption ? ` ${onionOption.toUpperCase()}` : '';
+
+      // Gece Dönercisi: Döner seçimleri (ürünle aynı puntoda/kalınlıkta)
+      const donerOptionsText = isGeceDonercisi && item.donerOptionsText ? String(item.donerOptionsText) : null;
+      const donerHTML = donerOptionsText
+        ? `<div style="margin-top: 2px; font-size: 14px; font-weight: 900; color: #000; font-family: Arial, sans-serif;">${donerOptionsText.toUpperCase()}</div>`
+        : '';
       
       // Ürün notu varsa göster
       const noteHTML = item.extraNote ? `
@@ -5967,6 +6356,7 @@ function generateAdisyonHTML(items, adisyonData) {
                 <span>${itemTextValue}</span>
                 ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
               </div>
+              ${donerHTML}
               ${noteHTML}
             </div>
           `;
@@ -5977,6 +6367,7 @@ function generateAdisyonHTML(items, adisyonData) {
                 <span>${itemTextValue}</span>
                 ${onionText ? `<span style="font-size: 13px; font-weight: 700; color: #000;">${onionText}</span>` : ''}
               </div>
+              ${donerHTML}
               ${noteHTML}
             </div>
           `;
@@ -7829,6 +8220,11 @@ function generateMobileHTML(serverURL) {
             <span style="font-size: 17px; font-weight: 700; color: rgba(255,255,255,0.95); letter-spacing: 0.3px;">Masalar</span>
           </div>
           <div style="display: flex; align-items: center; gap: 6px;">
+            <button onclick="showTransferModal()" title="Masa Aktar" style="width: 40px; height: 40px; border-radius: 12px; background: rgba(255,255,255,0.08); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.14)'" onmouseout="this.style.background='rgba(255,255,255,0.08)'">
+              <svg width="20" height="20" fill="none" stroke="rgba(255,255,255,0.9)" viewBox="0 0 24 24" stroke-width="2.4">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+              </svg>
+            </button>
             <button onclick="loadData()" style="width: 40px; height: 40px; border-radius: 12px; background: rgba(255,255,255,0.08); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.14)'" onmouseout="this.style.background='rgba(255,255,255,0.08)'">
               <svg width="20" height="20" fill="none" stroke="rgba(255,255,255,0.9)" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
             </button>
@@ -8063,11 +8459,14 @@ function generateMobileHTML(serverURL) {
         
         <!-- Alt Kaydet Butonu -->
         <div style="position: fixed; bottom: 0; left: 0; right: 0; background: white; z-index: 1000; padding: 12px 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.1);">
-          <button onclick="sendOrder()" style="width: 100%; padding: 16px; background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%); color: white; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.3s; box-shadow: 0 4px 12px ${primary}4D;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 16px ${primary}66';" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px ${primary}4D';">
-            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+          <button id="sendOrderBtnMain" type="button" onclick="sendOrder()" style="width: 100%; padding: 16px; background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 50%, ${primaryDark} 100%); color: white; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.3s; box-shadow: 0 4px 12px ${primary}4D;" onmouseover="if(!this.disabled) { this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 16px ${primary}66'; }" onmouseout="if(!this.disabled) { this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px ${primary}4D'; }">
+            <svg id="sendOrderBtnMainIcon" width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
             </svg>
-            <span>Kaydet</span>
+            <span id="sendOrderBtnMainText">Kaydet</span>
+            <svg id="sendOrderBtnMainSpinner" style="display: none; width: 18px; height: 18px; animation: spin 1s linear infinite;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
           </button>
         </div>
         ` : `
@@ -8147,12 +8546,15 @@ function generateMobileHTML(serverURL) {
           </svg>
           <span id="noteButtonText">Not Ekle</span>
         </button>
-        <button class="send-btn" onclick="sendOrder()" style="flex: 1; margin-top: 0;">
+        <button id="sendOrderBtnCart" type="button" class="send-btn" onclick="sendOrder()" style="flex: 1; margin-top: 0;">
           <span style="display: inline-flex; align-items: center; gap: 8px;">
-            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+            <svg id="sendOrderBtnCartIcon" width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/>
             </svg>
-            Siparişi Gönder
+            <span id="sendOrderBtnCartText">Siparişi Gönder</span>
+            <svg id="sendOrderBtnCartSpinner" style="display: none; width: 18px; height: 18px; animation: spin 1s linear infinite;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
           </span>
         </button>
       </div>
@@ -8233,7 +8635,15 @@ function generateMobileHTML(serverURL) {
         </div>
         <div style="margin-bottom: 24px;">
           <label style="display: block; margin-bottom: 8px; font-size: 15px; color: #374151; font-weight: 700;">İptal Edilecek Miktar:</label>
-          <input type="number" id="cancelItemQuantity" min="1" value="1" style="width: 100%; padding: 14px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 18px; font-weight: 700; text-align: center; outline: none; transition: all 0.3s;" onfocus="this.style.borderColor='#ef4444';" onblur="this.style.borderColor='#e5e7eb';" oninput="validateCancelQuantity()">
+          ${isGeceDonercisi ? `
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <button onclick="changeCancelQuantity(-1)" style="width: 48px; height: 48px; border-radius: 14px; border: 2px solid #e5e7eb; background: #f9fafb; color: #111827; font-size: 22px; font-weight: 900; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#f3f4f6';" onmouseout="this.style.background='#f9fafb';">−</button>
+              <input type="number" id="cancelItemQuantity" min="1" value="1" style="flex: 1; padding: 14px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 18px; font-weight: 800; text-align: center; outline: none; transition: all 0.2s;" onfocus="this.style.borderColor='#ef4444';" onblur="this.style.borderColor='#e5e7eb';" oninput="validateCancelQuantity()">
+              <button onclick="changeCancelQuantity(1)" style="width: 48px; height: 48px; border-radius: 14px; border: 2px solid #e5e7eb; background: #f9fafb; color: #111827; font-size: 22px; font-weight: 900; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#f3f4f6';" onmouseout="this.style.background='#f9fafb';">+</button>
+            </div>
+          ` : `
+            <input type="number" id="cancelItemQuantity" min="1" value="1" style="width: 100%; padding: 14px; border: 2px solid #e5e7eb; border-radius: 12px; font-size: 18px; font-weight: 700; text-align: center; outline: none; transition: all 0.3s;" onfocus="this.style.borderColor='#ef4444';" onblur="this.style.borderColor='#e5e7eb';" oninput="validateCancelQuantity()">
+          `}
         </div>
         <div style="background: #fef2f2; border: 2px solid #fecaca; border-radius: 12px; padding: 16px; margin-bottom: 24px;">
           <p style="margin: 0; font-size: 13px; color: #991b1b; font-weight: 600; line-height: 1.6;">
@@ -8280,6 +8690,42 @@ function generateMobileHTML(serverURL) {
   </div>
   
   <!-- Porsiyon Seçici Modal (Yaka's Grill için) -->
+  <!-- Döner Seçenek Modal (Gece Dönercisi için) -->
+  <div id="donerOptionsModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px);" onclick="if(event.target === this) hideDonerOptionsModal()">
+    <div style="background: white; border-radius: 24px; width: 100%; max-width: 420px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 25px 70px rgba(0,0,0,0.4); animation: slideUp 0.3s ease;">
+      <div style="background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 100%); color: white; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="margin: 0; font-size: 22px; font-weight: 900;">Döner Seçimi</h2>
+          <button onclick="hideDonerOptionsModal()" style="background: rgba(255,255,255,0.2); border: none; color: white; width: 36px; height: 36px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; transition: all 0.3s;" onmouseover="this.style.background='rgba(255,255,255,0.3)';" onmouseout="this.style.background='rgba(255,255,255,0.2)';">×</button>
+        </div>
+      </div>
+      <div style="padding: 24px;">
+        <p style="margin: 0 0 18px 0; font-size: 15px; color: #6b7280; font-weight: 600; text-align: center;" id="donerProductName"></p>
+        
+        <div style="margin-bottom: 18px;">
+          <div style="font-size: 13px; font-weight: 800; color: #374151; margin-bottom: 10px;">Ekmek / Lavaş</div>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+            <button id="donerBreadEkmek" onclick="setDonerBread('Ekmek')" style="padding: 14px 16px; background: white; border: 2px solid ${primary}; border-radius: 16px; font-size: 16px; font-weight: 800; color: ${primary}; cursor: pointer; transition: all 0.2s;">Ekmek</button>
+            <button id="donerBreadLavas" onclick="setDonerBread('Lavaş')" style="padding: 14px 16px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 16px; font-weight: 800; color: #111827; cursor: pointer; transition: all 0.2s;">Lavaş</button>
+          </div>
+        </div>
+        
+        <div style="margin-bottom: 18px;">
+          <div style="font-size: 13px; font-weight: 800; color: #374151; margin-bottom: 10px;">İçerik</div>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+            <button id="donerSogansizBtn" onclick="toggleDonerOption('sogansiz')" style="padding: 14px 16px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 15px; font-weight: 800; color: #111827; cursor: pointer; transition: all 0.2s;">Soğansız</button>
+            <button id="donerDomatessizBtn" onclick="toggleDonerOption('domatessiz')" style="padding: 14px 16px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 15px; font-weight: 800; color: #111827; cursor: pointer; transition: all 0.2s;">Domatessiz</button>
+          </div>
+        </div>
+        
+        <div style="display: flex; gap: 12px;">
+          <button onclick="hideDonerOptionsModal()" style="flex: 1; padding: 14px 16px; background: #f3f4f6; color: #374151; border: none; border-radius: 14px; font-weight: 800; cursor: pointer;">İptal</button>
+          <button onclick="confirmDonerOptions()" style="flex: 1; padding: 14px 16px; background: linear-gradient(135deg, ${primary} 0%, ${primaryDark} 100%); color: white; border: none; border-radius: 14px; font-weight: 900; cursor: pointer; box-shadow: 0 6px 16px ${primary}40;">Ekle</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="portionModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px);" onclick="if(event.target === this) hidePortionModal()">
     <div style="background: white; border-radius: 24px; width: 100%; max-width: 420px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 25px 70px rgba(0,0,0,0.4); animation: slideUp 0.3s ease;">
       <div style="background: linear-gradient(135deg, ${primary} 0%, ${primaryLight} 100%); color: white; padding: 24px;">
@@ -9276,7 +9722,7 @@ function generateMobileHTML(serverURL) {
                 '<span class="order-item-qty">×' + item.quantity + '</span>' +
                 '<span class="order-item-price">' + itemTotal + ' ₺</span>' +
               '</div>' +
-              (currentStaff && currentStaff.is_manager 
+              (currentStaff && (currentStaff.is_manager || isGeceDonercisiMode)
                 ? '<button id="cancelBtn_' + item.id + '" onclick="showCancelItemModal(' + item.id + ', ' + item.quantity + ', \\'' + item.product_name.replace(/'/g, "\\'") + '\\')" style="padding: 6px 12px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; border: none; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3); transition: all 0.3s; white-space: nowrap; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 70px;" onmouseover="if(!this.disabled) { this.style.transform=\\'scale(1.05)\\'; this.style.boxShadow=\\'0 4px 12px rgba(239, 68, 68, 0.4)\\'; }" onmouseout="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; this.style.boxShadow=\\'0 2px 8px rgba(239, 68, 68, 0.3)\\'; }" ontouchstart="if(!this.disabled) { this.style.transform=\\'scale(0.95)\\'; }" ontouchend="if(!this.disabled) { this.style.transform=\\'scale(1)\\'; }" class="cancel-item-btn"><span id="cancelBtnText_' + item.id + '">İptal</span><svg id="cancelBtnSpinner_' + item.id + '" style="display: none; width: 14px; height: 14px; animation: spin 1s linear infinite;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></button>'
                 : '<button onclick="showManagerRequiredMessage()" style="padding: 6px 12px; background: linear-gradient(135deg, #9ca3af 0%, #6b7280 100%); color: white; border: none; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(107, 114, 128, 0.3); transition: all 0.3s; white-space: nowrap; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 70px; opacity: 0.7;" onmouseover="this.style.opacity=\\'0.9\\';" onmouseout="this.style.opacity=\\'0.7\\';"><span>İptal</span></button>') +
             '</div>' +
@@ -10243,6 +10689,110 @@ function generateMobileHTML(serverURL) {
       }
     }
     
+    // Gece Dönercisi: Tavuk Döner / Et Döner için seçim modalı
+    let pendingDonerProduct = null;
+    let donerBread = 'Ekmek';
+    let donerSogansiz = false;
+    let donerDomatessiz = false;
+    
+    function showDonerOptionsModal(productId, name, price) {
+      pendingDonerProduct = { id: productId, name: name, price: price };
+      donerBread = 'Ekmek';
+      donerSogansiz = false;
+      donerDomatessiz = false;
+      const nameEl = document.getElementById('donerProductName');
+      if (nameEl) nameEl.textContent = name;
+      updateDonerButtons();
+      document.getElementById('donerOptionsModal').style.display = 'flex';
+    }
+    
+    function hideDonerOptionsModal() {
+      document.getElementById('donerOptionsModal').style.display = 'none';
+      pendingDonerProduct = null;
+    }
+    
+    function setDonerBread(bread) {
+      donerBread = bread;
+      updateDonerButtons();
+    }
+    
+    function toggleDonerOption(which) {
+      if (which === 'sogansiz') donerSogansiz = !donerSogansiz;
+      if (which === 'domatessiz') donerDomatessiz = !donerDomatessiz;
+      updateDonerButtons();
+    }
+    
+    function updateDonerButtons() {
+      const ekmekBtn = document.getElementById('donerBreadEkmek');
+      const lavasBtn = document.getElementById('donerBreadLavas');
+      if (ekmekBtn && lavasBtn) {
+        if (donerBread === 'Ekmek') {
+          ekmekBtn.style.borderColor = themePrimary; ekmekBtn.style.color = themePrimary; ekmekBtn.style.background = 'white';
+          lavasBtn.style.borderColor = '#e5e7eb'; lavasBtn.style.color = '#111827'; lavasBtn.style.background = 'linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)';
+        } else {
+          lavasBtn.style.borderColor = themePrimary; lavasBtn.style.color = themePrimary; lavasBtn.style.background = 'white';
+          ekmekBtn.style.borderColor = '#e5e7eb'; ekmekBtn.style.color = '#111827'; ekmekBtn.style.background = 'linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)';
+        }
+      }
+      const soganBtn = document.getElementById('donerSogansizBtn');
+      const domatesBtn = document.getElementById('donerDomatessizBtn');
+      const applyToggleStyle = (btn, active) => {
+        if (!btn) return;
+        if (active) {
+          btn.style.borderColor = themePrimary; btn.style.color = themePrimary; btn.style.background = 'white';
+        } else {
+          btn.style.borderColor = '#e5e7eb'; btn.style.color = '#111827'; btn.style.background = 'linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)';
+        }
+      };
+      applyToggleStyle(soganBtn, donerSogansiz);
+      applyToggleStyle(domatesBtn, donerDomatessiz);
+    }
+    
+    function confirmDonerOptions() {
+      if (!pendingDonerProduct) { hideDonerOptionsModal(); return; }
+      
+      // Stok kontrolü
+      const product = products.find(p => p.id === pendingDonerProduct.id);
+      if (product) {
+        const trackStock = product.trackStock === true;
+        const stock = trackStock && product.stock !== undefined ? (product.stock || 0) : null;
+        const isOutOfStock = trackStock && stock !== null && stock === 0;
+        if (isOutOfStock) {
+          showToast('error', 'Stok Yok', pendingDonerProduct.name + ' için stok kalmadı');
+          hideDonerOptionsModal();
+          return;
+        }
+      }
+      
+      const parts = [donerBread, donerSogansiz ? 'Soğansız' : null, donerDomatessiz ? 'Domatessiz' : null].filter(Boolean);
+      const donerOptionsText = parts.join(' • ');
+      const donerKey = donerBread + '|' + (donerSogansiz ? 'S' : 's') + '|' + (donerDomatessiz ? 'D' : 'd');
+      
+      const existing = cart.find(item => item.id === pendingDonerProduct.id && item.donerKey === donerKey);
+      if (existing) {
+        existing.quantity++;
+      } else {
+        cart.push({ 
+          id: pendingDonerProduct.id, 
+          name: pendingDonerProduct.name, 
+          price: pendingDonerProduct.price,
+          quantity: 1,
+          donerKey: donerKey,
+          donerOptionsText: donerOptionsText
+        });
+      }
+      
+      updateCart();
+      hideDonerOptionsModal();
+      
+      const searchInputEl = document.getElementById('searchInput');
+      if (searchInputEl) {
+        searchInputEl.value = '';
+        searchQuery = '';
+        renderProducts();
+      }
+    }
+
     function addToCart(productId, name, price) {
       // Yaka's Grill için özel kategoriler kontrolü
       if (isYakasGrillMode) {
@@ -10273,6 +10823,19 @@ function generateMobileHTML(serverURL) {
           }
         }
       }
+
+      // Gece Dönercisi: Tavuk Döner / Et Döner kategorileri için seçim modalı
+      if (isGeceDonercisiMode) {
+        const product = products.find(p => p.id === productId);
+        if (product) {
+          const category = categories.find(c => c.id === product.category_id);
+          const categoryNameLower = (category && category.name) ? category.name.toLowerCase() : '';
+          if (categoryNameLower.includes('tavuk döner') || categoryNameLower.includes('et döner')) {
+            showDonerOptionsModal(productId, name, price);
+            return;
+          }
+        }
+      }
       
       // Stok kontrolü
       const product = products.find(p => p.id === productId);
@@ -10287,7 +10850,7 @@ function generateMobileHTML(serverURL) {
         }
       }
       
-      const existing = cart.find(item => item.id === productId && !item.portion);
+      const existing = cart.find(item => item.id === productId && !item.portion && !item.onionOption && !item.donerKey);
       if (existing) existing.quantity++;
       else cart.push({ id: productId, name, price, quantity: 1 });
       updateCart();
@@ -10316,14 +10879,16 @@ function generateMobileHTML(serverURL) {
           const portionInfo = (isYakasGrillMode && item.portion) ? '<div style="color: ' + themePrimary + '; font-size: 12px; font-weight: 700; margin-top: 2px;">' + item.portion + ' Porsiyon</div>' : '';
           // Yaka's Grill için soğan bilgisi varsa göster
           const onionInfo = (isYakasGrillMode && item.onionOption) ? '<div style="color: ' + themePrimary + '; font-size: 12px; font-weight: 700; margin-top: 2px;">' + item.onionOption + '</div>' : '';
+          const donerInfo = (isGeceDonercisiMode && item.donerOptionsText) ? '<div style="color: ' + themePrimary + '; font-size: 12px; font-weight: 700; margin-top: 2px;">' + item.donerOptionsText + '</div>' : '';
           // Ürün notu varsa göster
           const noteInfo = item.extraNote ? '<div style="margin-top: 4px; padding: 4px 8px; background: #fef3c7; border-left: 2px solid #f59e0b; border-radius: 4px;"><div style="font-size: 11px; font-weight: 700; color: #92400e;">📝 ' + item.extraNote + '</div></div>' : '';
-          const itemKey = item.portion ? item.id + '_' + item.portion : (item.onionOption ? item.id + '_' + item.onionOption : item.id);
+          const itemKey = item.portion ? item.id + '_' + item.portion : (item.onionOption ? item.id + '_' + item.onionOption : (item.donerKey ? item.id + '_' + item.donerKey : item.id));
           return '<div class="cart-item" data-item-key="' + itemKey + '">' +
             '<div style="flex: 1;">' +
               '<div style="font-weight: 700; font-size: 15px; color: #1f2937; margin-bottom: 4px;">' + item.name + '</div>' +
               portionInfo +
               onionInfo +
+              donerInfo +
               noteInfo +
               '<div style="color: #6b7280; font-size: 13px; font-weight: 600;">' + item.price.toFixed(2) + ' ₺ × ' + item.quantity + ' = ' + (item.price * item.quantity).toFixed(2) + ' ₺</div>' +
             '</div>' +
@@ -10556,7 +11121,7 @@ function generateMobileHTML(serverURL) {
     
     function showCancelItemModal(itemId, maxQuantity, productName) {
       // Müdür kontrolü
-      if (!currentStaff || !currentStaff.is_manager) {
+      if (!currentStaff || (!currentStaff.is_manager && !isGeceDonercisiMode)) {
         showManagerRequiredMessage();
         return;
       }
@@ -10600,6 +11165,14 @@ function generateMobileHTML(serverURL) {
       }
       input.value = value;
     }
+
+    function changeCancelQuantity(delta) {
+      const input = document.getElementById('cancelItemQuantity');
+      if (!input) return;
+      const current = parseInt(input.value) || 1;
+      input.value = current + delta;
+      validateCancelQuantity();
+    }
     
     // İptal işlemi için geçici değişkenler
     let pendingCancelItemId = null;
@@ -10615,7 +11188,7 @@ function generateMobileHTML(serverURL) {
       }
       
       // Müdür kontrolü
-      if (!currentStaff || !currentStaff.is_manager) {
+      if (!currentStaff || (!currentStaff.is_manager && !isGeceDonercisiMode)) {
         showManagerRequiredMessage();
         return;
       }
@@ -10860,6 +11433,31 @@ function generateMobileHTML(serverURL) {
       }
     }
     
+    let isSendingOrder = false;
+    let sendOrderLockedUntil = 0;
+
+    function setSendOrderLoadingUI(isLoading) {
+      const btnMain = document.getElementById('sendOrderBtnMain');
+      const btnCart = document.getElementById('sendOrderBtnCart');
+      const buttons = [btnMain, btnCart].filter(Boolean);
+
+      buttons.forEach(btn => {
+        btn.disabled = !!isLoading;
+        btn.style.opacity = isLoading ? '0.75' : '1';
+        btn.style.cursor = isLoading ? 'not-allowed' : 'pointer';
+      });
+
+      const mainIcon = document.getElementById('sendOrderBtnMainIcon');
+      const mainSpinner = document.getElementById('sendOrderBtnMainSpinner');
+      const cartIcon = document.getElementById('sendOrderBtnCartIcon');
+      const cartSpinner = document.getElementById('sendOrderBtnCartSpinner');
+
+      if (mainIcon) mainIcon.style.display = isLoading ? 'none' : 'inline-block';
+      if (mainSpinner) mainSpinner.style.display = isLoading ? 'inline-block' : 'none';
+      if (cartIcon) cartIcon.style.display = isLoading ? 'none' : 'inline-block';
+      if (cartSpinner) cartSpinner.style.display = isLoading ? 'inline-block' : 'none';
+    }
+
     async function sendOrder() {
       if (!selectedTable || cart.length === 0) { 
         showToast('error', 'Eksik Bilgi', 'Lütfen masa seçin ve ürün ekleyin');
@@ -10869,6 +11467,15 @@ function generateMobileHTML(serverURL) {
         showToast('error', 'Giriş Gerekli', 'Lütfen giriş yapın');
         return; 
       }
+
+      const now = Date.now();
+      if (isSendingOrder || now < sendOrderLockedUntil) {
+        return;
+      }
+
+      isSendingOrder = true;
+      sendOrderLockedUntil = now + 2000;
+      setSendOrderLoadingUI(true);
       
       const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
       
@@ -10917,6 +11524,12 @@ function generateMobileHTML(serverURL) {
       } catch (error) { 
         console.error('Sipariş gönderme hatası:', error); 
         showToast('error', 'Bağlantı Hatası', 'Sunucuya bağlanılamadı. Lütfen tekrar deneyin.');
+      } finally {
+        const remainingMs = Math.max(0, sendOrderLockedUntil - Date.now());
+        setTimeout(() => {
+          isSendingOrder = false;
+          setSendOrderLoadingUI(false);
+        }, remainingMs);
       }
     }
   </script>
@@ -11563,10 +12176,13 @@ function startAPIServer() {
         return res.status(400).json({ success: false, error: 'Ürün ID\'si gerekli' });
       }
 
-      // Müdür kontrolü
+      const tenantId = tenantManager.getCurrentTenantInfo()?.tenantId || null;
+      const isGeceDonercisi = tenantId === 'TENANT-1769602125250';
+
+      // Müdür kontrolü (Gece Dönercisi'nde herkes iptal edebilir)
       if (staffId) {
         const staff = (db.staff || []).find(s => s.id === staffId);
-        if (!staff || !staff.is_manager) {
+        if (!isGeceDonercisi && (!staff || !staff.is_manager)) {
           return res.status(403).json({ 
             success: false, 
             error: 'İptal yetkisi yok. İptal ettirmek için lütfen müdürle görüşünüz.' 
@@ -11655,11 +12271,31 @@ function startAPIServer() {
       // İptal edilecek tutarı hesapla (ikram değilse)
       const cancelAmount = item.isGift ? 0 : (item.price * quantityToCancel);
 
-      // Stok iadesi (ikram edilen ürünler hariç, sadece stok takibi yapılan ürünler için)
+      // Stok iadesi (ikram edilen ürünler hariç)
+      // Gece Dönercisi: şube stoklarına iade, diğerleri: normal stok (trackStock açıksa)
       if (!item.isGift) {
-        const product = db.products.find(p => p.id === item.product_id);
-        if (product && product.trackStock) {
-          await increaseProductStock(item.product_id, quantityToCancel);
+        if (isGeceDonercisiApi) {
+          const activeBranch =
+            req.body?.branch ||
+            geceBranchSelection.branch ||
+            db.settings?.geceBranch ||
+            null;
+          const activeDeviceId =
+            req.body?.deviceId ||
+            geceBranchSelection.deviceId ||
+            db.settings?.geceDeviceId ||
+            null;
+          await increaseGeceBranchStockItems({
+            branch: activeBranch,
+            deviceId: activeDeviceId,
+            items: [{ id: item.product_id, quantity: quantityToCancel, name: item.product_name, isGift: false }],
+            source: 'mobile-cancel-table-order-item',
+          });
+        } else {
+          const product = db.products.find(p => p.id === item.product_id);
+          if (product && product.trackStock) {
+            await increaseProductStock(item.product_id, quantityToCancel);
+          }
         }
       }
 
@@ -12036,6 +12672,8 @@ function startAPIServer() {
   appExpress.post('/api/orders', async (req, res) => {
     try {
       const { items, totalAmount, tableId, tableName, tableType, orderNote, staffId, orderSource } = req.body;
+      const tenantInfo = tenantManager.getCurrentTenantInfo();
+      const isGeceDonercisiTenant = tenantInfo?.tenantId === GECE_TENANT_ID;
       
       // Eğer orderSource gönderilmemişse, tableType'a göre otomatik belirle
       let finalOrderSource = orderSource;
@@ -12047,18 +12685,46 @@ function startAPIServer() {
         }
       }
       
-      // Stok kontrolü ve düşürme (sadece stok takibi yapılan ürünler için)
-      for (const item of items) {
-        if (!item.isGift) {
-          const product = db.products.find(p => p.id === item.id);
-          // Sadece stok takibi yapılan ürünler için kontrol et
-          if (product && product.trackStock) {
-            const stockDecreased = await decreaseProductStock(item.id, item.quantity);
-            if (!stockDecreased) {
-              return res.status(400).json({ 
-                success: false, 
-                error: `${item.name} için yetersiz stok` 
-              });
+      if (isGeceDonercisiTenant) {
+        // Gece Dönercisi: mobil siparişlerde stok düşümü şube bazlı (cihazın seçili şubesi)
+        const activeBranch =
+          (req.body && req.body.branch) ||
+          geceBranchSelection.branch ||
+          db.settings?.geceBranch ||
+          null;
+        const activeDeviceId =
+          (req.body && req.body.deviceId) ||
+          geceBranchSelection.deviceId ||
+          db.settings?.geceDeviceId ||
+          null;
+
+        if (!isValidGeceBranch(activeBranch)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Şube seçimi zorunludur. Masaüstü cihazda SANCAK/ŞEKER seçiniz.',
+          });
+        }
+
+        await decreaseGeceBranchStockItems({
+          branch: activeBranch,
+          deviceId: activeDeviceId,
+          items,
+          source: 'mobile-orders',
+        });
+      } else {
+        // Diğer tenant'lar: stok kontrolü ve düşürme (sadece stok takibi yapılan ürünler için)
+        for (const item of items) {
+          if (!item.isGift) {
+            const product = db.products.find(p => p.id === item.id);
+            // Sadece stok takibi yapılan ürünler için kontrol et
+            if (product && product.trackStock) {
+              const stockDecreased = await decreaseProductStock(item.id, item.quantity);
+              if (!stockDecreased) {
+                return res.status(400).json({ 
+                  success: false, 
+                  error: `${item.name} için yetersiz stok` 
+                });
+              }
             }
           }
         }
@@ -12095,6 +12761,9 @@ function startAPIServer() {
             originalPrice: newItem.originalPrice || null, // Yaka's Grill için orijinal fiyat (1 porsiyon)
             portion: newItem.portion || null, // Yaka's Grill için porsiyon bilgisi
             onionOption: newItem.onionOption || null, // Yaka's Grill için soğan seçeneği
+            extraNote: newItem.extraNote || null,
+            donerOptionsText: newItem.donerOptionsText || null,
+            donerKey: newItem.donerKey || null,
             isGift: newItem.isGift || false,
             staff_id: staffId || null,
             staff_name: itemStaffName,
@@ -12153,6 +12822,9 @@ function startAPIServer() {
             originalPrice: item.originalPrice || null, // Yaka's Grill için orijinal fiyat (1 porsiyon)
             portion: item.portion || null, // Yaka's Grill için porsiyon bilgisi
             onionOption: item.onionOption || null, // Yaka's Grill için soğan seçeneği
+            extraNote: item.extraNote || null,
+            donerOptionsText: item.donerOptionsText || null,
+            donerKey: item.donerKey || null,
             isGift: item.isGift || false,
             staff_id: staffId || null,
             staff_name: staffName || null,

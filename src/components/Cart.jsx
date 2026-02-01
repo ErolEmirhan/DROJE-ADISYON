@@ -1,16 +1,24 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { getThemeColors } from '../utils/themeUtils';
-import { isYakasGrill } from '../utils/sultanSomatTables';
+import { isYakasGrill, isGeceDonercisi } from '../utils/sultanSomatTables';
 
 const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, onSaveToTable, totalAmount, selectedTable, orderNote, onOrderNoteChange, onToggleGift, onRequestAdisyon, onUpdateItemNote, themeColor = '#f97316', tenantId = null }) => {
   // Tema renklerini hesapla
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   const isYakasGrillMode = tenantId && isYakasGrill(tenantId);
+  const isGeceDonercisiMode = tenantId && isGeceDonercisi(tenantId);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [noteText, setNoteText] = useState(orderNote || '');
-  const [selectedProductId, setSelectedProductId] = useState(null); // Ürün bazlı not için
+  const [selectedItemKey, setSelectedItemKey] = useState(null); // Ürün bazlı not için (variant destekli)
   const textareaRef = useRef(null);
+
+  const getCartItemKey = (item) => {
+    const onion = item.onionOption || '';
+    const portion = item.portion != null ? String(item.portion) : '';
+    const doner = item.donerKey || '';
+    return `${item.id}::${onion}::${portion}::${doner}`;
+  };
   
   useEffect(() => {
     setNoteText(orderNote || '');
@@ -57,7 +65,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
             
             return (
             <div 
-              key={item.id} 
+              key={getCartItemKey(item)} 
               className={`bg-white rounded-lg border transition-all duration-200 animate-fade-in ${
                 isGift 
                   ? 'border-green-200 bg-gradient-to-br from-green-50/40 to-white shadow-sm' 
@@ -98,6 +106,13 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                       {item.onionOption}
                     </div>
                   )}
+
+                  {/* Gece Dönercisi: Döner seçimleri */}
+                  {isGeceDonercisiMode && item.donerOptionsText && (
+                    <div className="text-xs font-bold mb-1" style={{ color: themeColor }}>
+                      {item.donerOptionsText}
+                    </div>
+                  )}
                   
                   {/* Yaka's Grill için porsiyon bilgisi */}
                   {isYakasGrillMode && item.portion && (
@@ -113,7 +128,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                     {/* Miktar Kontrolü */}
                     <div className="flex items-center gap-1 bg-gray-50 rounded-md p-0.5 border border-gray-200/60">
                       <button
-                        onClick={() => onUpdateQuantity(item.id, item.quantity - 1, item.onionOption, item.portion)}
+                        onClick={() => onUpdateQuantity(item.id, item.quantity - 1, item.onionOption, item.portion, item.donerKey)}
                         className="w-7 h-7 bg-white hover:bg-gray-100 active:bg-gray-200 border border-gray-200 hover:border-gray-300 rounded flex items-center justify-center transition-all duration-150 active:scale-95"
                         title="Azalt"
                       >
@@ -129,7 +144,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                       </div>
                       
                       <button
-                        onClick={() => onUpdateQuantity(item.id, item.quantity + 1, item.onionOption, item.portion)}
+                        onClick={() => onUpdateQuantity(item.id, item.quantity + 1, item.onionOption, item.portion, item.donerKey)}
                         className="w-7 h-7 bg-white hover:bg-gray-100 active:bg-gray-200 border border-gray-200 hover:border-gray-300 rounded flex items-center justify-center transition-all duration-150 active:scale-95"
                         title="Artır"
                       >
@@ -167,7 +182,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
 
                   {/* Sil Butonu */}
                   <button
-                    onClick={() => onRemoveItem(item.id, item.onionOption, item.portion)}
+                    onClick={() => onRemoveItem(item.id, item.onionOption, item.portion, item.donerKey)}
                     className="w-8 h-8 bg-red-50 hover:bg-red-100 active:bg-red-200 border border-red-200 hover:border-red-300 rounded-md flex items-center justify-center transition-all duration-150 active:scale-95 shadow-sm"
                     title="Ürünü Kaldır"
                   >
@@ -211,7 +226,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
         {cart.length > 0 && (
           <button
             onClick={() => {
-              setSelectedProductId(null);
+              setSelectedItemKey(null);
               setNoteText(orderNote || '');
               setShowNoteModal(true);
             }}
@@ -322,24 +337,28 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                   Ürün Seçin
                 </label>
                 <select
-                  value={selectedProductId || ''}
+                  value={selectedItemKey || ''}
                   onChange={(e) => {
-                    const productId = e.target.value ? parseInt(e.target.value) : null;
-                    setSelectedProductId(productId);
-                    // Seçilen ürünün mevcut notunu göster
-                    if (productId) {
-                      const selectedItem = cart.find(item => item.id === productId);
+                    const key = e.target.value || null;
+                    setSelectedItemKey(key);
+                    if (key) {
+                      const selectedItem = cart.find((it) => getCartItemKey(it) === key);
                       setNoteText(selectedItem?.extraNote || '');
-                    } else {
-                      setNoteText('');
+                      return;
                     }
+                    setNoteText('');
                   }}
                   className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-amber-500 focus:outline-none transition-all"
                 >
                   <option value="">Tüm sipariş için (genel not)</option>
                   {cart.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name} {item.portion ? `(${item.portion} porsiyon)` : ''} {item.onionOption ? `(${item.onionOption})` : ''} - {item.quantity} adet
+                    <option key={getCartItemKey(item)} value={getCartItemKey(item)}>
+                      {item.name}
+                      {item.portion ? ` (${item.portion} porsiyon)` : ''}
+                      {item.onionOption ? ` (${item.onionOption})` : ''}
+                      {item.donerOptionsText ? ` (${item.donerOptionsText})` : ''}
+                      {' - '}
+                      {item.quantity} adet
                     </option>
                   ))}
                 </select>
@@ -374,7 +393,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                   onClick={() => {
                     setShowNoteModal(false);
                     setNoteText(orderNote || '');
-                    setSelectedProductId(null);
+                    setSelectedItemKey(null);
                   }}
                   className="flex-1 px-6 py-3 bg-gray-100 text-gray-700 rounded-xl font-semibold hover:bg-gray-200 transition-all"
                 >
@@ -382,11 +401,11 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                 </button>
                 <button
                   onClick={() => {
-                    if (selectedProductId) {
+                    if (selectedItemKey) {
                       // Ürün bazlı not ekle
-                      const item = cart.find(item => item.id === selectedProductId);
+                      const item = cart.find((it) => getCartItemKey(it) === selectedItemKey);
                       if (item && onUpdateItemNote) {
-                        onUpdateItemNote(selectedProductId, noteText.trim(), item.onionOption, item.portion);
+                        onUpdateItemNote(item.id, noteText.trim(), item.onionOption, item.portion, item.donerKey);
                       }
                     } else {
                       // Genel sipariş notu
@@ -395,7 +414,7 @@ const Cart = ({ cart, onUpdateQuantity, onRemoveItem, onClearCart, onCheckout, o
                       }
                     }
                     setShowNoteModal(false);
-                    setSelectedProductId(null);
+                    setSelectedItemKey(null);
                     setNoteText('');
                   }}
                   className="flex-1 px-6 py-3 text-white rounded-xl font-semibold hover:shadow-lg transition-all transform hover:scale-105"
