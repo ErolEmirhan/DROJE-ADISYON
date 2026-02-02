@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { isSultanSomati, generateSultanSomatiTables, isYakasGrill, generateYakasGrillTables, isGeceDonercisi, generateGeceDonercisiTables } from '../utils/sultanSomatTables';
+import { isSultanSomati, generateSultanSomatiTables, isYakasGrill, generateYakasGrillTables, isGeceDonercisi, generateGeceDonercisiTables, isLacromisa } from '../utils/sultanSomatTables';
 
 const TableTransferModal = ({ 
   currentOrder, 
@@ -20,6 +20,12 @@ const TableTransferModal = ({
   const isSultanSomatiMode = isSultanSomati(tenantId);
   const isYakasGrillMode = isYakasGrill(tenantId);
   const isGeceDonercisiMode = isGeceDonercisi(tenantId);
+  const isLacromisaMode = isLacromisa(tenantId);
+
+  // Lacromisa: sabit 15 içeri / 15 dışarı, paket yok
+  const effectiveInsideTablesCount = isLacromisaMode ? 15 : insideTablesCount;
+  const effectiveOutsideTablesCount = isLacromisaMode ? 15 : outsideTablesCount;
+  const effectivePackageTablesCount = isLacromisaMode ? 0 : packageTablesCount;
 
   // Sultan Somatı için salon bazlı masalar
   const sultanSomatiTables = useMemo(() => {
@@ -53,44 +59,46 @@ const TableTransferModal = ({
   // Normal mod için masalar
   const insideTables = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
-    return Array.from({ length: insideTablesCount }, (_, i) => ({
+    return Array.from({ length: effectiveInsideTablesCount }, (_, i) => ({
       id: `inside-${i + 1}`,
       number: i + 1,
       type: 'inside',
       name: `İçeri ${i + 1}`
     }));
-  }, [insideTablesCount, isSultanSomatiMode]);
+  }, [effectiveInsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode]);
 
   const outsideTables = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
-    return Array.from({ length: outsideTablesCount }, (_, i) => ({
+    return Array.from({ length: effectiveOutsideTablesCount }, (_, i) => ({
       id: `outside-${i + 1}`,
       number: i + 1,
       type: 'outside',
       name: `Dışarı ${i + 1}`
     }));
-  }, [outsideTablesCount, isSultanSomatiMode]);
+  }, [effectiveOutsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode]);
 
   // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı ve Yaka's Grill'de yok
   const packageTablesInside = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
-    return Array.from({ length: packageTablesCount }, (_, i) => ({
+    if (!effectivePackageTablesCount) return [];
+    return Array.from({ length: effectivePackageTablesCount }, (_, i) => ({
       id: `package-inside-${i + 1}`,
       number: i + 1,
       type: 'inside',
       name: `Paket ${i + 1}`
     }));
-  }, [packageTablesCount, isSultanSomatiMode]);
+  }, [effectivePackageTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode]);
 
   const packageTablesOutside = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
-    return Array.from({ length: packageTablesCount }, (_, i) => ({
+    if (!effectivePackageTablesCount) return [];
+    return Array.from({ length: effectivePackageTablesCount }, (_, i) => ({
       id: `package-outside-${i + 1}`,
       number: i + 1,
       type: 'outside',
       name: `Paket ${i + 1}`
     }));
-  }, [packageTablesCount, isSultanSomatiMode]);
+  }, [effectivePackageTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode]);
 
   useEffect(() => {
     loadTableOrders();

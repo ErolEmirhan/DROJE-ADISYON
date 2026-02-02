@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>Lacrimosa Coffee • Menü</title>
+    <link rel="icon" href="/lacrimosa.jpg" />
+
+    <!-- Firebase (Compat) -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+    <style>
+      :root {
+        --bg: #0b1220;
+        --panel: rgba(255, 255, 255, 0.92);
+        --card: rgba(255, 255, 255, 0.96);
+        --text: #0f172a;
+        --muted: #64748b;
+        --border: rgba(15, 23, 42, 0.12);
+        --shadow: 0 18px 60px rgba(15, 23, 42, 0.22);
+        --shadow-soft: 0 10px 28px rgba(15, 23, 42, 0.14);
+        --accent: #0f172a;
+        --accent2: #1f2937;
+        --ok: #10b981;
+        --warn: #f59e0b;
+        --danger: #ef4444;
+        --glass: rgba(255,255,255,0.10);
+        --glassBorder: rgba(255,255,255,0.16);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+        color: var(--text);
+        background: radial-gradient(900px 600px at 20% 0%, rgba(148, 163, 184, 0.18), transparent 60%),
+          radial-gradient(900px 600px at 90% 15%, rgba(148, 163, 184, 0.16), transparent 60%),
+          linear-gradient(180deg, #0b1220 0%, #0b1220 40%, #0f172a 100%);
+        min-height: 100vh;
+      }
+      .app { max-width: 980px; margin: 0 auto; padding: 16px 14px 90px; }
+      .topbar {
+        position: sticky; top: 0; z-index: 40;
+        padding: 14px 14px 12px;
+        border-radius: 20px;
+        background:
+          radial-gradient(1200px 360px at 18% -40%, rgba(16,185,129,0.16), transparent 60%),
+          radial-gradient(900px 360px at 90% 0%, rgba(148,163,184,0.16), transparent 60%),
+          rgba(15, 23, 42, 0.86);
+        border: 1px solid var(--glassBorder);
+        backdrop-filter: blur(12px);
+        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.34);
+      }
+      .topbar-row { display:flex; align-items:center; gap:12px; }
+      .brand { display:flex; align-items:center; gap:10px; min-width:0; flex:1; }
+      .brand-logo {
+        width:44px; height:44px; border-radius:999px;
+        background: var(--glass);
+        border:1px solid var(--glassBorder);
+        overflow:hidden; display:grid; place-items:center; flex:0 0 auto;
+        box-shadow: 0 14px 34px rgba(0,0,0,0.28);
+      }
+      .brand-logo img { width:100%; height:100%; object-fit:cover; }
+      .brand-title { display:flex; flex-direction:column; gap:2px; min-width:0; }
+      .brand-title h1 {
+        margin:0; font-size:15px; font-weight:950; letter-spacing:-0.25px;
+        color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      }
+      .brand-title p { margin:0; font-size:12px; font-weight:700; color:rgba(255,255,255,0.78); }
+      .pill {
+        display:inline-flex; align-items:center; gap:8px;
+        padding:10px 12px; border-radius:14px;
+        background: var(--glass);
+        border: 1px solid var(--glassBorder);
+        color: rgba(255,255,255,0.92);
+        font-weight:800; font-size:12px;
+        cursor:pointer; transition: transform .15s ease, background .15s ease;
+        user-select:none;
+      }
+      .pill:hover { background: rgba(255,255,255,0.14); transform: translateY(-1px); }
+      .pill:active { transform: translateY(0px) scale(0.98); }
+      .pill .pill-ico { width:16px; height:16px; opacity:.95; }
+      .search { margin-top:12px; display:flex; gap:10px; }
+      .search input {
+        width:100%; border-radius:16px; border: 1px solid var(--glassBorder);
+        background: rgba(255,255,255,0.07); color:#fff; padding: 12px 14px;
+        outline:none; font-size:14px; font-weight:700;
+      }
+      .search input::placeholder { color: rgba(255,255,255,0.55); font-weight:700; }
+      .panel {
+        margin-top:14px;
+        background: rgba(255,255,255,0.92);
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 22px;
+        box-shadow: var(--shadow);
+        overflow:hidden;
+      }
+      .panel-header {
+        padding: 16px 16px;
+        background: linear-gradient(180deg, rgba(248,250,252,1) 0%, rgba(241,245,249,1) 100%);
+        border-bottom: 1px solid rgba(15,23,42,0.08);
+      }
+      .panel-header h2 { margin:0; font-size:15px; font-weight:950; letter-spacing:-0.2px; }
+      .panel-header p { margin:6px 0 0; font-size:12px; font-weight:700; color: var(--muted); }
+      .tables-grid { display:grid; grid-template-columns: repeat(5,1fr); gap:10px; padding:14px; }
+      @media (max-width:520px){ .tables-grid { grid-template-columns: repeat(4,1fr);} }
+      .table-card {
+        border-radius:16px; border:1px solid rgba(15,23,42,0.12);
+        background: linear-gradient(180deg,#fff 0%,#f8fafc 100%);
+        box-shadow: 0 10px 22px rgba(15,23,42,0.08);
+        padding:10px 8px; cursor:pointer;
+        transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+        position:relative; min-height:74px;
+        display:flex; flex-direction:column; justify-content:center; align-items:center; gap:6px;
+      }
+      .table-card:hover { transform: translateY(-1px); box-shadow: 0 14px 32px rgba(15,23,42,0.12); border-color: rgba(15,23,42,0.22); }
+      .table-dot { position:absolute; top:8px; right:8px; width:8px; height:8px; border-radius:99px; background:#10b981; box-shadow:0 0 0 4px rgba(16,185,129,0.18); display:none; }
+      .table-card.occupied .table-dot { display:block; }
+      .table-card.occupied { background: linear-gradient(135deg, rgba(239,68,68,0.12) 0%, rgba(239,68,68,0.06) 100%); border-color: rgba(239,68,68,0.25); }
+      .table-no { font-size:16px; font-weight:950; color:#0f172a; }
+      .table-label { font-size:10px; font-weight:900; color:#334155; opacity:.85; text-transform:uppercase; letter-spacing:.6px; }
+      .cats { display:flex; gap:10px; overflow-x:auto; padding:12px 14px; border-bottom:1px solid rgba(15,23,42,0.08); background:#f8fafc; -webkit-overflow-scrolling: touch; }
+      .cat {
+        padding: 11px 14px; border-radius:14px; border:1px solid rgba(15,23,42,0.14);
+        background:#fff; color:#0f172a; font-weight:900; font-size:13px;
+        box-shadow: 0 10px 22px rgba(15,23,42,0.08); cursor:pointer; white-space:nowrap; user-select:none;
+      }
+      .cat.active { background: linear-gradient(135deg,#0f172a 0%,#1f2937 100%); color:#fff; border-color: rgba(255,255,255,0.12); }
+      .products { padding:14px; display:grid; grid-template-columns: repeat(2,1fr); gap:12px; }
+      @media (min-width:720px){ .products{ grid-template-columns: repeat(3,1fr);} }
+      .prod { border-radius:18px; border:1px solid rgba(15,23,42,0.12); background:#fff; box-shadow: var(--shadow-soft); overflow:hidden; display:flex; flex-direction:column; min-height:240px; position:relative; }
+      .prod-img { aspect-ratio:1/1; background:#f1f5f9; position:relative; overflow:hidden; }
+      .prod-img img { width:100%; height:100%; object-fit:cover; transform: scale(1.02); }
+      .unit-badge {
+        position:absolute; top:10px; right:10px;
+        background: rgba(15,23,42,0.86); color:#fff;
+        border:1px solid rgba(255,255,255,0.18);
+        padding:6px 10px; border-radius:999px;
+        font-size:10px; font-weight:900; letter-spacing:.7px; text-transform: uppercase;
+        backdrop-filter: blur(8px); box-shadow: 0 10px 24px rgba(15,23,42,0.22);
+      }
+      .prod-body { padding:12px; display:flex; flex-direction:column; gap:10px; flex:1; }
+      .prod-name {
+        font-size:14px; font-weight:950; line-height:1.2; letter-spacing:-0.2px; color:#0f172a;
+        display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+      }
+      .prod-footer { margin-top:auto; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .price { font-size:18px; font-weight:950; letter-spacing:-0.4px; color:#0f172a; }
+      .add {
+        width:46px; height:46px; border-radius:16px; border:1px solid rgba(255,255,255,0.14);
+        background: linear-gradient(135deg,#0f172a 0%,#1f2937 100%);
+        color:#fff; display:grid; place-items:center; cursor:pointer;
+        box-shadow: 0 14px 30px rgba(15,23,42,0.22);
+        transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+      }
+      .add:hover { transform: translateY(-1px); filter: brightness(1.02); box-shadow: 0 18px 44px rgba(15,23,42,0.26); }
+      .add:active { transform: translateY(0px) scale(0.98); }
+      .add svg { width:18px; height:18px; }
+      .cart-fab {
+        position:fixed; right:16px; bottom:16px; z-index:60;
+        border-radius:22px; background:
+          radial-gradient(500px 140px at 30% 0%, rgba(16,185,129,0.18), transparent 60%),
+          linear-gradient(135deg,#0f172a 0%,#1f2937 100%);
+        color:#fff; border:1px solid rgba(255,255,255,0.14);
+        box-shadow: 0 22px 70px rgba(0,0,0,0.42);
+        padding:12px 14px; display:flex; align-items:center; gap:12px; cursor:pointer;
+        transition: transform .14s ease, box-shadow .14s ease, filter .14s ease;
+        user-select:none;
+      }
+      .cart-fab:hover { transform: translateY(-1px); filter: brightness(1.02); box-shadow: 0 26px 86px rgba(0,0,0,0.48); }
+      .cart-fab:active { transform: translateY(0px) scale(0.99); }
+      .cart-ico {
+        width:44px; height:44px; border-radius:16px;
+        background: rgba(255,255,255,0.10);
+        border: 1px solid rgba(255,255,255,0.16);
+        display:grid; place-items:center;
+        position:relative;
+      }
+      .cart-ico svg { width:20px; height:20px; opacity:.96; }
+      .cart-fab-badge {
+        position:absolute; top:-7px; right:-7px;
+        min-width:22px; height:22px; padding:0 6px;
+        border-radius:999px;
+        background: linear-gradient(135deg,#10b981 0%,#059669 100%);
+        border: 1px solid rgba(255,255,255,0.18);
+        box-shadow: 0 12px 30px rgba(16,185,129,0.30);
+        display:grid; place-items:center;
+        font-weight:950; font-size:12px; line-height:1;
+      }
+      .cart-fab strong { font-weight:950; font-size:13px; letter-spacing:-0.2px; }
+      .cart-fab span { font-size:12px; font-weight:800; opacity:.92; }
+      .cart-fab .chev { margin-left:2px; opacity:.85; }
+      .sheet { position:fixed; inset:0; z-index:80; background: rgba(0,0,0,0.55); display:none; align-items:flex-end; }
+      .sheet.open { display:flex; }
+      .sheet-card {
+        width:100%; max-width:980px; margin:0 auto;
+        border-radius:22px 22px 0 0; background:#fff;
+        border:1px solid rgba(15,23,42,0.12);
+        box-shadow: 0 24px 80px rgba(0,0,0,0.35);
+        overflow:hidden; max-height:88vh; display:flex; flex-direction:column;
+      }
+      .sheet-head { padding:14px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid rgba(15,23,42,0.08); background: linear-gradient(180deg,#fff 0%,#f8fafc 100%); }
+      .sheet-head h3 { margin:0; font-size:14px; font-weight:950; }
+      .xbtn { width:40px; height:40px; border-radius:14px; border:1px solid rgba(15,23,42,0.12); background:#fff; cursor:pointer; font-weight:950; color:#0f172a; }
+      .sheet-body { padding:12px 14px; overflow:auto; }
+      .cart-row { display:grid; grid-template-columns: 1fr auto; gap:10px; padding:10px 0; border-bottom:1px dashed rgba(15,23,42,0.14); }
+      .cart-name { font-size:13px; font-weight:900; }
+      .cart-sub { margin-top:4px; font-size:12px; color:#64748b; font-weight:700; }
+      .qty { display:inline-flex; align-items:center; gap:8px; }
+      .qbtn { width:34px; height:34px; border-radius:12px; border:1px solid rgba(15,23,42,0.14); background:#fff; cursor:pointer; font-weight:950; }
+      .qval { width:26px; text-align:center; font-weight:950; }
+      textarea { width:100%; min-height:88px; padding:12px; border-radius:16px; border:1px solid rgba(15,23,42,0.14); outline:none; font-size:13px; font-weight:700; color:#0f172a; resize:none; }
+      .sheet-foot { padding:12px 14px; border-top:1px solid rgba(15,23,42,0.08); background:#fff; display:grid; gap:10px; }
+      .send { width:100%; border:none; border-radius:16px; padding:14px; background: linear-gradient(135deg,#10b981 0%,#059669 100%); color:#fff; font-weight:950; font-size:14px; cursor:pointer; box-shadow: 0 14px 34px rgba(16,185,129,0.28); }
+      .send:disabled { opacity:.6; cursor:not-allowed; }
+      .hint { font-size:12px; color:#64748b; font-weight:700; line-height:1.35; }
+      .toast {
+        position:fixed; left:50%; bottom:86px; transform: translateX(-50%);
+        background: rgba(255,255,255,0.96); border:1px solid rgba(15,23,42,0.12);
+        border-radius:16px; box-shadow: 0 18px 60px rgba(15,23,42,0.22);
+        padding:12px 14px; display:none; align-items:center; gap:10px; z-index:90; max-width:92vw;
+      }
+      .toast.show { display:flex; }
+      .toast-dot { width:10px; height:10px; border-radius:999px; background: var(--ok); }
+      .toast .t1 { font-weight:950; font-size:13px; }
+      .toast .t2 { font-weight:700; font-size:12px; color:#64748b; }
+      .hidden { display:none !important; }
+
+      /* Splash */
+      .splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: grid;
+        place-items: center;
+        padding: 18px;
+        background:
+          radial-gradient(1200px 700px at 12% 0%, rgba(16,185,129,0.12), transparent 60%),
+          radial-gradient(1000px 620px at 90% 18%, rgba(59,130,246,0.10), transparent 62%),
+          linear-gradient(180deg, #ffffff 0%, #f8fafc 55%, #eef2f7 100%);
+      }
+      .splash-card {
+        width: min(540px, 92vw);
+        border-radius: 28px;
+        background: rgba(255,255,255,0.86);
+        border: 1px solid rgba(15,23,42,0.10);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 28px 90px rgba(15,23,42,0.18);
+        padding: 22px 20px 18px;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+      }
+      .splash-card:before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(700px 220px at 25% 0%, rgba(16,185,129,0.10), transparent 60%),
+          radial-gradient(700px 220px at 90% 25%, rgba(15,23,42,0.06), transparent 62%);
+        pointer-events: none;
+      }
+      .splash-logo {
+        width: 92px;
+        height: 92px;
+        border-radius: 999px;
+        margin: 6px auto 14px;
+        background: #ffffff;
+        border: 1px solid rgba(15,23,42,0.12);
+        overflow: hidden;
+        box-shadow: 0 18px 46px rgba(15,23,42,0.16);
+        position: relative;
+        z-index: 1;
+      }
+      .splash-logo:after {
+        content: "";
+        position: absolute;
+        inset: -2px;
+        border-radius: 999px;
+        border: 2px solid rgba(16,185,129,0.18);
+        pointer-events: none;
+      }
+      .splash-logo img { width:100%; height:100%; object-fit:cover; }
+      .splash-title {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 950;
+        letter-spacing: -0.6px;
+        color: #0f172a;
+        position: relative;
+        z-index: 1;
+      }
+      .splash-sub {
+        margin: 6px 0 0;
+        font-size: 12px;
+        font-weight: 800;
+        color: #64748b;
+        letter-spacing: 0.2px;
+        position: relative;
+        z-index: 1;
+      }
+      .splash-row {
+        margin-top: 16px;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border-radius: 999px;
+        background: rgba(15,23,42,0.04);
+        border: 1px solid rgba(15,23,42,0.10);
+        color: #334155;
+        font-weight: 900;
+        font-size: 12px;
+        position: relative;
+        z-index: 1;
+      }
+      .spinner {
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        border: 2px solid rgba(15,23,42,0.12);
+        border-top-color: rgba(16,185,129,0.92);
+        animation: spin 0.9s linear infinite;
+      }
+      .splash-progress {
+        margin: 14px auto 0;
+        width: min(320px, 72vw);
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(15,23,42,0.08);
+        border: 1px solid rgba(15,23,42,0.08);
+        overflow: hidden;
+        position: relative;
+        z-index: 1;
+      }
+      .splash-progress > i {
+        display: block;
+        height: 100%;
+        width: 38%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(16,185,129,0.85), rgba(16,185,129,0.35));
+        animation: prog 1.1s ease-in-out infinite;
+      }
+      @keyframes prog {
+        0% { transform: translateX(-25%); opacity: .75; }
+        50% { transform: translateX(115%); opacity: 1; }
+        100% { transform: translateX(240%); opacity: .75; }
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .splash.fade {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 320ms ease;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="splash" id="splash">
+      <div class="splash-card">
+        <div class="splash-logo">
+          <img id="splashLogo" src="/lacrimosa.jpg" alt="Lacrimosa Coffee" onerror="this.style.display='none'" />
+        </div>
+        <h1 class="splash-title">Lacrimosa Coffee</h1>
+        <p class="splash-sub" id="splashSub">Menü hazırlanıyor…</p>
+        <div class="splash-row" id="splashRow">
+          <div class="spinner" aria-hidden="true"></div>
+          <span id="splashHint">Güvenli bağlantı kuruluyor</span>
+        </div>
+        <div class="splash-progress" aria-hidden="true"><i></i></div>
+      </div>
+    </div>
+
+    <div class="app">
+      <div class="topbar">
+        <div class="topbar-row">
+          <div class="brand">
+            <div class="brand-logo">
+              <img id="topLogo" src="/lacrimosa.jpg" alt="Lacrimosa Coffee" onerror="this.style.display='none'" />
+            </div>
+            <div class="brand-title">
+              <h1 id="brandName">Lacrimosa Coffee</h1>
+              <p>Müşteri Menüsü</p>
+            </div>
+          </div>
+          <button class="pill" id="tablePill" onclick="openTablePicker()">
+            <svg class="pill-ico" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M7 10h10M6 6h12M6 14h12M6 18h7" stroke="rgba(255,255,255,0.92)" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span id="tablePillText">Masa seç</span>
+            <span class="chev" aria-hidden="true">▾</span>
+          </button>
+        </div>
+        <div class="search">
+          <input id="searchInput" type="text" placeholder="Ürün ara…" oninput="onSearch()" />
+        </div>
+      </div>
+
+      <div class="panel" id="tableStep">
+        <div class="panel-header">
+          <h2>Masayı seçiniz</h2>
+          <p>İçeri veya dışarı masanızı seçin. Sipariş kasaya anında düşer.</p>
+        </div>
+        <div style="padding: 0 14px 6px; display:grid; gap:10px;">
+          <div style="font-weight:950; letter-spacing:-0.2px; margin-top:4px;">🏠 İçeri</div>
+          <div class="tables-grid" id="insideTables"></div>
+          <div style="font-weight:950; letter-spacing:-0.2px; margin-top:8px;">🌳 Dışarı</div>
+          <div class="tables-grid" id="outsideTables"></div>
+        </div>
+      </div>
+
+      <div class="panel hidden" id="menuStep">
+        <div class="panel-header">
+          <h2 id="menuTitle">Menü</h2>
+          <p id="menuHint">Kategori seçin, ürünleri sepete ekleyin.</p>
+        </div>
+        <div class="cats" id="cats"></div>
+        <div class="products" id="products"></div>
+      </div>
+    </div>
+
+    <div class="cart-fab hidden" id="cartFab" onclick="openCart()">
+      <div class="cart-ico" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none">
+          <path d="M7 7h14l-2 9H8L6 3H3" stroke="rgba(255,255,255,0.95)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M9 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm9 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="rgba(255,255,255,0.95)"/>
+        </svg>
+        <div class="cart-fab-badge" id="cartCount">0</div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:2px;">
+        <strong>Sepet</strong>
+        <span id="cartTotal">₺0.00</span>
+      </div>
+      <div class="chev" aria-hidden="true">›</div>
+    </div>
+
+    <div class="sheet" id="cartSheet" onclick="if(event.target===this) closeCart()">
+      <div class="sheet-card" onclick="event.stopPropagation()">
+        <div class="sheet-head">
+          <h3>Sepet</h3>
+          <button class="xbtn" onclick="closeCart()">×</button>
+        </div>
+        <div class="sheet-body">
+          <div id="cartList"></div>
+          <div style="margin-top:14px;">
+            <div style="font-weight:950; margin-bottom:8px;">Not</div>
+            <textarea id="orderNote" placeholder="İsteğe bağlı not (örn: şekersiz, sıcak gelsin…)"></textarea>
+          </div>
+        </div>
+        <div class="sheet-foot">
+          <button class="send" id="sendBtn" onclick="sendOrder()">Siparişi Gönder</button>
+          <div class="hint">Siparişiniz internet üzerinden kasaya iletilir.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast">
+      <div class="toast-dot" id="toastDot"></div>
+      <div style="display:flex; flex-direction:column; gap:2px; min-width:0;">
+        <div class="t1" id="toastT1">Bilgi</div>
+        <div class="t2" id="toastT2">—</div>
+      </div>
+    </div>
+
+    <script>
+      const LACRIMOSA_TENANT_ID = 'TENANT-1769956051654';
+      const MAX_INSIDE = 15;
+      const MAX_OUTSIDE = 15;
+      const SPLASH_MIN_MS = 2000;
+      const splashStartedAt = Date.now();
+
+      function hideSplash(success = true, message = null) {
+        const splash = document.getElementById('splash');
+        if (!splash) return;
+        if (message) {
+          const sub = document.getElementById('splashSub');
+          const hint = document.getElementById('splashHint');
+          if (sub) sub.textContent = message;
+          if (hint) hint.textContent = success ? 'Hazır' : 'Bağlantı sorunu';
+        }
+        // minimum 2 saniye göster, sonra elit fade
+        const elapsed = Date.now() - splashStartedAt;
+        const wait = Math.max(0, SPLASH_MIN_MS - elapsed);
+        setTimeout(() => splash.classList.add('fade'), wait);
+      }
+
+      // file:// açılırsa logo yolu kırılmasın
+      (function fixLogoForFileProtocol() {
+        if (location.protocol !== 'file:') return;
+        const icon = document.querySelector('link[rel="icon"]');
+        if (icon) icon.setAttribute('href', './lacrimosa.jpg');
+        const splashLogo = document.getElementById('splashLogo');
+        const topLogo = document.getElementById('topLogo');
+        if (splashLogo) splashLogo.setAttribute('src', './lacrimosa.jpg');
+        if (topLogo) topLogo.setAttribute('src', './lacrimosa.jpg');
+      })();
+
+      // Tenant config Firebase (adminself-d2c2b) — mainFirebaseConfig'i buradan alıyoruz
+      const TENANT_CONFIG_FIREBASE = {
+        apiKey: "AIzaSyBC6VxvlV3VxDnucAGxPOarYmar1PAItQM",
+        authDomain: "adminself-d2c2b.firebaseapp.com",
+        projectId: "adminself-d2c2b",
+        storageBucket: "adminself-d2c2b.firebasestorage.app",
+        messagingSenderId: "814547626980",
+        appId: "1:814547626980:web:0a2e8fad7aa1ccdea675f1",
+        measurementId: "G-GCRJCCL4K0"
+      };
+
+      // Masalar Firebase (lacromisamasalar) — dolu/boş göstermek için
+      const TABLES_FIREBASE = {
+        apiKey: "AIzaSyCXYMcQ_UsUo5tswMt9gKoEoVCWOU5l2zM",
+        authDomain: "lacromisamasalar.firebaseapp.com",
+        projectId: "lacromisamasalar",
+        storageBucket: "lacromisamasalar.firebasestorage.app",
+        messagingSenderId: "54584108706",
+        appId: "1:54584108706:web:9ab2eaf4486cdd6f66d9fb",
+        measurementId: "G-9B8CVKZRZH"
+      };
+
+      const state = {
+        tablesOcc: new Map(),
+        selectedTable: null,
+        categories: [],
+        products: [],
+        selectedCategoryId: null,
+        search: '',
+        cart: [],
+        isSending: false,
+        mainDb: null,
+        tablesDb: null,
+      };
+
+      const money = (n) => '₺' + Number(n || 0).toFixed(2);
+      const safeUpper = (s) => { try { return String(s || '').trim().toUpperCase(); } catch { return ''; } };
+
+      const toast = (type, title, msg) => {
+        const el = document.getElementById('toast');
+        const dot = document.getElementById('toastDot');
+        document.getElementById('toastT1').textContent = title || 'Bilgi';
+        document.getElementById('toastT2').textContent = msg || '';
+        dot.style.background = type === 'error' ? 'var(--danger)' : (type === 'warn' ? 'var(--warn)' : 'var(--ok)');
+        el.classList.add('show');
+        clearTimeout(el._t);
+        el._t = setTimeout(() => el.classList.remove('show'), 2600);
+      };
+
+      function openTablePicker() {
+        document.getElementById('tableStep').classList.remove('hidden');
+        document.getElementById('menuStep').classList.add('hidden');
+        document.getElementById('cartFab').classList.add('hidden');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+
+      function setSelectedTable(table) {
+        state.selectedTable = table;
+        localStorage.setItem('lacrimosa_customer_table', JSON.stringify(table));
+        document.getElementById('tablePillText').textContent = table.name;
+        document.getElementById('menuTitle').textContent = table.name + ' • Menü';
+        document.getElementById('menuHint').textContent = 'Kategori seçin, ürünleri sepete ekleyin. (' + table.type + ')';
+        document.getElementById('tableStep').classList.add('hidden');
+        document.getElementById('menuStep').classList.remove('hidden');
+        document.getElementById('cartFab').classList.remove('hidden');
+        syncCartUI();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+
+      function renderTableGrids() {
+        const mkTable = (type, number) => {
+          const id = type + '-' + number;
+          const name = (type === 'inside' ? 'İçeri ' : 'Dışarı ') + number;
+          const hasOrder = !!state.tablesOcc.get(id);
+          const div = document.createElement('div');
+          div.className = 'table-card' + (hasOrder ? ' occupied' : '');
+          div.onclick = () => setSelectedTable({ id, type, number, name });
+          div.innerHTML = `<span class="table-dot"></span><div class="table-no">${number}</div><div class="table-label">${type === 'inside' ? 'İÇERİ' : 'DIŞARI'}</div>`;
+          return div;
+        };
+        const inEl = document.getElementById('insideTables');
+        const outEl = document.getElementById('outsideTables');
+        inEl.innerHTML = '';
+        outEl.innerHTML = '';
+        for (let i = 1; i <= 15; i++) inEl.appendChild(mkTable('inside', i));
+        for (let i = 1; i <= 15; i++) outEl.appendChild(mkTable('outside', i));
+      }
+
+      function parseTableFromPathname() {
+        try {
+          const raw = (location.pathname || '/').toLowerCase();
+          const path = raw.replace(/^\/+|\/+$/g, ''); // trim / both ends
+          if (!path) return null;
+
+          const mInside = path.match(/^iceri(\d+)$/);
+          if (mInside) {
+            const n = parseInt(mInside[1], 10);
+            if (!Number.isFinite(n) || n < 1 || n > MAX_INSIDE) return null;
+            return { id: `inside-${n}`, type: 'inside', number: n, name: `İçeri ${n}` };
+          }
+
+          const mOutside = path.match(/^disari(\d+)$/);
+          if (mOutside) {
+            const n = parseInt(mOutside[1], 10);
+            if (!Number.isFinite(n) || n < 1 || n > MAX_OUTSIDE) return null;
+            return { id: `outside-${n}`, type: 'outside', number: n, name: `Dışarı ${n}` };
+          }
+
+          return null;
+        } catch {
+          return null;
+        }
+      }
+
+      function renderCategories() {
+        const el = document.getElementById('cats');
+        el.innerHTML = '';
+        (state.categories || []).forEach((c) => {
+          const btn = document.createElement('div');
+          btn.className = 'cat' + (state.selectedCategoryId === c.id ? ' active' : '');
+          btn.textContent = c.name;
+          btn.onclick = () => {
+            state.selectedCategoryId = c.id;
+            renderCategories();
+            renderProducts();
+          };
+          el.appendChild(btn);
+        });
+      }
+
+      function renderProducts() {
+        const el = document.getElementById('products');
+        const q = (state.search || '').trim().toLowerCase();
+        const items = (state.products || []).filter((p) => {
+          const okCat = state.selectedCategoryId == null ? true : p.category_id === state.selectedCategoryId;
+          if (!okCat) return false;
+          if (!q) return true;
+          return String(p.name || '').toLowerCase().includes(q);
+        });
+
+        el.innerHTML = '';
+        if (!items.length) {
+          el.innerHTML = '<div style="grid-column:1/-1; color:#64748b; font-weight:800; text-align:center; padding:28px;">Ürün bulunamadı</div>';
+          return;
+        }
+        items.forEach((p) => {
+          const card = document.createElement('div');
+          card.className = 'prod';
+          const unit = safeUpper(p.unit || p.unitLabel || p.unit_name || '');
+          const img = p.image ? `<img src="${p.image}" alt="${p.name}" loading="lazy" onerror="this.style.display='none'">` : '';
+          card.innerHTML = `
+            <div class="prod-img">
+              ${img}
+              ${unit ? `<div class="unit-badge">${unit}</div>` : ''}
+            </div>
+            <div class="prod-body">
+              <div class="prod-name" title="${p.name}">${p.name}</div>
+              <div class="prod-footer">
+                <div class="price">${money(p.price)}</div>
+                <button class="add" title="Sepete ekle" aria-label="Sepete ekle">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14" stroke="white" stroke-width="2.4" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          `;
+          card.querySelector('.add').onclick = (e) => { e.stopPropagation(); addToCart(p); };
+          card.onclick = () => addToCart(p);
+          el.appendChild(card);
+        });
+      }
+
+      function onSearch() {
+        state.search = document.getElementById('searchInput').value || '';
+        renderProducts();
+      }
+
+      function cartKey(p) { return String(p.id); }
+      function addToCart(p) {
+        const key = cartKey(p);
+        const existing = state.cart.find(i => i.key === key);
+        if (existing) existing.quantity += 1;
+        else state.cart.push({
+          key,
+          id: p.id,
+          name: p.name,
+          price: Number(p.price || 0),
+          quantity: 1,
+          category_id: p.category_id
+        });
+        syncCartUI();
+        toast('ok', 'Sepete eklendi', p.name);
+      }
+      function setQty(key, delta) {
+        const it = state.cart.find(i => i.key === key);
+        if (!it) return;
+        it.quantity += delta;
+        if (it.quantity <= 0) state.cart = state.cart.filter(i => i.key !== key);
+        syncCartUI();
+      }
+      function syncCartUI() {
+        const count = state.cart.reduce((s, i) => s + (i.quantity || 0), 0);
+        const total = state.cart.reduce((s, i) => s + (i.quantity || 0) * (i.price || 0), 0);
+        document.getElementById('cartCount').textContent = String(count);
+        document.getElementById('cartTotal').textContent = money(total);
+
+        const list = document.getElementById('cartList');
+        if (!state.cart.length) {
+          list.innerHTML = '<div style="padding:18px 0; color:#64748b; font-weight:800; text-align:center;">Sepet boş</div>';
+        } else {
+          list.innerHTML = state.cart.map((i) => `
+            <div class="cart-row">
+              <div>
+                <div class="cart-name">${i.name}</div>
+                <div class="cart-sub">${money(i.price)} • Ara toplam: ${money(i.price * i.quantity)}</div>
+              </div>
+              <div class="qty">
+                <button class="qbtn" onclick="setQty('${i.key}', -1)">−</button>
+                <div class="qval">${i.quantity}</div>
+                <button class="qbtn" onclick="setQty('${i.key}', 1)">+</button>
+              </div>
+            </div>
+          `).join('');
+        }
+        const fab = document.getElementById('cartFab');
+        if (state.selectedTable && state.selectedTable.id) fab.classList.remove('hidden');
+        else fab.classList.add('hidden');
+      }
+      function openCart() { document.getElementById('cartSheet').classList.add('open'); }
+      function closeCart() { document.getElementById('cartSheet').classList.remove('open'); }
+
+      async function sendOrder() {
+        if (!state.selectedTable) {
+          toast('warn', 'Masa seçiniz', 'Sipariş için önce masa seçin.');
+          openTablePicker();
+          return;
+        }
+        if (!state.cart.length) {
+          toast('warn', 'Sepet boş', 'Lütfen önce ürün ekleyin.');
+          return;
+        }
+        if (!state.mainDb) {
+          toast('error', 'Bağlantı yok', 'Menü şu an kasaya bağlanamadı.');
+          return;
+        }
+        if (state.isSending) return;
+        state.isSending = true;
+        const btn = document.getElementById('sendBtn');
+        btn.disabled = true;
+        btn.textContent = 'Gönderiliyor…';
+
+        try {
+          const note = (document.getElementById('orderNote').value || '').trim();
+          const items = state.cart.map(i => ({
+            id: i.id,
+            name: i.name,
+            price: i.price,
+            quantity: i.quantity,
+            category_id: i.category_id
+          }));
+          const totalAmount = items.reduce((s, i) => s + i.price * i.quantity, 0);
+
+          // KASA ONLINE: customerOrders koleksiyonuna yaz (desktop uygulama listener ile işler)
+          await state.mainDb.collection('customerOrders').add({
+            tenantId: LACRIMOSA_TENANT_ID,
+            source: 'customer-web',
+            status: 'pending',
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            tableId: state.selectedTable.id,
+            tableName: state.selectedTable.name,
+            tableType: state.selectedTable.type,
+            orderNote: note || null,
+            totalAmount: totalAmount,
+            items: items,
+          });
+
+          state.cart = [];
+          document.getElementById('orderNote').value = '';
+          syncCartUI();
+          closeCart();
+          toast('ok', 'Sipariş alındı', 'Teşekkürler. Siparişiniz iletildi.');
+        } catch (e) {
+          toast('error', 'Hata', e.message || 'Sipariş gönderilemedi');
+        } finally {
+          state.isSending = false;
+          btn.disabled = false;
+          btn.textContent = 'Siparişi Gönder';
+        }
+      }
+
+      async function initFirebases() {
+        // 1) tenant-config -> mainFirebaseConfig al
+        const tenantApp = firebase.initializeApp(TENANT_CONFIG_FIREBASE, 'tenant-config');
+        const tenantDb = firebase.firestore(tenantApp);
+        const snap = await tenantDb.collection('tenants').where('tenantId', '==', LACRIMOSA_TENANT_ID).limit(1).get();
+        if (snap.empty) throw new Error('Tenant bulunamadı');
+        const tenantData = snap.docs[0].data() || {};
+        const name = tenantData.businessName || tenantData.name || 'Lacrimosa Coffee';
+        document.getElementById('brandName').textContent = 'Lacrimosa Coffee';
+
+        const mainConfigRaw = tenantData.firebaseApi1 || tenantData.mainFirebaseConfig;
+        const mainConfig = typeof mainConfigRaw === 'string' ? JSON.parse(mainConfigRaw) : mainConfigRaw;
+        if (!mainConfig || !mainConfig.projectId) throw new Error('mainFirebaseConfig bulunamadı');
+
+        // 2) main firestore (products/categories + customerOrders)
+        const mainApp = firebase.initializeApp(mainConfig, 'main');
+        state.mainDb = firebase.firestore(mainApp);
+
+        // 3) tables firestore (dolu/boş)
+        const tablesApp = firebase.initializeApp(TABLES_FIREBASE, 'tables');
+        state.tablesDb = firebase.firestore(tablesApp);
+
+        // categories
+        state.mainDb.collection('categories').onSnapshot((s) => {
+          const arr = [];
+          s.forEach((d) => {
+            const c = d.data() || {};
+            const id = typeof c.id === 'string' ? parseInt(c.id, 10) : c.id;
+            arr.push({ id, name: c.name || '', order_index: c.order_index || 0 });
+          });
+          arr.sort((a, b) => (a.order_index - b.order_index) || (a.id - b.id));
+          state.categories = arr;
+          if (state.selectedCategoryId == null && arr.length) state.selectedCategoryId = arr[0].id;
+          renderCategories();
+          renderProducts();
+        });
+
+        // products
+        state.mainDb.collection('products').onSnapshot((s) => {
+          const arr = [];
+          s.forEach((d) => {
+            const p = d.data() || {};
+            const id = typeof p.id === 'string' ? parseInt(p.id, 10) : p.id;
+            const cid = typeof p.category_id === 'string' ? parseInt(p.category_id, 10) : p.category_id;
+            arr.push({
+              id,
+              name: p.name || '',
+              category_id: cid,
+              price: Number(p.price || 0),
+              image: p.image || null,
+              unit: p.unit || p.unitLabel || p.unit_name || null,
+            });
+          });
+          state.products = arr;
+          renderProducts();
+        });
+
+        // tables occupancy (realtime)
+        state.tablesDb.collection('tables').onSnapshot((s) => {
+          const occ = new Map();
+          s.forEach((d) => {
+            const t = d.data() || {};
+            const id = String(t.table_id || d.id || '');
+            const occupied = t.is_occupied === true || (Array.isArray(t.items) && t.items.length > 0);
+            if (id && occupied) occ.set(id, true);
+          });
+          state.tablesOcc = occ;
+          renderTableGrids();
+        });
+
+        // saved table
+        const saved = localStorage.getItem('lacrimosa_customer_table');
+        if (saved) {
+          try {
+            const table = JSON.parse(saved);
+            if (table && table.id) {
+              setSelectedTable(table);
+            }
+          } catch {}
+        }
+      }
+
+      (async function init() {
+        try {
+          renderTableGrids();
+          // URL masa seçimi (örn: /iceri1, /disari2) varsa öncelikli
+          const tableFromUrl = parseTableFromPathname();
+          if (tableFromUrl) {
+            setSelectedTable(tableFromUrl);
+          }
+
+          await initFirebases();
+          syncCartUI();
+          hideSplash(true);
+        } catch (e) {
+          toast('error', 'Bağlantı hatası', e.message || 'Veriler yüklenemedi');
+          // splash ekranda kısa bir hata mesajı gösterip yine de kapat (ekran boş kalmasın)
+          hideSplash(false, 'Bağlantı kurulamadı. Lütfen tekrar deneyin.');
+        }
+      })();
+    </script>
+  </body>
+</html>
+

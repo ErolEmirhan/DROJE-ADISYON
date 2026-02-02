@@ -24,6 +24,9 @@ const TENANT_CONFIG_FIREBASE = {
   measurementId: "G-GCRJCCL4K0"
 };
 
+const LACRIMOSA_TENANT_ID = 'TENANT-1769956051654';
+const LACRIMOSA_BUSINESS_NAME = 'Lacrimosa Coffee';
+
 let tenantConfigApp = null;
 let tenantConfigFirestore = null;
 let currentTenantInfo = null;
@@ -129,7 +132,7 @@ async function getTenantInfo(tenantId) {
 
     return {
       tenantId: tenantId,
-      businessName: tenantData.businessName || tenantData.name || 'İşletme',
+      businessName: tenantId === LACRIMOSA_TENANT_ID ? LACRIMOSA_BUSINESS_NAME : (tenantData.businessName || tenantData.name || 'İşletme'),
       mainFirebaseConfig: mainFirebaseConfig,
       tablesFirebaseConfig: tablesFirebaseConfig,
       isActive: isActive,
@@ -290,6 +293,7 @@ function cleanupTenantStatusListener() {
 
 // Müessese ismini al (dinamik)
 function getBusinessName() {
+  if (currentTenantInfo?.tenantId === LACRIMOSA_TENANT_ID) return LACRIMOSA_BUSINESS_NAME;
   return currentTenantInfo ? currentTenantInfo.businessName : 'MAKARA';
 }
 

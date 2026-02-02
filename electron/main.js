@@ -11,6 +11,7 @@ const QRCode = require('qrcode');
 const os = require('os');
 const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const sharp = require('sharp');
 const tenantManager = require('./tenantManager');
 
 // Firebase entegrasyonu - Tenant'a göre dinamik yüklenecek
@@ -34,6 +35,7 @@ let storageDeleteObject = null;
 let categoriesListenerCleanup = null;
 let productsListenerCleanup = null;
 let broadcastsListenerCleanup = null;
+let customerOrdersListenerCleanup = null;
 
 // Cloudflare R2 entegrasyonu
 const R2_CONFIG = {
@@ -212,6 +214,10 @@ async function cleanupFirebases() {
       broadcastsListenerCleanup();
       broadcastsListenerCleanup = null;
     }
+    if (customerOrdersListenerCleanup) {
+      customerOrdersListenerCleanup();
+      customerOrdersListenerCleanup = null;
+    }
     
     // Tenant status listener'ı temizle
     tenantManager.cleanupTenantStatusListener();
@@ -253,6 +259,181 @@ async function cleanupFirebases() {
     console.log('✅ Mevcut Firebase\'ler temizlendi');
   } catch (error) {
     console.error('Firebase temizleme hatası:', error);
+  }
+}
+
+// Müşteri menüsü siparişlerini (internet üzerinden) Firestore'dan dinle
+// Not: Bu özellik Lacrimosa Coffee (TENANT-1769956051654) için açıldı.
+const LACRIMOSA_TENANT_ID = 'TENANT-1769956051654';
+let isCustomerOrdersListenerInitialized = false;
+const processingCustomerOrderIds = new Set();
+let customerOrdersQueue = Promise.resolve();
+
+function setupCustomerOrdersRealtimeListener() {
+  if (!firestore || !firebaseCollection || !firebaseOnSnapshot || !firebaseDoc || !firebaseUpdateDoc) {
+    console.warn('⚠️ Firebase başlatılamadı, müşteri sipariş listener kurulamadı');
+    return null;
+  }
+
+  const tenantInfo = tenantManager.getCurrentTenantInfo();
+  if (!tenantInfo || tenantInfo.tenantId !== LACRIMOSA_TENANT_ID) {
+    // Diğer tenant'larda dinleme kapalı
+    if (customerOrdersListenerCleanup) {
+      customerOrdersListenerCleanup();
+      customerOrdersListenerCleanup = null;
+    }
+    return null;
+  }
+
+  try {
+    console.log('👂 Müşteri siparişleri için listener başlatılıyor (customerOrders)...');
+
+    const ref = firebaseCollection(firestore, 'customerOrders');
+    const q =
+      (firebaseQuery && firebaseWhere)
+        ? firebaseQuery(ref, firebaseWhere('status', '==', 'pending'))
+        : ref;
+
+    const unsubscribe = firebaseOnSnapshot(q, (snapshot) => {
+      const isInitialLoad = !isCustomerOrdersListenerInitialized;
+      if (isInitialLoad) {
+        isCustomerOrdersListenerInitialized = true;
+        console.log('📥 customerOrders ilk yükleme (pending siparişler varsa işlenecek)');
+      }
+
+      const changes = snapshot.docChanges();
+      if (!changes || changes.length === 0) return;
+
+      changes.forEach((change) => {
+        if (change.type !== 'added' && change.type !== 'modified') return;
+        const docSnap = change.doc;
+        customerOrdersQueue = customerOrdersQueue
+          .then(() => processCustomerOrderDoc(docSnap))
+          .catch((e) => console.error('customerOrders queue hatası:', e));
+      });
+    }, (error) => {
+      console.error('❌ customerOrders listener hatası:', error);
+    });
+
+    customerOrdersListenerCleanup = unsubscribe;
+    console.log('✅ customerOrders listener aktif');
+    return unsubscribe;
+  } catch (e) {
+    console.error('❌ customerOrders listener kurulum hatası:', e);
+    return null;
+  }
+}
+
+async function processCustomerOrderDoc(docSnap) {
+  try {
+    const docId = docSnap.id;
+    if (!docId || processingCustomerOrderIds.has(docId)) return;
+
+    const data = docSnap.data() || {};
+    if ((data.status || '') !== 'pending') return;
+
+    const tenantInfo = tenantManager.getCurrentTenantInfo();
+    if (!tenantInfo || tenantInfo.tenantId !== LACRIMOSA_TENANT_ID) return;
+    if (data.tenantId && data.tenantId !== tenantInfo.tenantId) return;
+
+    processingCustomerOrderIds.add(docId);
+    const docRef = firebaseDoc(firestore, 'customerOrders', docId);
+
+    // Önce "processing" olarak işaretle (transaction ile tek cihazın sahiplenmesini sağlar)
+    let claimed = false;
+    if (firebaseRunTransaction) {
+      claimed = await firebaseRunTransaction(firestore, async (tx) => {
+        const snap = await tx.get(docRef);
+        if (!snap.exists()) return false;
+        const cur = snap.data() || {};
+        if ((cur.status || '') !== 'pending') return false;
+        tx.update(docRef, {
+          status: 'processing',
+          processingAt: firebaseServerTimestamp ? firebaseServerTimestamp() : new Date().toISOString(),
+          processor: 'desktop',
+        });
+        return true;
+      });
+    } else {
+      await firebaseUpdateDoc(docRef, {
+        status: 'processing',
+        processingAt: firebaseServerTimestamp ? firebaseServerTimestamp() : new Date().toISOString(),
+        processor: 'desktop',
+      });
+      claimed = true;
+    }
+    if (!claimed) {
+      processingCustomerOrderIds.delete(docId);
+      return;
+    }
+
+    const tableId = String(data.tableId || data.table_id || '').trim();
+    const tableName = String(data.tableName || data.table_name || '').trim();
+    const tableType = String(data.tableType || data.table_type || '').trim();
+    const items = Array.isArray(data.items) ? data.items : [];
+    const orderNote = data.orderNote || data.order_note || null;
+    const totalAmount = Number(data.totalAmount || data.total_amount || 0);
+
+    if (!tableId || !tableType || items.length === 0) {
+      throw new Error('Eksik sipariş verisi (masa/ürünler).');
+    }
+
+    // Mevcut /api/orders akışını kullan (stok, DB, yazdırma, syncSingleTableToFirebase)
+    if (!apiServer) {
+      throw new Error('API Server başlatılmadı (sipariş işlenemedi).');
+    }
+
+    const resp = await fetch(`http://127.0.0.1:${serverPort}/api/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        items,
+        totalAmount,
+        tableId,
+        tableName: tableName || tableId,
+        tableType,
+        orderNote,
+        staffId: null,
+        orderSource: 'Müşteri',
+      }),
+    });
+
+    const result = await resp.json().catch(() => ({}));
+    if (!resp.ok || !result.success) {
+      throw new Error(result.error || `Sipariş işlenemedi (HTTP ${resp.status})`);
+    }
+
+    await firebaseUpdateDoc(docRef, {
+      status: 'processed',
+      processedAt: firebaseServerTimestamp ? firebaseServerTimestamp() : new Date().toISOString(),
+      localOrderId: result.orderId || null,
+      isNewOrder: result.isNewOrder === true,
+    });
+
+    // Masaüstünde müşteri siparişi sesi (renderer tarafında çalınacak)
+    try {
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('customer-order-received', {
+          tableId,
+          tableName: tableName || tableId,
+          tableType,
+          orderId: result.orderId || null,
+          hasNote: !!orderNote,
+        });
+      }
+    } catch {}
+
+    console.log(`✅ Müşteri siparişi işlendi: ${docId} -> orderId=${result.orderId}`);
+  } catch (e) {
+    console.error('❌ Müşteri siparişi işleme hatası:', e);
+    try {
+      const docRef = firebaseDoc(firestore, 'customerOrders', docSnap.id);
+      await firebaseUpdateDoc(docRef, {
+        status: 'error',
+        error: String(e?.message || e),
+        errorAt: firebaseServerTimestamp ? firebaseServerTimestamp() : new Date().toISOString(),
+      });
+    } catch {}
   }
 }
 
@@ -637,6 +818,7 @@ async function saveProductToFirebase(product) {
       category_id: product.category_id,
       price: parseFloat(product.price) || 0,
       image: product.image || null,
+      unit: product.unit || null,
       yemeksepeti_price: product.yemeksepeti_price !== undefined ? parseFloat(product.yemeksepeti_price) : null,
       trendyolgo_price: product.trendyolgo_price !== undefined ? parseFloat(product.trendyolgo_price) : null
     }, { merge: true });
@@ -987,6 +1169,7 @@ async function syncProductsFromFirebase() {
           category_id: typeof firebaseProduct.category_id === 'string' ? parseInt(firebaseProduct.category_id) : firebaseProduct.category_id,
           price: parseFloat(firebaseProduct.price) || 0,
           image: firebaseProduct.image || null,
+          unit: firebaseProduct.unit || null,
           yemeksepeti_price: firebaseProduct.yemeksepeti_price !== undefined && firebaseProduct.yemeksepeti_price !== null ? parseFloat(firebaseProduct.yemeksepeti_price) : undefined,
           trendyolgo_price: firebaseProduct.trendyolgo_price !== undefined && firebaseProduct.trendyolgo_price !== null ? parseFloat(firebaseProduct.trendyolgo_price) : undefined
         };
@@ -999,6 +1182,7 @@ async function syncProductsFromFirebase() {
           category_id: typeof firebaseProduct.category_id === 'string' ? parseInt(firebaseProduct.category_id) : firebaseProduct.category_id,
           price: parseFloat(firebaseProduct.price) || 0,
           image: firebaseProduct.image || null,
+          unit: firebaseProduct.unit || null,
           yemeksepeti_price: firebaseProduct.yemeksepeti_price !== undefined && firebaseProduct.yemeksepeti_price !== null ? parseFloat(firebaseProduct.yemeksepeti_price) : undefined,
           trendyolgo_price: firebaseProduct.trendyolgo_price !== undefined && firebaseProduct.trendyolgo_price !== null ? parseFloat(firebaseProduct.trendyolgo_price) : undefined
         });
@@ -1158,7 +1342,8 @@ function setupProductsRealtimeListener() {
             name: firebaseProduct.name || '',
             category_id: typeof firebaseProduct.category_id === 'string' ? parseInt(firebaseProduct.category_id) : firebaseProduct.category_id,
             price: parseFloat(firebaseProduct.price) || 0,
-            image: firebaseProduct.image || null
+            image: firebaseProduct.image || null,
+            unit: firebaseProduct.unit || null,
           };
           
           if (existingProductIndex !== -1) {
@@ -1167,7 +1352,8 @@ function setupProductsRealtimeListener() {
             const hasRealChange = oldProduct.name !== productData.name || 
                                  oldProduct.category_id !== productData.category_id ||
                                  oldProduct.price !== productData.price ||
-                                 oldProduct.image !== productData.image;
+                                 oldProduct.image !== productData.image ||
+                                 oldProduct.unit !== productData.unit;
             
             if (hasRealChange) {
               db.products[existingProductIndex] = productData;
@@ -1420,6 +1606,7 @@ ipcMain.handle('set-tenant-info', async (event, tenantInfo) => {
       setupCategoriesRealtimeListener();
       setupProductsRealtimeListener();
       setupBroadcastsRealtimeListener();
+      setupCustomerOrdersRealtimeListener();
       
       console.log('✅ Firebase senkronizasyonu tamamlandı');
       
@@ -3894,6 +4081,47 @@ async function uploadImageToR2(filePath, productId = null) {
   }
 }
 
+// 0 maliyet yaklaşım: görseli küçültüp dataURL olarak döndür (Firestore'a direkt yazılabilir)
+// Firestore doküman limiti için görseli küçük tutuyoruz (WebP ~512px).
+async function convertImageFileToInlineDataUrl(filePath) {
+  // rotate(): EXIF orientation düzeltmesi
+  // withoutEnlargement: küçük görselleri büyütmez
+  const base = sharp(filePath).rotate().resize({
+    width: 512,
+    height: 512,
+    fit: 'inside',
+    withoutEnlargement: true
+  });
+
+  // Kaliteyi adaptif düşür (çok büyükse)
+  let quality = 72;
+  let buffer = await base.webp({ quality }).toBuffer();
+  const targetBytes = 220 * 1024; // ~220KB hedef (güvenli)
+  while (buffer.length > targetBytes && quality > 46) {
+    quality -= 8;
+    buffer = await base.webp({ quality }).toBuffer();
+  }
+
+  // Hala çok büyükse bir kez daha küçült
+  if (buffer.length > 420 * 1024) {
+    const smaller = sharp(filePath).rotate().resize({
+      width: 420,
+      height: 420,
+      fit: 'inside',
+      withoutEnlargement: true
+    });
+    quality = Math.min(quality, 60);
+    buffer = await smaller.webp({ quality }).toBuffer();
+  }
+
+  return {
+    dataUrl: `data:image/webp;base64,${buffer.toString('base64')}`,
+    bytes: buffer.length,
+    format: 'webp',
+    quality
+  };
+}
+
 // Firebase images koleksiyonunda görsel kaydını güncelle (ürün güncellendiğinde)
 async function updateImageRecordInFirebase(productId, imageUrl, productName, categoryId, productPrice) {
   if (!firestore || !firebaseCollection || !firebaseGetDocs || !firebaseDoc || !firebaseSetDoc) {
@@ -4139,13 +4367,44 @@ ipcMain.handle('select-image-file', async (event, productId = null) => {
       return { success: false, error: 'Dosya bulunamadı' };
     }
 
-    // Firebase Storage'a yükle
+    // Lacrimosa (internet müşteri menüsü) için 0 maliyet: görseli dataURL olarak Firestore'a göm (Storage/R2 yok)
+    const tenantInfo = tenantManager.getCurrentTenantInfo();
+    const isLacrimosa = tenantInfo?.tenantId === LACRIMOSA_TENANT_ID;
+    if (isLacrimosa) {
+      const converted = await convertImageFileToInlineDataUrl(filePath);
+      const dataUrl = converted.dataUrl;
+
+      // Düzenleme modunda (productId verildiyse) anında kaydet -> customer.html anında görür
+      if (productId != null) {
+        const productIdNum = typeof productId === 'string' ? parseInt(productId, 10) : productId;
+        const idx = db.products.findIndex(p => p.id === productIdNum);
+        if (idx !== -1) {
+          db.products[idx] = { ...db.products[idx], image: dataUrl };
+          saveDatabase();
+          saveProductToFirebase(db.products[idx]).catch(err => {
+            console.error('Firebase ürün (inline image) güncelleme hatası:', err);
+          });
+        }
+      }
+
+      return {
+        success: true,
+        path: dataUrl,
+        isInlineDataUrl: true,
+        bytes: converted.bytes,
+        format: converted.format,
+        quality: converted.quality,
+        autoSaved: productId != null
+      };
+    }
+
+    // Diğer tenantlar: mevcut yöntem (R2)
     try {
       const downloadURL = await uploadImageToR2(filePath, productId);
       return { success: true, path: downloadURL, isFirebaseURL: true };
     } catch (storageError) {
       console.error('Firebase Storage yükleme hatası:', storageError);
-      // Firebase Storage başarısız olursa, eski yöntemle devam et (geriye dönük uyumluluk)
+      // R2 başarısız olursa, eski yöntemle devam et (geriye dönük uyumluluk)
       const publicDir = path.join(__dirname, '../public');
       if (!fs.existsSync(publicDir)) {
         fs.mkdirSync(publicDir, { recursive: true });
@@ -5998,6 +6257,7 @@ async function printAdisyonByCategory(items, adisyonData) {
   try {
     const tenantInfo = tenantManager.getCurrentTenantInfo();
     const isGeceDonercisiTenant = tenantInfo?.tenantId === GECE_TENANT_ID;
+    const printerAssignments = Array.isArray(db.printerAssignments) ? db.printerAssignments : [];
 
     // 1. ÖNCE: Ürünleri personel ve zaman bazında grupla
     // Her personel grubu için ayrı adisyon oluşturulacak
@@ -6045,8 +6305,16 @@ async function printAdisyonByCategory(items, adisyonData) {
       for (const item of staffGroup.items) {
         // Ürünün kategori ID'sini bul
         const product = db.products.find(p => p.id === item.id);
-        if (product && product.category_id) {
-          const categoryId = product.category_id;
+        const fallbackCategoryIdRaw = item?.category_id ?? item?.categoryId ?? item?.categoryID ?? null;
+        const fallbackCategoryId =
+          typeof fallbackCategoryIdRaw === 'string'
+            ? (parseInt(fallbackCategoryIdRaw, 10) || null)
+            : (typeof fallbackCategoryIdRaw === 'number' ? fallbackCategoryIdRaw : null);
+
+        const effectiveCategoryId = (product && product.category_id) ? product.category_id : fallbackCategoryId;
+
+        if (effectiveCategoryId) {
+          const categoryId = effectiveCategoryId;
           const category = db.categories.find(c => c.id === categoryId);
           
           if (!categoryItemsMap.has(categoryId)) {
@@ -6080,7 +6348,7 @@ async function printAdisyonByCategory(items, adisyonData) {
         const categoryInfo = categoryInfoMap.get(categoryId);
         
         // Bu kategori için atanmış yazıcıyı bul
-        const assignment = db.printerAssignments.find(a => {
+        const assignment = printerAssignments.find(a => {
           const assignmentCategoryId = typeof a.category_id === 'string' ? parseInt(a.category_id) : a.category_id;
           return assignmentCategoryId === categoryIdNum;
         });
@@ -6220,6 +6488,21 @@ function generateAdisyonHTML(items, adisyonData) {
   const orderDate = adisyonData.sale_date || new Date().toLocaleDateString('tr-TR');
   const orderTime = adisyonData.sale_time || getFormattedTime(new Date());
   const orderDateTime = `${orderDate} ${orderTime}`;
+
+  // Sipariş notu (customer.html gibi order-level notlar)
+  const orderNoteRaw =
+    (adisyonData && (adisyonData.orderNote || adisyonData.order_note)) ||
+    null;
+  const escapeHtml = (s) =>
+    String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  const orderNoteHtml = orderNoteRaw
+    ? escapeHtml(orderNoteRaw).replace(/\n/g, '<br>')
+    : null;
   
   // Ürünleri formatla - "1,5 X ADANA PORSİYON" formatında
   let itemsHTML = '';
@@ -6501,6 +6784,14 @@ function generateAdisyonHTML(items, adisyonData) {
       ${tableInfo ? `
       <div class="table-info">${tableInfo}</div>
       ` : ''}
+
+      <!-- Sipariş Notu -->
+      ${orderNoteHtml ? `
+      <div style="margin: 8px 0 6px; padding: 8px 10px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 8px;">
+        <div style="font-size: 12px; font-weight: 900; color: #92400e; margin-bottom: 3px;">📝 NOT</div>
+        <div style="font-size: 12px; font-weight: 800; color: #78350f;">${orderNoteHtml}</div>
+      </div>
+      ` : ''}
       
       <!-- Ürünler -->
       <div class="items">
@@ -6765,6 +7056,7 @@ function generateMobileHTML(serverURL) {
   const isSultanSomati = tenantId === 'TENANT-1766611377865';
   const isYakasGrill = tenantId === 'TENANT-1766340222641';
   const isGeceDonercisi = tenantId === 'TENANT-1769602125250';
+  const isLacromisa = tenantId === 'TENANT-1769956051654';
   const themeColor = tenantInfo?.themeColor || '#f97316';
   
   // Gece Dönercisi: 6 genel kategori (salon, bahçe, paket, trendyolgo, yemeksepeti, migros yemek) — 30'ar masa, mobil personel senkron
@@ -6788,15 +7080,21 @@ function generateMobileHTML(serverURL) {
   ];
   
   // 0 değeri geçerli olduğu için null/undefined kontrolü yapıyoruz
-  const insideTablesCount = tenantInfo?.insideTables !== undefined && tenantInfo?.insideTables !== null 
-    ? tenantInfo.insideTables 
-    : 20;
-  const outsideTablesCount = tenantInfo?.outsideTables !== undefined && tenantInfo?.outsideTables !== null 
-    ? tenantInfo.outsideTables 
-    : 20;
-  const packageTablesCount = tenantInfo?.packageTables !== undefined && tenantInfo?.packageTables !== null 
-    ? tenantInfo.packageTables 
-    : 5;
+  const insideTablesCount = isLacromisa
+    ? 15
+    : (tenantInfo?.insideTables !== undefined && tenantInfo?.insideTables !== null
+      ? tenantInfo.insideTables
+      : 20);
+  const outsideTablesCount = isLacromisa
+    ? 15
+    : (tenantInfo?.outsideTables !== undefined && tenantInfo?.outsideTables !== null
+      ? tenantInfo.outsideTables
+      : 20);
+  const packageTablesCount = isLacromisa
+    ? 0
+    : (tenantInfo?.packageTables !== undefined && tenantInfo?.packageTables !== null
+      ? tenantInfo.packageTables
+      : 5);
   
   // Tema renklerini hesapla (basit versiyon)
   const hexToRgb = (hex) => {
@@ -6832,8 +7130,8 @@ function generateMobileHTML(serverURL) {
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="${tenantManager.getBusinessName()} Mobil">
   <link rel="manifest" href="${serverURL}/mobile-manifest.json">
-  <link rel="icon" type="image/png" href="${serverURL}/${isGeceDonercisi ? 'tenant.png' : 'mobilpersonel.png'}">
-  <link rel="apple-touch-icon" href="${serverURL}/${isGeceDonercisi ? 'tenant.png' : 'mobilpersonel.png'}">
+  <link rel="icon" type="${isLacromisa ? 'image/jpeg' : 'image/png'}" href="${serverURL}/${isGeceDonercisi ? 'tenant.png' : (isLacromisa ? 'lacrimosa.jpg' : 'mobilpersonel.png')}">
+  <link rel="apple-touch-icon" href="${serverURL}/${isGeceDonercisi ? 'tenant.png' : (isLacromisa ? 'lacrimosa.jpg' : 'mobilpersonel.png')}">
   <title>${tenantManager.getBusinessName()} - Mobil Sipariş</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -7079,6 +7377,46 @@ function generateMobileHTML(serverURL) {
       background: linear-gradient(90deg, ${primaryLight} 0%, ${primary} 50%, ${primaryLight} 100%);
       border-radius: 0 0 14px 14px;
       box-shadow: 0 2px 8px ${primary}66;
+    }
+
+    /* Lacromisa: 2 satır kategori alanı daha kurumsal */
+    .tenant-lacromisa .category-tabs {
+      gap: 8px;
+      padding-bottom: 6px;
+      scrollbar-color: #0f172a #e5e7eb;
+    }
+    .tenant-lacromisa .category-tabs-row {
+      gap: 8px;
+    }
+    .tenant-lacromisa .category-tab {
+      padding: 12px 14px;
+      border: 1px solid rgba(15, 23, 42, 0.14);
+      border-radius: 12px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      color: #0f172a;
+      font-weight: 900;
+      font-size: 13px;
+      letter-spacing: -0.1px;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+      min-height: 44px;
+    }
+    .tenant-lacromisa .category-tab:hover {
+      border-color: rgba(15, 23, 42, 0.22);
+      background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+      transform: translateY(-1px);
+      color: #0b1220;
+    }
+    .tenant-lacromisa .category-tab.active {
+      border-color: rgba(15, 23, 42, 0.0);
+      background: linear-gradient(135deg, #0f172a 0%, #1f2937 100%);
+      color: #ffffff;
+      box-shadow: 0 14px 34px rgba(15, 23, 42, 0.28);
+      transform: translateY(-1px);
+    }
+    .tenant-lacromisa .category-tab.active::after {
+      background: linear-gradient(90deg, rgba(255,255,255,0.0) 0%, rgba(255,255,255,0.65) 50%, rgba(255,255,255,0.0) 100%);
+      box-shadow: none;
     }
     .products-grid {
       display: grid;
@@ -8079,11 +8417,11 @@ function generateMobileHTML(serverURL) {
     }
   </style>
 </head>
-<body>
+<body class="${isLacromisa ? 'tenant-lacromisa' : ''}">
   <div class="container">
     <!-- PIN Giriş Ekranı - Kurumsal ve Profesyonel -->
     <div id="pinSection" class="pin-section">
-      <img src="${serverURL}/${isGeceDonercisi ? 'tenant.png' : 'assets/login.png'}" alt="Login" class="login-image" onerror="this.style.display='none';">
+      <img src="${serverURL}/${isGeceDonercisi ? 'tenant.png' : (isLacromisa ? 'lacrimosa.jpg' : 'assets/login.png')}" alt="Login" class="login-image" onerror="this.style.display='none';">
       <h2>Personel Girişi</h2>
       <p class="subtitle">Lütfen şifrenizi giriniz</p>
       <div class="pin-input-wrapper">
@@ -8920,6 +9258,7 @@ function generateMobileHTML(serverURL) {
     const isSultanSomatiMode = ${isSultanSomati ? 'true' : 'false'};
     const isYakasGrillMode = ${isYakasGrill ? 'true' : 'false'};
     const isGeceDonercisiMode = ${isGeceDonercisi ? 'true' : 'false'};
+    const isLacromisaMode = ${isLacromisa ? 'true' : 'false'};
     const sultanSomatiSalons = ${isSultanSomati ? JSON.stringify(sultanSomatiSalons) : '[]'};
     const geceDonercisiCategories = ${isGeceDonercisi ? JSON.stringify(geceDonercisiCategories) : '[]'};
     let selectedTable = null;
@@ -10116,6 +10455,39 @@ function generateMobileHTML(serverURL) {
         // Normal modda önce temizle
         row1.innerHTML = '';
         row2.innerHTML = '';
+
+        // Lacromisa: 2 satır, sade ve kurumsal kategori görünümü (özel sıralama yok)
+        if (isLacromisaMode) {
+          const escapeHtml = (s) => String(s || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+
+          const sorted = [...(categories || [])].sort((a, b) => {
+            const an = (a?.name || '').toString();
+            const bn = (b?.name || '').toString();
+            try {
+              return an.localeCompare(bn, 'tr', { sensitivity: 'base' });
+            } catch {
+              return an.localeCompare(bn);
+            }
+          });
+
+          const firstRow = [];
+          const secondRow = [];
+          sorted.forEach((cat, idx) => {
+            (idx % 2 === 0 ? firstRow : secondRow).push(cat);
+          });
+
+          const renderBtn = (cat) => {
+            const isActive = selectedCategoryId === cat.id;
+            return '<button class="category-tab' + (isActive ? ' active' : '') + '" onclick="selectCategory(' + cat.id + ')">' + escapeHtml(cat.name) + '</button>';
+          };
+
+          row1.innerHTML = firstRow.map(renderBtn).join('');
+          row2.innerHTML = secondRow.map(renderBtn).join('');
+          return;
+        }
       }
       
       // Üst satır kategorileri (belirli sırayla)
@@ -10445,9 +10817,21 @@ function generateMobileHTML(serverURL) {
           '</div>';
         }
         
+        // Ürün birimi etiketi (varsa)
+        const unitRaw = (prod.unit || prod.unitLabel || prod.unit_name || '').toString().trim();
+        const unitText = unitRaw ? unitRaw.toUpperCase() : '';
+        const unitBadge = unitText
+          ? (
+            isLacromisaMode
+              ? '<div style="position:absolute; top:8px; right:8px; background: rgba(15, 23, 42, 0.86); color:#ffffff; border: 1px solid rgba(255, 255, 255, 0.18); padding: 5px 9px; border-radius: 999px; font-size: 10px; font-weight: 900; letter-spacing: 0.7px; text-transform: uppercase; z-index: 10; backdrop-filter: blur(8px); box-shadow: 0 10px 24px rgba(15, 23, 42, 0.25);">' + unitText + '</div>'
+              : '<div style="position:absolute; top:8px; right:8px; background: rgba(15, 23, 42, 0.08); color:#0f172a; border: 1px solid rgba(15, 23, 42, 0.16); padding: 4px 8px; border-radius: 999px; font-size: 10px; font-weight: 900; letter-spacing: 0.6px; text-transform: uppercase; z-index: 10; backdrop-filter: blur(6px);">' + unitText + '</div>'
+          )
+          : '';
+
         // Normal mod için eski tasarım
         return '<div id="' + cardId + '" class="product-card" ' + onClickHandler + ' style="' + cardStyle + ' position: relative; overflow: hidden;">' +
           lockIcon +
+          unitBadge +
           '<div class="product-name" style="' + (isOutOfStock ? 'opacity: 0.7;' : '') + '">' + prod.name + '</div>' +
           '<div class="product-price" style="' + (isOutOfStock ? 'opacity: 0.7;' : '') + '">' + prod.price.toFixed(2) + ' ₺</div>' +
           stockBadge +
@@ -11600,7 +11984,8 @@ function startAPIServer() {
             name: firebaseProduct.name || '',
             category_id: typeof firebaseProduct.category_id === 'string' ? parseInt(firebaseProduct.category_id) : firebaseProduct.category_id,
             price: parseFloat(firebaseProduct.price) || 0,
-            image: firebaseProduct.image || null
+            image: firebaseProduct.image || null,
+            unit: firebaseProduct.unit || firebaseProduct.unitLabel || firebaseProduct.unit_name || null
           };
           
           // Kategori filtresi varsa uygula
@@ -11617,7 +12002,7 @@ function startAPIServer() {
         }
       }
       
-      // Her ürün için stok bilgisini ekle (local database'den veya Firebase'den)
+      // Her ürün için stok + unit bilgisini ekle (local database'den veya Firebase'den)
       const productsWithStock = await Promise.all(products.map(async (product) => {
         // Local database'de ürünü bul
         const localProduct = db.products.find(p => p.id === product.id);
@@ -11628,6 +12013,10 @@ function startAPIServer() {
         
         if (localProduct) {
           trackStock = localProduct.trackStock === true;
+          // unit (müşteri menüsü + mobil personel için)
+          if (!product.unit && (localProduct.unit || localProduct.unitLabel || localProduct.unit_name)) {
+            product.unit = localProduct.unit || localProduct.unitLabel || localProduct.unit_name;
+          }
           if (trackStock) {
             stock = localProduct.stock !== undefined ? (localProduct.stock || 0) : null;
             // Eğer local'de stok yoksa Firebase'den çek
@@ -11888,6 +12277,7 @@ function startAPIServer() {
     const isSultanSomati = tenantId === 'TENANT-1766611377865';
     const isYakasGrill = tenantId === 'TENANT-1766340222641';
     const isGeceDonercisi = tenantId === 'TENANT-1769602125250';
+    const isLacromisa = tenantId === 'TENANT-1769956051654';
     
     // Sultan Somatı için salon yapısı
     const sultanSomatiSalons = [
@@ -11975,6 +12365,37 @@ function startAPIServer() {
           number: i,
           type: 'package',
           name: `Paket ${i}`,
+          hasOrder: hasPendingOrder
+        });
+      }
+    } else if (isLacromisa) {
+      // Lacromisa: 15 içeri / 15 dışarı, paket yok (websocket/mobil ile aynı ID şeması)
+      const insideTablesCount = 15;
+      const outsideTablesCount = 15;
+
+      for (let i = 1; i <= insideTablesCount; i++) {
+        const tableId = `inside-${i}`;
+        const hasPendingOrder = (db.tableOrders || []).some(
+          o => o.table_id === tableId && o.status === 'pending'
+        );
+        tables.push({
+          id: tableId,
+          number: i,
+          type: 'inside',
+          name: `İçeri ${i}`,
+          hasOrder: hasPendingOrder
+        });
+      }
+      for (let i = 1; i <= outsideTablesCount; i++) {
+        const tableId = `outside-${i}`;
+        const hasPendingOrder = (db.tableOrders || []).some(
+          o => o.table_id === tableId && o.status === 'pending'
+        );
+        tables.push({
+          id: tableId,
+          number: i,
+          type: 'outside',
+          name: `Dışarı ${i}`,
           hasOrder: hasPendingOrder
         });
       }
@@ -12541,7 +12962,9 @@ function startAPIServer() {
     const baseURL = `${protocol}://${host}`;
     const tenantInfo = tenantManager.getCurrentTenantInfo();
     const isGeceDonercisi = tenantInfo?.tenantId === 'TENANT-1769602125250';
-    const iconPath = isGeceDonercisi ? 'tenant.png' : 'mobilpersonel.png';
+    const isLacromisa = tenantInfo?.tenantId === 'TENANT-1769956051654';
+    const iconPath = isGeceDonercisi ? 'tenant.png' : (isLacromisa ? 'lacrimosa.jpg' : 'mobilpersonel.png');
+    const iconMime = isLacromisa ? 'image/jpeg' : 'image/png';
     
     const manifest = {
       "name": `${tenantManager.getBusinessName()} Mobil Sipariş`,
@@ -12553,8 +12976,8 @@ function startAPIServer() {
       "theme_color": "#f97316",
       "orientation": "portrait",
       "icons": [
-        { "src": `${baseURL}/${iconPath}`, "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
-        { "src": `${baseURL}/${iconPath}`, "sizes": "192x192", "type": "image/png", "purpose": "any maskable" }
+        { "src": `${baseURL}/${iconPath}`, "sizes": "512x512", "type": iconMime, "purpose": "any maskable" },
+        { "src": `${baseURL}/${iconPath}`, "sizes": "192x192", "type": iconMime, "purpose": "any maskable" }
       ]
     };
     
@@ -12581,6 +13004,51 @@ function startAPIServer() {
       res.sendFile(iconPath);
     } else {
       res.status(404).send('Icon not found');
+    }
+  });
+
+  // Lacromisa logosu - public/lacrimosa.jpg
+  appExpress.get('/lacrimosa.jpg', (req, res) => {
+    const iconPath = path.join(__dirname, '..', 'public', 'lacrimosa.jpg');
+    if (fs.existsSync(iconPath)) {
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.sendFile(iconPath);
+    } else {
+      res.status(404).send('Logo not found');
+    }
+  });
+
+  // Müşteri menüsü (Lacrimosa Coffee) - public/menu.html
+  appExpress.get('/menu', (req, res) => {
+    const menuPath = path.join(__dirname, '..', 'public', 'menu.html');
+    if (fs.existsSync(menuPath)) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.sendFile(menuPath);
+    } else {
+      res.status(404).send('Menu not found');
+    }
+  });
+
+  // Müşteri menüsü (İNTERNET / Firebase üzerinden) - public/customer.html
+  appExpress.get('/customer', (req, res) => {
+    const customerPath = path.join(__dirname, '..', 'public', 'customer.html');
+    if (fs.existsSync(customerPath)) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.sendFile(customerPath);
+    } else {
+      res.status(404).send('Customer menu not found');
+    }
+  });
+
+  // Masa bazlı müşteri URL'leri (örn: /iceri1, /disari2)
+  // Firebase Hosting'de de aynı şekilde customer.html'e rewrite ediliyor.
+  appExpress.get(/^\/(iceri|disari)\d+\/?$/i, (req, res) => {
+    const customerPath = path.join(__dirname, '..', 'public', 'customer.html');
+    if (fs.existsSync(customerPath)) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.sendFile(customerPath);
+    } else {
+      res.status(404).send('Customer menu not found');
     }
   });
 
@@ -12648,6 +13116,9 @@ function startAPIServer() {
       const { items, totalAmount, tableId, tableName, tableType, orderNote, staffId, orderSource } = req.body;
       const tenantInfo = tenantManager.getCurrentTenantInfo();
       const isGeceDonercisiTenant = tenantInfo?.tenantId === GECE_TENANT_ID;
+      // staff bilgisi (hem yeni sipariş hem mevcut siparişe ekleme için ortak)
+      const staff = staffId && db.staff ? db.staff.find(s => s.id === staffId) : null;
+      const staffName = staff ? `${staff.name} ${staff.surname}` : null;
       
       // Eğer orderSource gönderilmemişse, tableType'a göre otomatik belirle
       let finalOrderSource = orderSource;
@@ -12764,8 +13235,6 @@ function startAPIServer() {
         orderId = (db.tableOrders || []).length > 0 
           ? Math.max(...db.tableOrders.map(o => o.id)) + 1 
           : 1;
-        const staff = staffId && db.staff ? db.staff.find(s => s.id === staffId) : null;
-        const staffName = staff ? `${staff.name} ${staff.surname}` : null;
         if (!db.tableOrders) db.tableOrders = [];
         db.tableOrders.push({
           id: orderId,

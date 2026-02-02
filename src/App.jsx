@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { getThemeColors } from './utils/themeUtils';
-import { isYakasGrill, isGeceDonercisi } from './utils/sultanSomatTables';
+import { isYakasGrill, isGeceDonercisi, isLacromisa } from './utils/sultanSomatTables';
 import Navbar from './components/Navbar';
 import CategoryPanel from './components/CategoryPanel';
 import TablePanel from './components/TablePanel';
@@ -68,6 +68,7 @@ function App() {
   };
 
   const [broadcastMessage, setBroadcastMessage] = useState(null);
+  const customerOrderAudioRef = useRef(null);
 
   // Her açılışta launcher göster (şimdilik "beni hatırla" yok)
   // useEffect(() => {
@@ -99,6 +100,7 @@ function App() {
   // Tema renklerini hesapla
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   const isGeceDonercisiMode = tenantId && isGeceDonercisi(tenantId);
+  const isLacromisaMode = tenantId && isLacromisa(tenantId);
 
   const getActiveBranchForGece = () => {
     // Şube seçimi Settings'ten değiştirilebildiği için her işlem anında localStorage'tan oku
@@ -201,6 +203,27 @@ function App() {
           if (cleanup) cleanups.push(cleanup);
         } else {
           console.error('❌ window.electronAPI.onTenantSuspended mevcut değil!');
+        }
+
+        // Customer order sound (customer.html)
+        if (window.electronAPI.onCustomerOrderReceived) {
+          const cleanup = window.electronAPI.onCustomerOrderReceived((data) => {
+            try {
+              // /public/order.mp3 -> Vite dev: /order.mp3, build: /order.mp3
+              const audio = new Audio('/order.mp3');
+              audio.volume = 0.30;
+              audio.currentTime = 0;
+              // aynı anda birden fazla çalmasın diye ref'te tut
+              try {
+                if (customerOrderAudioRef.current) {
+                  customerOrderAudioRef.current.pause();
+                }
+              } catch {}
+              customerOrderAudioRef.current = audio;
+              audio.play().catch(() => {});
+            } catch {}
+          });
+          if (cleanup) cleanups.push(cleanup);
         }
 
         // Tüm cleanup fonksiyonlarını döndür
@@ -755,48 +778,51 @@ function App() {
     if (result.success) {
       setShowPaymentModal(false);
       
-      // Kasa yazıcısından satış fişi yazdır (sadece kasa yazıcısına)
-      const receiptData = {
-        sale_id: result.saleId,
-        totalAmount,
-        paymentMethod,
-        sale_date: new Date().toLocaleDateString('tr-TR'),
-        sale_time: new Date().toLocaleTimeString('tr-TR'),
-        items: cart,
-        orderNote: orderNote || null,
-        cashierOnly: true // Sadece kasa yazıcısına yazdır
-      };
-      
-      if (window.electronAPI && window.electronAPI.printReceipt) {
-        setPrintToast({ status: 'printing', message: 'Fiş yazdırılıyor...' });
-        window.electronAPI.printReceipt(receiptData).then(result => {
-          if (result.success) {
-            setPrintToast({ status: 'success', message: 'Fiş başarıyla yazdırıldı' });
-          } else {
-            setPrintToast({ status: 'error', message: result.error || 'Fiş yazdırılamadı' });
-          }
-        }).catch(err => {
-          console.error('Fiş yazdırılırken hata:', err);
-          setPrintToast({ status: 'error', message: 'Fiş yazdırılamadı: ' + err.message });
-        });
-      }
-      
-      // Kategori bazlı yazıcılardan adisyon yazdır
-      const adisyonData = {
-        items: cart,
-        tableName: null, // Hızlı satış için masa yok
-        tableType: null,
-        orderNote: orderNote || null,
-        orderSource: null, // Hızlı satış için orderSource yok
-        sale_date: new Date().toLocaleDateString('tr-TR'),
-        sale_time: new Date().toLocaleTimeString('tr-TR')
-      };
-      
-      if (window.electronAPI && window.electronAPI.printAdisyon) {
-        // Arka planda yazdır, hata olsa bile devam et
-        window.electronAPI.printAdisyon(adisyonData).catch(err => {
-          console.error('Adisyon yazdırılırken hata:', err);
-        });
+      // Lacrimosa: ödeme sonrası otomatik fiş/adisyon yazdırma kapalı (kullanıcı isterse "Adisyon Yazdır" ile yazdırır)
+      if (!isLacromisaMode) {
+        // Kasa yazıcısından satış fişi yazdır (sadece kasa yazıcısına)
+        const receiptData = {
+          sale_id: result.saleId,
+          totalAmount,
+          paymentMethod,
+          sale_date: new Date().toLocaleDateString('tr-TR'),
+          sale_time: new Date().toLocaleTimeString('tr-TR'),
+          items: cart,
+          orderNote: orderNote || null,
+          cashierOnly: true // Sadece kasa yazıcısına yazdır
+        };
+        
+        if (window.electronAPI && window.electronAPI.printReceipt) {
+          setPrintToast({ status: 'printing', message: 'Fiş yazdırılıyor...' });
+          window.electronAPI.printReceipt(receiptData).then(result => {
+            if (result.success) {
+              setPrintToast({ status: 'success', message: 'Fiş başarıyla yazdırıldı' });
+            } else {
+              setPrintToast({ status: 'error', message: result.error || 'Fiş yazdırılamadı' });
+            }
+          }).catch(err => {
+            console.error('Fiş yazdırılırken hata:', err);
+            setPrintToast({ status: 'error', message: 'Fiş yazdırılamadı: ' + err.message });
+          });
+        }
+        
+        // Kategori bazlı yazıcılardan adisyon yazdır
+        const adisyonData = {
+          items: cart,
+          tableName: null, // Hızlı satış için masa yok
+          tableType: null,
+          orderNote: orderNote || null,
+          orderSource: null, // Hızlı satış için orderSource yok
+          sale_date: new Date().toLocaleDateString('tr-TR'),
+          sale_time: new Date().toLocaleTimeString('tr-TR')
+        };
+        
+        if (window.electronAPI && window.electronAPI.printAdisyon) {
+          // Arka planda yazdır, hata olsa bile devam et
+          window.electronAPI.printAdisyon(adisyonData).catch(err => {
+            console.error('Adisyon yazdırılırken hata:', err);
+          });
+        }
       }
       
       // Fiş modal'ını göster
@@ -865,39 +891,42 @@ function App() {
         orderNote: orderNote || null
       };
       
-      // Kasa yazıcısından satış fişi yazdır (sadece kasa yazıcısına)
-      if (window.electronAPI && window.electronAPI.printReceipt) {
-        setPrintToast({ status: 'printing', message: 'Fiş yazdırılıyor...' });
-        window.electronAPI.printReceipt({
-          ...receiptData,
-          cashierOnly: true // Sadece kasa yazıcısına yazdır
-        }).then(result => {
-          if (result.success) {
-            setPrintToast({ status: 'success', message: 'Fiş başarıyla yazdırıldı' });
-          } else {
-            setPrintToast({ status: 'error', message: result.error || 'Fiş yazdırılamadı' });
-          }
-        }).catch(err => {
-          console.error('Fiş yazdırılırken hata:', err);
-          setPrintToast({ status: 'error', message: 'Fiş yazdırılamadı: ' + err.message });
-        });
-      }
-      
-      // Kategori bazlı yazıcılardan adisyon yazdır
-      const adisyonData = {
-        items: cart,
-        tableName: null, // Hızlı satış için masa yok
-        tableType: null,
-        orderNote: orderNote || null,
-        sale_date: new Date().toLocaleDateString('tr-TR'),
-        sale_time: new Date().toLocaleTimeString('tr-TR')
-      };
-      
-      if (window.electronAPI && window.electronAPI.printAdisyon) {
-        // Arka planda yazdır, hata olsa bile devam et
-        window.electronAPI.printAdisyon(adisyonData).catch(err => {
-          console.error('Adisyon yazdırılırken hata:', err);
-        });
+      // Lacrimosa: ödeme sonrası otomatik fiş/adisyon yazdırma kapalı
+      if (!isLacromisaMode) {
+        // Kasa yazıcısından satış fişi yazdır (sadece kasa yazıcısına)
+        if (window.electronAPI && window.electronAPI.printReceipt) {
+          setPrintToast({ status: 'printing', message: 'Fiş yazdırılıyor...' });
+          window.electronAPI.printReceipt({
+            ...receiptData,
+            cashierOnly: true // Sadece kasa yazıcısına yazdır
+          }).then(result => {
+            if (result.success) {
+              setPrintToast({ status: 'success', message: 'Fiş başarıyla yazdırıldı' });
+            } else {
+              setPrintToast({ status: 'error', message: result.error || 'Fiş yazdırılamadı' });
+            }
+          }).catch(err => {
+            console.error('Fiş yazdırılırken hata:', err);
+            setPrintToast({ status: 'error', message: 'Fiş yazdırılamadı: ' + err.message });
+          });
+        }
+        
+        // Kategori bazlı yazıcılardan adisyon yazdır
+        const adisyonData = {
+          items: cart,
+          tableName: null, // Hızlı satış için masa yok
+          tableType: null,
+          orderNote: orderNote || null,
+          sale_date: new Date().toLocaleDateString('tr-TR'),
+          sale_time: new Date().toLocaleTimeString('tr-TR')
+        };
+        
+        if (window.electronAPI && window.electronAPI.printAdisyon) {
+          // Arka planda yazdır, hata olsa bile devam et
+          window.electronAPI.printAdisyon(adisyonData).catch(err => {
+            console.error('Adisyon yazdırılırken hata:', err);
+          });
+        }
       }
       
       clearCart();

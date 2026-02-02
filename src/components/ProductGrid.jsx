@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { initImageCache, getCachedImage } from '../utils/imageCache';
-import { isGeceDonercisi, isYakasGrill } from '../utils/sultanSomatTables';
+import { isGeceDonercisi, isLacromisa, isYakasGrill } from '../utils/sultanSomatTables';
 
 const ProductGrid = ({ products, onAddToCart, tenantId, categories = [] }) => {
   const [imageUrls, setImageUrls] = useState({});
@@ -46,6 +46,7 @@ const ProductGrid = ({ products, onAddToCart, tenantId, categories = [] }) => {
 
   const isYakasGrillMode = tenantId && isYakasGrill(tenantId);
   const isGeceDonercisiMode = tenantId && isGeceDonercisi(tenantId);
+  const isLacromisaMode = tenantId && isLacromisa(tenantId);
 
   const normalizeTr = (input) => {
     try {
@@ -86,10 +87,14 @@ const ProductGrid = ({ products, onAddToCart, tenantId, categories = [] }) => {
   // Yaka's Grill için daha büyük kartlar (daha az sütun)
   const gridCols = isGeceDonercisiMode
     ? '' // Gece Dönercisi: auto-fit ile her ekranda büyük kartlar
+    : isLacromisaMode
+      ? '' // Lacromisa: auto-fit ile daha okunaklı kartlar
     : isYakasGrillMode
       ? 'grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6'
       : 'grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8 2xl:grid-cols-10';
-  const gapClass = isGeceDonercisiMode ? 'gap-5 md:gap-6' : (isYakasGrillMode ? 'gap-4' : 'gap-2');
+  const gapClass = isGeceDonercisiMode
+    ? 'gap-5 md:gap-6'
+    : (isLacromisaMode ? 'gap-4 md:gap-5' : (isYakasGrillMode ? 'gap-4' : 'gap-2'));
   
   return (
     <div className="flex-1 overflow-y-auto scrollbar-custom">
@@ -98,13 +103,15 @@ const ProductGrid = ({ products, onAddToCart, tenantId, categories = [] }) => {
         style={
           isGeceDonercisiMode
             ? { gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }
-            : undefined
+            : (isLacromisaMode ? { gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' } : undefined)
         }
       >
         {products.map((product) => {
           const cachedImageUrl = imageUrls[product.id] || product.image;
           const overrideImageUrl = getGeceLavasOverrideImage(product);
           const resolvedImageUrl = overrideImageUrl || cachedImageUrl;
+          const unitRaw = (product.unit || product.unitLabel || product.unit_name || '').toString().trim();
+          const unitText = unitRaw ? unitRaw.toUpperCase() : '';
           // Sadece stok takibi yapılan ürünler için kontrol et
           const trackStock = product.trackStock === true;
           const stock = trackStock && product.stock !== undefined ? (product.stock || 0) : null;
@@ -114,11 +121,15 @@ const ProductGrid = ({ products, onAddToCart, tenantId, categories = [] }) => {
             <div
               key={product.id}
               onClick={() => !isOutOfStock && onAddToCart(product)}
-              className={`${isGeceDonercisiMode ? 'product-card-gece' : 'product-card'} animate-fade-in touch-manipulation ${isOutOfStock ? 'opacity-60 cursor-not-allowed' : ''}`}
+              className={`${isGeceDonercisiMode ? 'product-card-gece' : (isLacromisaMode ? 'product-card-lacromisa' : 'product-card')} animate-fade-in touch-manipulation ${isOutOfStock ? 'opacity-60 cursor-not-allowed' : ''}`}
             >
-              <div className={isGeceDonercisiMode
-                ? 'aspect-square bg-slate-50 rounded-3xl mb-4 flex items-center justify-center overflow-hidden relative group border border-slate-200 shadow-sm'
-                : 'aspect-square bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-lg mb-1.5 flex items-center justify-center overflow-hidden relative group'
+              <div className={
+                isGeceDonercisiMode
+                  ? 'aspect-square bg-slate-50 rounded-3xl mb-4 flex items-center justify-center overflow-hidden relative group border border-slate-200 shadow-sm'
+                  : (isLacromisaMode
+                    ? 'aspect-square bg-slate-50 rounded-2xl mb-3 flex items-center justify-center overflow-hidden relative group border border-slate-200'
+                    : 'aspect-square bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-lg mb-1.5 flex items-center justify-center overflow-hidden relative group'
+                  )
               }>
                 {resolvedImageUrl ? (
                   <img 
@@ -139,19 +150,50 @@ const ProductGrid = ({ products, onAddToCart, tenantId, categories = [] }) => {
                     <p className={`${isGeceDonercisiMode ? 'text-slate-400 text-xs font-semibold' : `text-purple-400 ${isYakasGrillMode ? 'text-xs' : 'text-[10px]'}`}`}>Görsel</p>
                   </div>
                 )}
-                <div className={`absolute inset-0 ${isGeceDonercisiMode ? 'bg-gradient-to-t from-slate-900/75 to-transparent' : 'bg-gradient-to-t from-purple-600/80 to-transparent'} opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-end justify-center pb-4`}>
-                  <span className={`text-white font-semibold ${isGeceDonercisiMode ? 'text-sm' : (isYakasGrillMode ? 'text-sm' : 'text-xs')}`}>Sepete Ekle +</span>
+                <div className={`absolute inset-0 ${
+                  isGeceDonercisiMode
+                    ? 'bg-gradient-to-t from-slate-900/75 to-transparent'
+                    : (isLacromisaMode ? 'bg-gradient-to-t from-slate-900/70 to-transparent' : 'bg-gradient-to-t from-purple-600/80 to-transparent')
+                } opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-end justify-center pb-4`}>
+                  <span className={`text-white font-semibold ${isGeceDonercisiMode ? 'text-sm' : (isLacromisaMode ? 'text-sm' : (isYakasGrillMode ? 'text-sm' : 'text-xs'))}`}>Sepete Ekle +</span>
                 </div>
               </div>
               
               <h3 className={
                 isGeceDonercisiMode
                   ? 'product-name-gece mb-3'
+                  : isLacromisaMode
+                    ? 'product-name-lacromisa mb-2'
                   : `font-semibold text-gray-800 mb-1 truncate leading-tight ${isYakasGrillMode ? 'text-sm' : 'text-xs'}`
               } title={product.name}>{product.name}</h3>
+              {unitText && (
+                <div className={isGeceDonercisiMode ? 'mb-3' : (isLacromisaMode ? 'mb-2' : 'mb-1')}>
+                  <span
+                    className={
+                      isLacromisaMode
+                        ? 'unit-pill-lacromisa'
+                        : `inline-flex items-center px-2 py-1 rounded-full border font-extrabold tracking-wide ${
+                          isGeceDonercisiMode ? 'text-xs' : 'text-[10px]'
+                        }`
+                    }
+                    style={!isLacromisaMode ? {
+                      background: 'rgba(15,23,42,0.06)',
+                      borderColor: 'rgba(15,23,42,0.14)',
+                      color: '#0f172a',
+                    } : undefined}
+                    title="Ürün Birimi"
+                  >
+                    {unitText}
+                  </span>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 {isGeceDonercisiMode ? (
                   <span className="product-price-gece">
+                    ₺{product.price.toFixed(2)}
+                  </span>
+                ) : isLacromisaMode ? (
+                  <span className="product-price-lacromisa">
                     ₺{product.price.toFixed(2)}
                   </span>
                 ) : (
@@ -168,6 +210,12 @@ const ProductGrid = ({ products, onAddToCart, tenantId, categories = [] }) => {
                     <button className="bg-slate-900 rounded-2xl flex items-center justify-center hover:bg-slate-800 transition-colors w-12 h-12">
                       <svg className="text-white w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                      </svg>
+                    </button>
+                  ) : isLacromisaMode ? (
+                    <button className="bg-slate-900 rounded-xl flex items-center justify-center hover:bg-slate-800 transition-colors w-11 h-11 shadow-sm">
+                      <svg className="text-white w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                       </svg>
                     </button>
                   ) : (

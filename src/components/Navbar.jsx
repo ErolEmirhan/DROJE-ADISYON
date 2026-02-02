@@ -5,7 +5,7 @@ import SettingsModal from './SettingsModal';
 import SettingsSplash from './SettingsSplash';
 import DateTimeDisplay from './DateTimeDisplay';
 import { getThemeColors } from '../utils/themeUtils';
-import { isGeceDonercisi } from '../utils/sultanSomatTables';
+import { isGeceDonercisi, isLacromisa } from '../utils/sultanSomatTables';
 
 const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType, onRoleSplash, onProductsUpdated, onExit, businessName = 'MAKARA', themeColor = '#f97316', tenantId = null }) => {
   // Tema renklerini hesapla
@@ -313,8 +313,16 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
       <div className="flex items-center space-x-4">
         <div className="w-12 h-12 rounded-xl flex items-center justify-center shadow-lg overflow-hidden bg-white p-1">
           <img 
-            src={tenantId && isGeceDonercisi(tenantId) ? './tenant.png' : './logo.png'} 
-            alt={tenantId && isGeceDonercisi(tenantId) ? 'Gece Dönercisi Logo' : 'Makara Logo'} 
+            src={
+              tenantId && isLacromisa(tenantId)
+                ? './lacrimosa.jpg'
+                : (tenantId && isGeceDonercisi(tenantId) ? './tenant.png' : './logo.png')
+            } 
+            alt={
+              tenantId && isLacromisa(tenantId)
+                ? 'Lacrimosa Coffee Logo'
+                : (tenantId && isGeceDonercisi(tenantId) ? 'Gece Dönercisi Logo' : 'Makara Logo')
+            } 
             className="w-full h-full object-contain"
             style={{ display: 'block' }}
             onError={(e) => {
@@ -326,7 +334,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
         </div>
         <div>
           <h1 className="text-lg font-bold bg-clip-text text-transparent" style={{ backgroundImage: theme.gradient.main }}>{businessName} Satış Sistemi</h1>
-          <p className="text-xs text-gray-500 font-medium">v2.6.5 DROJE SYSTEMS</p>
+          <p className="text-xs text-gray-500 font-medium">v2.6.6 DROJE SYSTEMS</p>
         </div>
         <div className="ml-4 pl-4 border-l border-gray-300">
           <DateTimeDisplay />

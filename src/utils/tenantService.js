@@ -4,6 +4,8 @@
 // Tenant bilgilerini doğrulama ve alma
 export async function getTenantInfo(tenantId) {
   try {
+    const LACRIMOSA_TENANT_ID = 'TENANT-1769956051654';
+    const LACRIMOSA_BUSINESS_NAME = 'Lacrimosa Coffee';
     // Tenant bilgilerini doğrulama için Firebase yapılandırması
     const tenantConfigFirebase = {
       apiKey: "AIzaSyBC6VxvlV3VxDnucAGxPOarYmar1PAItQM",
@@ -107,7 +109,7 @@ export async function getTenantInfo(tenantId) {
     // Tenant bilgilerini döndür
     return {
       tenantId: tenantId,
-      businessName: tenantData.businessName || tenantData.name || 'İşletme',
+      businessName: tenantId === LACRIMOSA_TENANT_ID ? LACRIMOSA_BUSINESS_NAME : (tenantData.businessName || tenantData.name || 'İşletme'),
       mainFirebaseConfig: mainFirebaseConfig,
       tablesFirebaseConfig: tablesFirebaseConfig,
       isActive: isActive,

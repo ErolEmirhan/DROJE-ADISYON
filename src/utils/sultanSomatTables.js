@@ -5,6 +5,7 @@
 export const SULTAN_SOMATI_TENANT_ID = 'TENANT-1766611377865';
 export const YAKAS_GRILL_TENANT_ID = 'TENANT-1766340222641';
 export const GECE_DONERCISI_TENANT_ID = 'TENANT-1769602125250';
+export const LACROMISA_TENANT_ID = 'TENANT-1769956051654';
 export const YAKAS_GRILL_TABLE_COUNT = 30;
 export const GECE_DONERCISI_TABLE_COUNT_PER_CATEGORY = 30;
 
@@ -126,6 +127,13 @@ export function generateYakasGrillTables() {
  */
 export function isGeceDonercisi(tenantId) {
   return tenantId === GECE_DONERCISI_TENANT_ID;
+}
+
+/**
+ * Tenant ID'nin Lacromisa olup olmadığını kontrol eder
+ */
+export function isLacromisa(tenantId) {
+  return tenantId === LACROMISA_TENANT_ID;
 }
 
 /**

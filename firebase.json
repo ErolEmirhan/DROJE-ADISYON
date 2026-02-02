@@ -14,6 +14,22 @@
       ],
       "rewrites": [
         {
+          "source": "/menu",
+          "destination": "/customer.html"
+        },
+        {
+          "source": "/customer",
+          "destination": "/customer.html"
+        },
+        {
+          "source": "/iceri**",
+          "destination": "/customer.html"
+        },
+        {
+          "source": "/disari**",
+          "destination": "/customer.html"
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }
@@ -39,6 +55,15 @@
         },
         {
           "source": "/index.html",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
+        },
+        {
+          "source": "/customer.html",
           "headers": [
             {
               "key": "Cache-Control",
@@ -80,6 +105,22 @@
       ],
       "rewrites": [
         {
+          "source": "/menu",
+          "destination": "/customer.html"
+        },
+        {
+          "source": "/customer",
+          "destination": "/customer.html"
+        },
+        {
+          "source": "/iceri**",
+          "destination": "/customer.html"
+        },
+        {
+          "source": "/disari**",
+          "destination": "/customer.html"
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }
@@ -113,6 +154,15 @@
           ]
         },
         {
+          "source": "/customer.html",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
+        },
+        {
           "source": "/sw.js",
           "headers": [
             {
@@ -123,6 +173,118 @@
         },
         {
           "source": "/manifest.json",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "site": "lacromisamasalar",
+      "public": "public",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**",
+        "dist/**",
+        "src/**",
+        "electron/**",
+        "release/**"
+      ],
+      "rewrites": [
+        {
+          "source": "/menu",
+          "destination": "/customer.html"
+        },
+        {
+          "source": "/customer",
+          "destination": "/customer.html"
+        },
+        {
+          "source": "/iceri**",
+          "destination": "/customer.html"
+        },
+        {
+          "source": "/disari**",
+          "destination": "/customer.html"
+        },
+        {
+          "source": "**",
+          "destination": "/customer.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "**/*.@(jpg|jpeg|gif|png|svg|webp|ico|mp3)",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "max-age=31536000"
+            }
+          ]
+        },
+        {
+          "source": "**/*.@(js|css)",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "max-age=3600"
+            }
+          ]
+        },
+        {
+          "source": "/customer.html",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "site": "lacromisa-f0204",
+      "public": "public",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**",
+        "dist/**",
+        "src/**",
+        "electron/**",
+        "release/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "**/*.@(jpg|jpeg|gif|png|svg|webp|ico|mp3)",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "max-age=31536000"
+            }
+          ]
+        },
+        {
+          "source": "**/*.@(js|css)",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "max-age=3600"
+            }
+          ]
+        },
+        {
+          "source": "/index.html",
           "headers": [
             {
               "key": "Cache-Control",

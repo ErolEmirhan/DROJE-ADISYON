@@ -87,6 +87,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeAllListeners('new-order-created');
     };
   },
+  onCustomerOrderReceived: (callback) => {
+    ipcRenderer.on('customer-order-received', (event, data) => callback(data));
+    return () => {
+      ipcRenderer.removeAllListeners('customer-order-received');
+    };
+  },
   // Table Sync API
   startTableSync: () => ipcRenderer.invoke('start-table-sync'),
   stopTableSync: () => ipcRenderer.invoke('stop-table-sync'),

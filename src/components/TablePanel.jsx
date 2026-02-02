@@ -2,12 +2,18 @@ import React, { useState, useEffect, useMemo } from 'react';
 import TableOrderModal from './TableOrderModal';
 import TablePartialPaymentModal from './TablePartialPaymentModal';
 import TableTransferModal from './TableTransferModal';
-import { isSultanSomati, generateSultanSomatiTables, SULTAN_SOMATI_SALONS, isYakasGrill, generateYakasGrillTables, isGeceDonercisi, generateGeceDonercisiTables, GECE_DONERCISI_CATEGORIES } from '../utils/sultanSomatTables';
+import { isSultanSomati, generateSultanSomatiTables, SULTAN_SOMATI_SALONS, isYakasGrill, generateYakasGrillTables, isGeceDonercisi, generateGeceDonercisiTables, GECE_DONERCISI_CATEGORIES, isLacromisa } from '../utils/sultanSomatTables';
 
 const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, insideTablesCount = 20, outsideTablesCount = 20, packageTablesCount = 5 }) => {
   const isSultanSomatiMode = isSultanSomati(tenantId);
   const isYakasGrillMode = isYakasGrill(tenantId);
   const isGeceDonercisiMode = isGeceDonercisi(tenantId);
+  const isLacromisaMode = isLacromisa(tenantId);
+
+  // Lacromisa: sabit 15 içeri / 15 dışarı, paket yok
+  const effectiveInsideTablesCount = isLacromisaMode ? 15 : insideTablesCount;
+  const effectiveOutsideTablesCount = isLacromisaMode ? 15 : outsideTablesCount;
+  const effectivePackageTablesCount = isLacromisaMode ? 0 : packageTablesCount;
   const [selectedType, setSelectedType] = useState(
     isSultanSomatiMode ? 'disari' : isYakasGrillMode ? 'salon' : isGeceDonercisiMode ? 'salon' : 'inside'
   ); // Salon/kategori ID veya 'inside'/'outside'
@@ -23,13 +29,13 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
   // Debug: Masa sayılarını logla
   useEffect(() => {
     console.log('🪑 TablePanel - Masa Sayıları:', {
-      insideTablesCount,
-      outsideTablesCount,
-      packageTablesCount,
-      insideTablesCountType: typeof insideTablesCount,
-      outsideTablesCountType: typeof outsideTablesCount
+      insideTablesCount: effectiveInsideTablesCount,
+      outsideTablesCount: effectiveOutsideTablesCount,
+      packageTablesCount: effectivePackageTablesCount,
+      insideTablesCountType: typeof effectiveInsideTablesCount,
+      outsideTablesCountType: typeof effectiveOutsideTablesCount
     });
-  }, [insideTablesCount, outsideTablesCount, packageTablesCount]);
+  }, [effectiveInsideTablesCount, effectiveOutsideTablesCount, effectivePackageTablesCount]);
 
   // Sultan Somatı için salon bazlı masalar
   const sultanSomatiTables = useMemo(() => {
@@ -96,36 +102,37 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
   // Normal mod için masalar
   const insideTables = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
-    console.log('🔄 insideTables oluşturuluyor, count:', insideTablesCount);
-    return Array.from({ length: insideTablesCount }, (_, i) => ({
+    console.log('🔄 insideTables oluşturuluyor, count:', effectiveInsideTablesCount);
+    return Array.from({ length: effectiveInsideTablesCount }, (_, i) => ({
       id: `inside-${i + 1}`,
       number: i + 1,
       type: 'inside',
       name: `İçeri ${i + 1}`
     }));
-  }, [insideTablesCount, isSultanSomatiMode]);
+  }, [effectiveInsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode]);
 
   const outsideTables = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
-    console.log('🔄 outsideTables oluşturuluyor, count:', outsideTablesCount);
-    return Array.from({ length: outsideTablesCount }, (_, i) => ({
+    console.log('🔄 outsideTables oluşturuluyor, count:', effectiveOutsideTablesCount);
+    return Array.from({ length: effectiveOutsideTablesCount }, (_, i) => ({
       id: `outside-${i + 1}`,
       number: i + 1,
       type: 'outside',
       name: `Dışarı ${i + 1}`
     }));
-  }, [outsideTablesCount, isSultanSomatiMode]);
+  }, [effectiveOutsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode]);
 
   // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı, Yaka's Grill ve Gece Dönercisi'nde yok
   const packageTables = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
-    return Array.from({ length: packageTablesCount }, (_, i) => ({
+    if (!effectivePackageTablesCount) return [];
+    return Array.from({ length: effectivePackageTablesCount }, (_, i) => ({
       id: `package-${selectedType}-${i + 1}`,
       number: i + 1,
       type: selectedType,
       name: `Paket ${i + 1}`
     }));
-  }, [packageTablesCount, selectedType, isSultanSomatiMode]);
+  }, [effectivePackageTablesCount, selectedType, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode]);
 
   // Masa siparişlerini yükle
   useEffect(() => {
@@ -1060,7 +1067,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       </div>
 
       {/* PAKET Başlığı - Sadece normal mod için (Gece Dönercisi'nde kategoriler içinde) */}
-      {!isSultanSomatiMode && !isYakasGrillMode && !isGeceDonercisiMode && (
+      {!isSultanSomatiMode && !isYakasGrillMode && !isGeceDonercisiMode && !isLacromisaMode && effectivePackageTablesCount > 0 && (
         <div className="mb-6 mt-8">
           <div className="flex items-center justify-center mb-4">
             <div className="flex items-center space-x-3 px-8 py-3 bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 rounded-2xl shadow-xl transform hover:scale-105 transition-all duration-300">
