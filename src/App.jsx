@@ -48,6 +48,7 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState(null);
   const [updateDownloadProgress, setUpdateDownloadProgress] = useState(null);
   const [tableRefreshTrigger, setTableRefreshTrigger] = useState(0);
+  const [tableIdToOpenInTables, setTableIdToOpenInTables] = useState(null); // Gece Dönercisi: Masaya Kaydet sonrası masalar bölümünde bu masanın detayını aç
   const [showExitSplash, setShowExitSplash] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showExpenseModal, setShowExpenseModal] = useState(false);
@@ -120,14 +121,13 @@ function App() {
     return () => window.removeEventListener('gece-branch-changed', handler);
   }, [isGeceDonercisiMode]);
 
-  // Gece Dönercisi: cihaz bazlı şube seçimi (tek seferlik zorunlu popup)
+  // Gece Dönercisi: şube seçimi her uygulama açılışında zorunlu popup (mevcut seçim olsa da olmasa da)
   useEffect(() => {
     if (!tenantId || !isGeceDonercisiMode) return;
     const existing = getGeceSelectedBranch();
-    setSelectedBranch(existing);
-    if (!existing) {
-      setShowBranchSelectModal(true);
-    } else if (window.electronAPI && window.electronAPI.setGeceBranchSelection) {
+    setSelectedBranch(existing || null);
+    setShowBranchSelectModal(true);
+    if (existing && window.electronAPI?.setGeceBranchSelection) {
       window.electronAPI.setGeceBranchSelection({ branch: existing, deviceId: getOrCreateGeceDeviceId() }).catch(() => {});
     }
   }, [tenantId, isGeceDonercisiMode]);
@@ -381,9 +381,14 @@ function App() {
       setShowDonerOptionsModal(false);
       return;
     }
-    const parts = [opts.sogansiz ? 'Soğansız' : null, opts.domatessiz ? 'Domatessiz' : null].filter(Boolean);
+    const parts = [
+      opts.sogansiz ? 'Soğansız' : null,
+      opts.domatessiz ? 'Domatessiz' : null,
+      opts.sade ? 'Sade' : null,
+      opts.azSoganli ? 'Az Soğanlı' : null
+    ].filter(Boolean);
     const donerOptionsText = parts.join(' • ');
-    const donerKey = `${opts.sogansiz ? 'S' : 's'}|${opts.domatessiz ? 'D' : 'd'}`;
+    const donerKey = `${opts.sogansiz ? 'S' : 's'}|${opts.domatessiz ? 'D' : 'd'}|${opts.sade ? 'P' : 'p'}|${opts.azSoganli ? 'A' : 'a'}`;
 
     setCart((prevCart) => {
       const existingItem = prevCart.find(
@@ -712,6 +717,12 @@ function App() {
         // Sepeti temizle
         setCart([]);
         setOrderNote('');
+        
+        // Gece Dönercisi (TENANT-1769602125250): Masaya Kaydet sonrası masalar bölümüne geç ve bu masanın detayını aç
+        if (isGeceDonercisiMode && selectedTable?.id) {
+          setTableIdToOpenInTables(selectedTable.id);
+          setCurrentView('tables');
+        }
         
         // Mevcut siparişe ekleme durumunda masa seçimini koru, yeni sipariş durumunda temizle
         if (result.isNewOrder) {
@@ -1110,6 +1121,8 @@ function App() {
           <TablePanel 
             onSelectTable={handleTableSelect}
             refreshTrigger={tableRefreshTrigger}
+            openTableId={tableIdToOpenInTables}
+            onClearOpenTableId={() => setTableIdToOpenInTables(null)}
             onShowReceipt={(receiptData) => {
               setReceiptData(receiptData);
               setShowReceiptModal(true);

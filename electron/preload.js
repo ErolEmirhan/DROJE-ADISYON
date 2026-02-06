@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateTableOrderAmount: (orderId, paidAmount) => ipcRenderer.invoke('update-table-order-amount', orderId, paidAmount),
   createPartialPaymentSale: (saleData) => ipcRenderer.invoke('create-partial-payment-sale', saleData),
   payTableOrderItem: (itemId, paymentMethod, paidQuantity) => ipcRenderer.invoke('pay-table-order-item', itemId, paymentMethod, paidQuantity),
+  payTableOrderByAmount: (orderId, amount, paymentMethod) => ipcRenderer.invoke('pay-table-order-by-amount', orderId, amount, paymentMethod),
   // Exit API
   quitApp: () => ipcRenderer.invoke('quit-app'),
   // Mobile API
@@ -92,6 +93,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => {
       ipcRenderer.removeAllListeners('customer-order-received');
     };
+  },
+  onSalesUpdated: (callback) => {
+    ipcRenderer.on('sales-updated', () => callback());
+    return () => ipcRenderer.removeAllListeners('sales-updated');
   },
   // Table Sync API
   startTableSync: () => ipcRenderer.invoke('start-table-sync'),

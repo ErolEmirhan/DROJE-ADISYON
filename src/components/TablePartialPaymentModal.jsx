@@ -7,7 +7,13 @@ const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComple
   const [selectedItems, setSelectedItems] = useState(new Set());
   const [selectedQuantities, setSelectedQuantities] = useState({}); // { itemId: quantity }
   const [isProcessingBulk, setIsProcessingBulk] = useState(false);
+  const [amountPaymentValue, setAmountPaymentValue] = useState('');
+  const [isProcessingAmountPayment, setIsProcessingAmountPayment] = useState(false);
+  const [showAmountConfirm, setShowAmountConfirm] = useState(false);
+  const [confirmAmount, setConfirmAmount] = useState(0);
   const isGeceDonercisiMode = tenantId && isGeceDonercisi(tenantId);
+
+  if (!order) return null;
 
   const confirmPaymentMethodIfNeeded = (method) => {
     if (!isGeceDonercisiMode || (method !== 'Nakit' && method !== 'Kredi Kartı')) {
@@ -299,6 +305,88 @@ const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComple
   }, 0);
 
   // Toplu ödeme al
+  // Tutar girildikten sonra onay aç (popup)
+  const handlePayByAmountClick = () => {
+    const amount = parseFloat(String(amountPaymentValue).replace(',', '.').trim());
+    if (isNaN(amount) || amount <= 0) {
+      alert('Geçerli bir tutar girin');
+      return;
+    }
+    if (amount > remainingAmount) {
+      alert(`Tutar kalan hesaptan (₺${remainingAmount.toFixed(2)}) fazla olamaz`);
+      return;
+    }
+    setConfirmAmount(amount);
+    setShowAmountConfirm(true);
+  };
+
+  const handleAmountConfirmCancel = () => {
+    setShowAmountConfirm(false);
+    setConfirmAmount(0);
+  };
+
+  // Onaylandıktan sonra ödeme yöntemi seç ve işlemi yap
+  const handleAmountConfirmOk = async () => {
+    if (!window.electronAPI?.payTableOrderByAmount) {
+      alert('Tutar ile ödeme şu anda kullanılamıyor');
+      return;
+    }
+    const amount = confirmAmount;
+    setShowAmountConfirm(false);
+
+    const paymentMethod = await new Promise((resolve) => {
+      const modal = document.createElement('div');
+      modal.className = 'fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[2500]';
+      modal.innerHTML = `
+        <div class="bg-white rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl border border-gray-100">
+          <p class="text-sm font-medium text-gray-500 mb-1">Ödeme yöntemi</p>
+          <p class="text-lg font-semibold text-gray-900 mb-4">₺${amount.toFixed(2)}</p>
+          <div class="grid grid-cols-2 gap-3 mb-4">
+            <button id="cashBtn" class="py-3 px-4 rounded-xl font-medium bg-gray-900 text-white hover:bg-gray-800 transition-colors text-sm">Nakit</button>
+            <button id="cardBtn" class="py-3 px-4 rounded-xl font-medium border-2 border-gray-300 text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition-colors text-sm">Kredi Kartı</button>
+          </div>
+          <button id="cancelBtn" class="w-full py-2.5 text-gray-500 hover:text-gray-700 text-sm font-medium">İptal</button>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.querySelector('#cashBtn').onclick = async () => {
+        const ok = await confirmPaymentMethodIfNeeded('Nakit');
+        if (!ok) return;
+        if (document.body.contains(modal)) document.body.removeChild(modal);
+        resolve('Nakit');
+      };
+      modal.querySelector('#cardBtn').onclick = async () => {
+        const ok = await confirmPaymentMethodIfNeeded('Kredi Kartı');
+        if (!ok) return;
+        if (document.body.contains(modal)) document.body.removeChild(modal);
+        resolve('Kredi Kartı');
+      };
+      modal.querySelector('#cancelBtn').onclick = () => {
+        if (document.body.contains(modal)) document.body.removeChild(modal);
+        resolve(null);
+      };
+    });
+
+    if (!paymentMethod) return;
+
+    setIsProcessingAmountPayment(true);
+    try {
+      const result = await window.electronAPI.payTableOrderByAmount(order.id, amount, paymentMethod);
+      if (result.success) {
+        setAmountPaymentValue('');
+        setConfirmAmount(0);
+        if (onComplete) onComplete([]);
+      } else {
+        alert(result.error || 'Ödeme alınamadı');
+      }
+    } catch (error) {
+      console.error('Tutar ile ödeme hatası:', error);
+      alert('Ödeme alınırken bir hata oluştu');
+    } finally {
+      setIsProcessingAmountPayment(false);
+    }
+  };
+
   const handleBulkPayment = async () => {
     if (selectedItems.size === 0) {
       alert('Lütfen en az bir ürün seçin');
@@ -444,14 +532,23 @@ const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComple
     if (item.isGift) return false;
     return (item.paidQuantity || 0) > 0;
   });
-  // Toplam ödenen tutar (ödenen miktarlar üzerinden)
-  const paidAmount = itemsWithPayment.reduce((sum, item) => {
+  // Güvenli sayı (NaN / undefined önleme)
+  const safeTotalAmount = Number(totalAmount);
+  const totalAmountNum = Number.isFinite(safeTotalAmount) ? safeTotalAmount : 0;
+
+  // Tutar ile yapılan ödemeler (Gece Dönercisi - order.amount_payments)
+  const amountPaymentsTotal = (order?.amount_payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  // Toplam ödenen tutar (ürün bazlı + tutar ile ödeme)
+  const paidAmountFromItems = itemsWithPayment.reduce((sum, item) => {
     if (item.isGift) return sum;
     const paidQty = item.paidQuantity || 0;
-    return sum + (item.price * paidQty);
+    return sum + (Number(item.price) || 0) * paidQty;
   }, 0);
-  // Kalan tutar
-  const remainingAmount = totalAmount - paidAmount;
+  const paidAmount = paidAmountFromItems + amountPaymentsTotal;
+  // totalAmount bu tenant'ta kalan bakiye olarak geliyor; tam toplam = kalan + ödenen
+  const fullTotal = totalAmountNum + paidAmount;
+  // Kalan tutar (ödenecek)
+  const remainingAmount = totalAmountNum;
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
@@ -479,7 +576,7 @@ const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComple
           <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-2xl p-4 border border-purple-200">
             <p className="text-sm text-gray-600 mb-1">Toplam Tutar</p>
             <p className="text-2xl font-bold text-purple-600">
-              ₺{totalAmount.toFixed(2)}
+              ₺{fullTotal.toFixed(2)}
             </p>
           </div>
           <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl p-4 border border-green-200">
@@ -501,6 +598,88 @@ const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComple
             </p>
           </div>
         </div>
+
+        {/* Gece Dönercisi: Tutar ile Ödeme Al — kurumsal, sade */}
+        {isGeceDonercisiMode && remainingAmount > 0.01 && (
+          <div className="bg-gray-50 rounded-xl p-5 mb-6 border border-gray-200">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Tutar ile ödeme</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center rounded-lg border border-gray-300 bg-white focus-within:border-gray-500 focus-within:ring-1 focus-within:ring-gray-500">
+                <span className="pl-4 text-gray-500 font-medium">₺</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={amountPaymentValue}
+                  onChange={(e) => setAmountPaymentValue(e.target.value.replace(/[^0-9.,]/g, ''))}
+                  className="w-28 py-2.5 pr-4 pl-1 bg-transparent text-gray-900 font-semibold focus:outline-none"
+                />
+              </div>
+              <span className="text-xs text-gray-400 self-center">En fazla ₺{remainingAmount.toFixed(2)}</span>
+              <button
+                onClick={handlePayByAmountClick}
+                disabled={isProcessingAmountPayment || !amountPaymentValue.trim()}
+                className={`py-2.5 px-5 rounded-lg font-medium text-sm transition-colors ${
+                  isProcessingAmountPayment || !amountPaymentValue.trim()
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    : 'bg-gray-900 text-white hover:bg-gray-800'
+                }`}
+              >
+                {isProcessingAmountPayment ? 'İşleniyor...' : 'Ödeme Al'}
+              </button>
+            </div>
+            {amountPaymentsTotal > 0 && (
+              <p className="text-xs text-gray-500 mt-3">
+                Bu hesaptan tutar ile ödenen: <span className="font-medium text-gray-700">₺{amountPaymentsTotal.toFixed(2)}</span>
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Onay popup: "XX TL tutarlı ödeme alınacaktır" */}
+        {showAmountConfirm && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[2000]" onClick={(e) => e.target === e.currentTarget && handleAmountConfirmCancel()}>
+            <div className="bg-white rounded-2xl shadow-xl border border-gray-100 w-full max-w-sm mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div className="p-6">
+                <p className="text-sm font-medium text-gray-500 mb-1">Ödeme onayı</p>
+                <p className="text-xl font-semibold text-gray-900 mb-4">
+                  <span className="text-2xl font-bold text-gray-900">₺{(Number(confirmAmount) || 0).toFixed(2)}</span>
+                  <span className="text-gray-600 font-normal ml-1">tutarlı ödeme alınacaktır.</span>
+                </p>
+                <div className="bg-gray-50 rounded-lg p-4 space-y-2 mb-6">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500">Ödenen (şu an)</span>
+                    <span className="font-medium text-gray-900">₺{Number(paidAmount).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500">Bu işlem sonrası ödenen</span>
+                    <span className="font-medium text-gray-900">₺{(Number(paidAmount) + Number(confirmAmount)).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm pt-1 border-t border-gray-200">
+                    <span className="text-gray-500">Kalan</span>
+                    <span className="font-semibold text-gray-900">₺{Math.max(0, remainingAmount - (Number(confirmAmount) || 0)).toFixed(2)}</span>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={handleAmountConfirmCancel}
+                    className="flex-1 py-3 rounded-xl font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors"
+                  >
+                    İptal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAmountConfirmOk}
+                    className="flex-1 py-3 rounded-xl font-medium text-white bg-gray-900 hover:bg-gray-800 transition-colors"
+                  >
+                    Onayla
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Toplu Ödeme Seçimi */}
         {unpaidItems.length > 0 && (

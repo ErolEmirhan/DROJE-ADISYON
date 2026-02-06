@@ -25,6 +25,15 @@ const SalesHistory = ({ themeColor = '#f97316' }) => {
     loadStaff();
   }, []);
 
+  // Tutar ile ödeme vb. yeni satış eklendiğinde listeyi yenile
+  useEffect(() => {
+    if (!window.electronAPI?.onSalesUpdated) return;
+    const unsubscribe = window.electronAPI.onSalesUpdated(() => {
+      loadSales();
+    });
+    return unsubscribe;
+  }, []);
+
   const loadSales = async () => {
     setLoading(true);
     const salesData = await window.electronAPI.getSales();

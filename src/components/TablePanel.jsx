@@ -3,12 +3,21 @@ import TableOrderModal from './TableOrderModal';
 import TablePartialPaymentModal from './TablePartialPaymentModal';
 import TableTransferModal from './TableTransferModal';
 import { isSultanSomati, generateSultanSomatiTables, SULTAN_SOMATI_SALONS, isYakasGrill, generateYakasGrillTables, isGeceDonercisi, generateGeceDonercisiTables, GECE_DONERCISI_CATEGORIES, isLacromisa } from '../utils/sultanSomatTables';
+import { getGeceSelectedBranch } from '../utils/geceDonercisiBranchSelection';
 
-const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, insideTablesCount = 20, outsideTablesCount = 20, packageTablesCount = 5 }) => {
+const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, insideTablesCount = 20, outsideTablesCount = 20, packageTablesCount = 5, openTableId = null, onClearOpenTableId = null }) => {
   const isSultanSomatiMode = isSultanSomati(tenantId);
   const isYakasGrillMode = isYakasGrill(tenantId);
   const isGeceDonercisiMode = isGeceDonercisi(tenantId);
   const isLacromisaMode = isLacromisa(tenantId);
+
+  // Gece Dönercisi: LOCA masası sadece Şeker şubesinde görünsün
+  const [geceBranch, setGeceBranch] = useState(() => getGeceSelectedBranch());
+  useEffect(() => {
+    const handler = () => setGeceBranch(getGeceSelectedBranch());
+    window.addEventListener('gece-branch-changed', handler);
+    return () => window.removeEventListener('gece-branch-changed', handler);
+  }, []);
 
   // Lacromisa: sabit 15 içeri / 15 dışarı, paket yok
   const effectiveInsideTablesCount = isLacromisaMode ? 15 : insideTablesCount;
@@ -17,6 +26,12 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
   const [selectedType, setSelectedType] = useState(
     isSultanSomatiMode ? 'disari' : isYakasGrillMode ? 'salon' : isGeceDonercisiMode ? 'salon' : 'inside'
   ); // Salon/kategori ID veya 'inside'/'outside'
+  // Gece Dönercisi: Sancak şubesine geçildiyse Loca sekmesinden çık
+  useEffect(() => {
+    if (isGeceDonercisiMode && geceBranch !== 'SEKER' && selectedType === 'loca') {
+      setSelectedType('salon');
+    }
+  }, [isGeceDonercisiMode, geceBranch, selectedType]);
   const [tableOrders, setTableOrders] = useState([]);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [orderItems, setOrderItems] = useState([]);
@@ -88,16 +103,47 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
     }));
   }, [isYakasGrillMode]);
 
-  // Gece Dönercisi: 6 kategoride 30'ar masa (salon, bahçe, paket, trendyolgo, yemeksepeti, migros yemek)
+  // Gece Dönercisi: kategoriler — LOCA sadece Şeker şubesinde
+  const geceDonercisiCategoriesDisplay = useMemo(() => {
+    if (!isGeceDonercisiMode) return [];
+    return geceBranch === 'SEKER' ? GECE_DONERCISI_CATEGORIES : GECE_DONERCISI_CATEGORIES.filter(c => c.id !== 'loca');
+  }, [isGeceDonercisiMode, geceBranch]);
+
+  // Gece Dönercisi: 6 kategoride 30'ar masa (salon, bahçe, paket, trendyolgo, yemeksepeti, migros yemek); LOCA sadece Şeker şubesinde
   const geceDonercisiTables = useMemo(() => {
     if (!isGeceDonercisiMode) return [];
-    return generateGeceDonercisiTables();
-  }, [isGeceDonercisiMode]);
+    const all = generateGeceDonercisiTables();
+    return geceBranch === 'SEKER' ? all : all.filter(t => t.type !== 'loca');
+  }, [isGeceDonercisiMode, geceBranch]);
+
+  // Gece Dönercisi: "Açık Masalar" = sadece aktif (pending) siparişi olan masalar, sıralı
+  const openTablesFromOrders = useMemo(() => {
+    if (!isGeceDonercisiMode || !tableOrders) return [];
+    const pending = tableOrders.filter(o => o.status === 'pending');
+    const tableMap = new Map();
+    pending.forEach(order => {
+      if (order.table_id && !tableMap.has(order.table_id)) {
+        tableMap.set(order.table_id, {
+          id: order.table_id,
+          number: (order.table_id.match(/-(\d+)$/) || [null, 0])[1],
+          type: order.table_type || order.table_id.split('-').slice(0, -1).join('-'),
+          name: order.table_name || order.table_id,
+          categoryId: order.table_type || order.table_id.split('-').slice(0, -1).join('-'),
+          categoryName: order.table_name || order.table_id,
+          icon: '🟢'
+        });
+      }
+    });
+    const list = Array.from(tableMap.values());
+    list.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'tr'));
+    return list;
+  }, [isGeceDonercisiMode, tableOrders]);
 
   const currentGeceDonercisiTables = useMemo(() => {
     if (!isGeceDonercisiMode) return [];
+    if (selectedType === 'acik-masalar') return openTablesFromOrders;
     return geceDonercisiTables.filter(table => table.type === selectedType);
-  }, [isGeceDonercisiMode, geceDonercisiTables, selectedType]);
+  }, [isGeceDonercisiMode, geceDonercisiTables, selectedType, openTablesFromOrders]);
 
   // Normal mod için masalar
   const insideTables = useMemo(() => {
@@ -183,6 +229,31 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       loadTableOrders();
     }
   }, [refreshTrigger]);
+
+  // Gece Dönercisi: Masaya Kaydet sonrası masalar bölümünde belirtilen masanın detayını otomatik aç
+  useEffect(() => {
+    if (!openTableId || !window.electronAPI?.getTableOrders || !window.electronAPI?.getTableOrderItems) return;
+    let cancelled = false;
+    const openTableDetails = async () => {
+      await loadTableOrders();
+      if (cancelled) return;
+      try {
+        const orders = await window.electronAPI.getTableOrders();
+        const order = orders.find(o => o.table_id === openTableId && o.status === 'pending');
+        if (order) {
+          const items = await window.electronAPI.getTableOrderItems(order.id);
+          setSelectedOrder(order);
+          setOrderItems(items || []);
+          setShowModal(true);
+        }
+      } catch (err) {
+        console.error('Masa detayı açılırken hata:', err);
+      }
+      if (typeof onClearOpenTableId === 'function') onClearOpenTableId();
+    };
+    openTableDetails();
+    return () => { cancelled = true; };
+  }, [openTableId]);
 
   const loadTableOrders = async () => {
     if (window.electronAPI && window.electronAPI.getTableOrders) {
@@ -660,23 +731,26 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
     }
   };
 
-  // Ürün bazlı ödeme tamamlandı (siparişleri yenile)
+  // Ürün bazlı ödeme veya tutar ile ödeme tamamlandı (siparişleri yenile)
   const handleCompletePartialPayment = async (payments) => {
     if (!selectedOrder || !window.electronAPI) {
       return;
     }
 
     try {
-      // Siparişleri yenile
       await loadTableOrders();
-      
-      // Sipariş detaylarını yeniden yükle
+      const orders = await window.electronAPI.getTableOrders();
+      const updatedOrder = orders && orders.find(o => o.id === selectedOrder.id);
+      if (updatedOrder) {
+        setSelectedOrder(updatedOrder);
+      }
+
       const updatedItems = await window.electronAPI.getTableOrderItems(selectedOrder.id);
       setOrderItems(updatedItems || []);
-      
-      // Eğer tüm ürünlerin ödemesi alındıysa modal'ı kapat
+
       const unpaidItems = updatedItems.filter(item => !item.is_paid && !item.isGift);
-      if (unpaidItems.length === 0) {
+      const remainingFromOrder = updatedOrder ? updatedOrder.total_amount : 0;
+      if (unpaidItems.length === 0 && remainingFromOrder <= 0.01) {
         setShowPartialPaymentModal(false);
       }
     } catch (error) {
@@ -803,9 +877,23 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
           </button>
         </div>
       ) : isGeceDonercisiMode ? (
-        /* Gece Dönercisi: Salon, Bahçe, Paket, TrendyolGO, Yemeksepeti, Migros Yemek */
+        /* Gece Dönercisi: Açık Masalar (en başta) + Salon, Bahçe, Paket, TrendyolGO, Yemeksepeti, Migros Yemek */
         <div className="flex justify-center gap-3 mb-4 flex-wrap">
-          {GECE_DONERCISI_CATEGORIES.map((cat) => (
+          <button
+            onClick={() => setSelectedType('acik-masalar')}
+            className={`px-5 py-3 rounded-xl font-bold transition-all duration-300 text-sm ${
+              selectedType === 'acik-masalar'
+                ? 'bg-gradient-to-r from-emerald-600 to-green-700 text-white shadow-lg transform scale-105'
+                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-900'
+            }`}
+          >
+            <div className="flex items-center space-x-2">
+              <span className="text-lg">🟢</span>
+              <span>Açık Masalar</span>
+              <span className="text-xs opacity-75">({openTablesFromOrders.length})</span>
+            </div>
+          </button>
+          {geceDonercisiCategoriesDisplay.map((cat) => (
             <button
               key={cat.id}
               onClick={() => setSelectedType(cat.id)}
@@ -922,7 +1010,15 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
               }`}
             >
               <div className="flex flex-col items-center justify-center space-y-1 h-full">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow ${
+                {/* Gece Dönercisi: Masa numarası/adı en üstte, büyük (Salon 4, Bahçe 2 vb.) */}
+                {isGeceDonercisiMode && (
+                  <span className={`font-extrabold text-center leading-tight w-full ${
+                    hasOrder ? 'text-red-50' : 'text-gray-900'
+                  }`} style={{ fontSize: 'clamp(1.1rem, 4vw, 2rem)' }}>
+                    {table.name}
+                  </span>
+                )}
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow flex-shrink-0 ${
                   hasOrder
                     // Dolu masalarda iç daire – yoğun kırmızı
                     ? 'bg-gradient-to-br from-red-600 to-red-900'
@@ -995,35 +1091,25 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                     </svg>
                   )}
                 </div>
-                <span className={`font-bold text-xs leading-tight text-center ${
-                  hasOrder
-                    ? 'text-red-50'
-                    : isSultanTable
-                    ? 'text-purple-900'
-                    : isYakasGrillTable
-                    ? 'text-blue-900'
-                    : isYakasGrillPackageTable
-                    ? 'text-orange-900'
-                    : isYakasGrillYemeksepetiTable
-                    ? 'text-red-900'
-                    : isYakasGrillTrendyolGOTable
-                    ? 'text-yellow-900'
-                    : isGeceSalon
-                    ? 'text-slate-900'
-                    : isGeceBahce
-                    ? 'text-emerald-900'
-                    : isGecePaket
-                    ? 'text-orange-900'
-                    : isGeceTrendyolgo
-                    ? 'text-yellow-900'
-                    : isGeceYemeksepeti
-                    ? 'text-red-900'
-                    : isGeceMigros
-                    ? 'text-blue-900'
-                    : isOutside
-                    ? 'text-amber-900'
-                    : 'text-pink-900'
-                }`}>{table.name}</span>
+                {!isGeceDonercisiMode && (
+                  <span className={`font-bold text-xs leading-tight text-center ${
+                    hasOrder
+                      ? 'text-red-50'
+                      : isSultanTable
+                      ? 'text-purple-900'
+                      : isYakasGrillTable
+                      ? 'text-blue-900'
+                      : isYakasGrillPackageTable
+                      ? 'text-orange-900'
+                      : isYakasGrillYemeksepetiTable
+                      ? 'text-red-900'
+                      : isYakasGrillTrendyolGOTable
+                      ? 'text-yellow-900'
+                      : isOutside
+                      ? 'text-amber-900'
+                      : 'text-pink-900'
+                  }`}>{table.name}</span>
+                )}
                 <div
                   className={`text-[10px] font-semibold mt-1 px-2 py-0.5 rounded-md ${
                     hasOrder

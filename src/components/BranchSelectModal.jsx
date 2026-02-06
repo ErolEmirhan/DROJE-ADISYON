@@ -1,44 +1,36 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { GECE_BRANCHES } from '../utils/geceDonercisiBranchSelection';
-import { getThemeColors } from '../utils/themeUtils';
 
 export default function BranchSelectModal({
-  themeColor = '#0f172a',
   open,
   selectedBranch,
   onSelectBranch,
   onConfirm,
   confirmText = 'Kaydet',
-  title = 'Şube seçiniz (zorunlu)',
-  description = 'Bu cihaz hangi şubede kullanılacak? Seçiminize göre stok işlemleri şube bazında takip edilecektir.',
+  title = 'Hangi şubedesiniz?',
+  description = 'Bu bilgisayar (veya tablet) şu an Sancak şubesinde mi, Şeker şubesinde mi kullanılacak? Aşağıdan birini seçin.',
 }) {
-  const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[10000] flex items-center justify-center p-6">
-      <div className="bg-white rounded-[28px] w-full max-w-lg shadow-2xl border border-white/30 overflow-hidden">
-        <div
-          className="p-6 text-white"
-          style={{ background: `linear-gradient(135deg, ${theme.primary500} 0%, ${theme.primary700} 100%)` }}
-        >
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
-              <span className="text-2xl">🏢</span>
-            </div>
-            <div className="flex-1">
-              <h3 className="text-2xl font-black tracking-tight">{title}</h3>
-              <p className="text-white/90 text-sm font-medium mt-1">{description}</p>
-            </div>
-          </div>
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[10000] flex items-center justify-center p-8 animate-fade-in">
+      <div className="bg-white rounded-3xl w-full max-w-3xl shadow-2xl overflow-hidden border border-gray-200/80">
+        {/* Başlık — salağa anlatır gibi, çok net */}
+        <div className="px-12 pt-12 pb-6">
+          <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">{title}</h2>
+          <p className="text-gray-600 text-lg mt-3 leading-relaxed max-w-2xl">{description}</p>
+          <p className="text-gray-500 text-base mt-4 font-semibold">
+            1) Aşağıdan <strong>Sancak</strong> veya <strong>Şeker</strong>e tıklayın → 2) Yeşil olan seçilir, sonra <strong>Kaydet</strong>e basın.
+          </p>
         </div>
 
-        <div className="p-6">
-          <div className="grid grid-cols-2 gap-4">
+        {/* Şube seçenekleri — büyük kartlar, seçili yeşil + tik */}
+        <div className="px-12 pb-10">
+          <div className="grid grid-cols-2 gap-6">
             {GECE_BRANCHES.map((b) => {
               const active = selectedBranch === b.value;
               return (
@@ -46,26 +38,34 @@ export default function BranchSelectModal({
                   key={b.value}
                   type="button"
                   onClick={() => onSelectBranch?.(b.value)}
-                  className={`p-5 rounded-2xl border-2 text-left transition-all ${
+                  className={`relative flex items-center justify-center gap-4 rounded-2xl border-2 transition-all duration-200 min-h-[120px] ${
                     active
-                      ? 'border-slate-900 bg-slate-900 text-white shadow-lg'
-                      : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-900'
+                      ? 'bg-emerald-500 border-emerald-600 text-white shadow-lg shadow-emerald-500/30 scale-[1.02]'
+                      : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-100'
                   }`}
                 >
-                  <div className="text-sm font-semibold opacity-80">Şube</div>
-                  <div className="text-2xl font-black tracking-tight mt-1">{b.label}</div>
+                  {active && (
+                    <span className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/25 flex items-center justify-center">
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                  )}
+                  <span className={`text-2xl font-extrabold tracking-tight ${active ? 'text-white' : 'text-gray-900'}`}>
+                    {b.label}
+                  </span>
                 </button>
               );
             })}
           </div>
 
           {error && (
-            <div className="mt-4 p-4 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-sm font-semibold">
+            <div className="mt-6 p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-base font-semibold">
               {error}
             </div>
           )}
 
-          <div className="mt-6 flex items-center justify-end gap-3">
+          <div className="mt-8 flex justify-end">
             <button
               type="button"
               disabled={!selectedBranch || saving}
@@ -81,12 +81,11 @@ export default function BranchSelectModal({
                   setSaving(false);
                 }
               }}
-              className={`px-6 py-3 rounded-2xl font-bold text-white transition-all ${
+              className={`px-10 py-4 rounded-xl text-lg font-bold transition-all ${
                 !selectedBranch || saving
-                  ? 'bg-slate-300 cursor-not-allowed'
-                  : 'bg-slate-900 hover:bg-slate-800 shadow-lg'
+                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                  : 'bg-gray-900 text-white hover:bg-gray-800 shadow-lg'
               }`}
-              style={!selectedBranch || saving ? undefined : { boxShadow: `0 10px 24px ${theme.primary500}30` }}
             >
               {saving ? 'Kaydediliyor…' : confirmText}
             </button>

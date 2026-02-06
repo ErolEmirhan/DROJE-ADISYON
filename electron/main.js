@@ -640,6 +640,14 @@ let db = {
 // Gece Dönercisi: main process içinde aktif şube seçimi (mobil isteklerde de kullanılır)
 let geceBranchSelection = { branch: null, deviceId: null };
 
+// Gece Dönercisi: Firebase satış kayıtlarına daima #Sancak veya #Şeker olarak yazılacak şube etiketi
+function getGeceBranchLabelForFirebase() {
+  const b = geceBranchSelection?.branch || db.settings?.geceBranch;
+  if (b === 'SANCAK') return '#Sancak';
+  if (b === 'SEKER') return '#Şeker';
+  return null;
+}
+
 function initDatabase(tenantId = null) {
   // Tenant'a göre database path'i oluştur
   const tenantSuffix = tenantId ? `-${tenantId}` : '';
@@ -1974,7 +1982,8 @@ ipcMain.handle('create-sale', async (event, saleData) => {
           price: item.price,
           isGift: item.isGift || false
         })),
-        created_at: firebaseServerTimestamp()
+        created_at: firebaseServerTimestamp(),
+        ...(isGeceDonercisiTenant ? { branch: getGeceBranchLabelForFirebase() || undefined } : {})
       };
 
       await firebaseAddDoc(salesRef, firebaseData);
@@ -1991,9 +2000,11 @@ ipcMain.handle('create-sale', async (event, saleData) => {
 });
 
 ipcMain.handle('get-sales', () => {
+  const salesList = Array.isArray(db.sales) ? db.sales : [];
+  const itemsList = Array.isArray(db.saleItems) ? db.saleItems : [];
   // Satışları ve itemları birleştir
-  const salesWithItems = db.sales.map(sale => {
-    const saleItems = db.saleItems.filter(si => si.sale_id === sale.id);
+  const salesWithItems = salesList.map(sale => {
+    const saleItems = itemsList.filter(si => si.sale_id === sale.id);
     
     // Items string'i (eski format için uyumluluk)
     const items = saleItems
@@ -3048,6 +3059,8 @@ ipcMain.handle('complete-table-order', async (event, orderId, paymentMethod = 'N
       const staffNames = [...new Set(orderItems.filter(oi => oi.staff_name).map(oi => oi.staff_name))];
       const staffName = staffNames.length > 0 ? staffNames.join(', ') : null;
 
+      const tenantInfoComplete = tenantManager.getCurrentTenantInfo();
+      const isGeceComplete = tenantInfoComplete?.tenantId === GECE_TENANT_ID;
       await firebaseAddDoc(salesRef, {
         sale_id: saleId,
         total_amount: order.total_amount,
@@ -3068,7 +3081,8 @@ ipcMain.handle('complete-table-order', async (event, orderId, paymentMethod = 'N
           staff_id: item.staff_id || null,
           staff_name: item.staff_name || null // Her item için personel bilgisi
         })),
-        created_at: firebaseServerTimestamp()
+        created_at: firebaseServerTimestamp(),
+        ...(isGeceComplete ? { branch: getGeceBranchLabelForFirebase() || undefined } : {})
       });
       console.log('Masa siparişi Firebase\'e kaydedildi:', saleId);
     } catch (error) {
@@ -3226,6 +3240,8 @@ ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
       const staffNames = [...new Set(orderItems.filter(oi => oi.staff_name).map(oi => oi.staff_name))];
       const staffName = staffNames.length > 0 ? staffNames.join(', ') : null;
 
+      const tenantInfoPartial = tenantManager.getCurrentTenantInfo();
+      const isGecePartial = tenantInfoPartial?.tenantId === GECE_TENANT_ID;
       await firebaseAddDoc(salesRef, {
         sale_id: saleId,
         total_amount: saleData.totalAmount,
@@ -3245,7 +3261,8 @@ ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
           staff_id: item.staff_id || null,
           staff_name: item.staff_name || null // Her item için personel bilgisi
         })),
-        created_at: firebaseServerTimestamp()
+        created_at: firebaseServerTimestamp(),
+        ...(isGecePartial ? { branch: getGeceBranchLabelForFirebase() || undefined } : {})
       });
       console.log('Kısmi ödeme satışı Firebase\'e kaydedildi:', saleId);
     } catch (error) {
@@ -3254,6 +3271,133 @@ ipcMain.handle('create-partial-payment-sale', async (event, saleData) => {
   }
 
   return { success: true, saleId };
+});
+
+// Tutar ile ödeme al (Gece Dönercisi TENANT-1769602125250: tutar girerek tüm hesaptan düş)
+// Satış kaydı oluşturulur → satış geçmişi ve ciroya dahil edilir.
+ipcMain.handle('pay-table-order-by-amount', async (event, orderId, amount, paymentMethod) => {
+  const order = db.tableOrders.find(o => o.id === orderId);
+  if (!order) {
+    return { success: false, error: 'Sipariş bulunamadı' };
+  }
+
+  if (order.status !== 'pending') {
+    return { success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' };
+  }
+
+  const payAmount = Number(amount);
+  if (isNaN(payAmount) || payAmount <= 0) {
+    return { success: false, error: 'Geçerli bir tutar girin' };
+  }
+  if (payAmount > order.total_amount) {
+    return { success: false, error: `Tutar kalan hesaptan (₺${order.total_amount.toFixed(2)}) fazla olamaz` };
+  }
+
+  if (!paymentMethod || (paymentMethod !== 'Nakit' && paymentMethod !== 'Kredi Kartı' && paymentMethod !== 'Online')) {
+    return { success: false, error: 'Geçerli bir ödeme yöntemi seçin' };
+  }
+
+  // Veritabanı dizilerinin varlığını garanti et (satış geçmişi / ciro için gerekli)
+  if (!Array.isArray(db.sales)) db.sales = [];
+  if (!Array.isArray(db.saleItems)) db.saleItems = [];
+
+  const now = new Date();
+  const saleDate = getBusinessDayDateString(now);
+  const saleTime = getFormattedTime(now);
+
+  // 1) Önce satış kaydı oluştur (get-sales ve ciro raporları bu kayıtları kullanır)
+  const saleId = db.sales.length > 0 ? Math.max(...db.sales.map(s => s.id)) + 1 : 1;
+  db.sales.push({
+    id: saleId,
+    total_amount: payAmount,
+    payment_method: paymentMethod,
+    sale_date: saleDate,
+    sale_time: saleTime,
+    table_name: order.table_name,
+    table_type: order.table_type,
+    staff_name: null,
+    order_id: order.id,
+    isExpense: false
+  });
+
+  const saleItemId = db.saleItems.length > 0 ? Math.max(...db.saleItems.map(si => si.id)) + 1 : 1;
+  db.saleItems.push({
+    id: saleItemId,
+    sale_id: saleId,
+    product_id: null,
+    product_name: `Tutar ile Ödeme (${paymentMethod})`,
+    quantity: 1,
+    price: payAmount,
+    isGift: false,
+    staff_id: null,
+    staff_name: null
+  });
+
+  // 2) Siparişi güncelle: tutar bazlı ödemeler listesi + kalan bakiye
+  if (!Array.isArray(order.amount_payments)) order.amount_payments = [];
+  order.amount_payments.push({
+    amount: payAmount,
+    method: paymentMethod,
+    date: now.toLocaleDateString('tr-TR'),
+    time: saleTime
+  });
+  order.total_amount = Math.max(0, order.total_amount - payAmount);
+
+  if (order.total_amount <= 0.01) {
+    order.status = 'completed';
+    syncSingleTableToFirebase(order.table_id).catch(err => {
+      console.error('Masa Firebase kaydetme hatası:', err);
+    });
+    if (io) io.emit('table-update', { tableId: order.table_id, hasOrder: false });
+  } else {
+    syncSingleTableToFirebase(order.table_id).catch(err => {
+      console.error('Masa Firebase kaydetme hatası:', err);
+    });
+    if (io) io.emit('table-update', { tableId: order.table_id, hasOrder: true });
+  }
+
+  // 3) Tek seferde diske yaz (satış + sipariş güncellemesi birlikte)
+  saveDatabase();
+
+  // 4) Firebase senkronizasyonu — Gece Dönercisi: branch daima #Sancak veya #Şeker
+  if (firestore && firebaseCollection && firebaseAddDoc && firebaseServerTimestamp) {
+    try {
+      const salesRef = firebaseCollection(firestore, 'sales');
+      await firebaseAddDoc(salesRef, {
+        sale_id: saleId,
+        total_amount: payAmount,
+        payment_method: paymentMethod,
+        sale_date: saleDate,
+        sale_time: saleTime,
+        table_name: order.table_name,
+        table_type: order.table_type,
+        staff_name: null,
+        items: `Tutar ile Ödeme (${paymentMethod}) x1`,
+        items_array: [{
+          product_id: null,
+          product_name: `Tutar ile Ödeme (${paymentMethod})`,
+          quantity: 1,
+          price: payAmount,
+          isGift: false,
+          staff_id: null,
+          staff_name: null
+        }],
+        created_at: firebaseServerTimestamp(),
+        branch: getGeceBranchLabelForFirebase() || undefined
+      });
+    } catch (err) {
+      console.error('Firebase tutar ile ödeme kaydetme hatası:', err);
+    }
+  }
+
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('table-order-updated', { orderId: order.id, tableId: order.table_id });
+  }
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('sales-updated');
+  }
+
+  return { success: true, remainingAmount: order.total_amount, saleId };
 });
 
 // Ürün bazlı ödeme al (yeni sistem)
@@ -3374,6 +3518,8 @@ ipcMain.handle('pay-table-order-item', async (event, itemId, paymentMethod, paid
       
       const itemsText = `${item.product_name} x${quantityToPay}${item.isGift ? ' (İKRAM)' : ''}`;
 
+      const tenantInfoItem = tenantManager.getCurrentTenantInfo();
+      const isGeceItem = tenantInfoItem?.tenantId === GECE_TENANT_ID;
       await firebaseAddDoc(salesRef, {
         sale_id: saleId,
         total_amount: itemAmount,
@@ -3393,7 +3539,8 @@ ipcMain.handle('pay-table-order-item', async (event, itemId, paymentMethod, paid
           staff_id: item.staff_id || null,
           staff_name: item.staff_name || null
         }],
-        created_at: firebaseServerTimestamp()
+        created_at: firebaseServerTimestamp(),
+        ...(isGeceItem ? { branch: getGeceBranchLabelForFirebase() || undefined } : {})
       });
       console.log('Ürün ödemesi Firebase\'e kaydedildi:', saleId);
     } catch (error) {
@@ -7059,14 +7206,16 @@ function generateMobileHTML(serverURL) {
   const isLacromisa = tenantId === 'TENANT-1769956051654';
   const themeColor = tenantInfo?.themeColor || '#f97316';
   
-  // Gece Dönercisi: 6 genel kategori (salon, bahçe, paket, trendyolgo, yemeksepeti, migros yemek) — 30'ar masa, mobil personel senkron
+  // Gece Dönercisi: LOCA sadece Şeker şubesinde; mobil personel senkron
+  const geceCurrentBranch = isGeceDonercisi ? (geceBranchSelection?.branch || db.settings?.geceBranch || null) : null;
   const geceDonercisiCategories = isGeceDonercisi ? [
     { id: 'salon', name: 'Salon', count: 30, icon: '🪑' },
     { id: 'bahce', name: 'Bahçe', count: 30, icon: '🌿' },
     { id: 'paket', name: 'Paket', count: 30, icon: '📦' },
     { id: 'trendyolgo', name: 'TrendyolGO', count: 30, icon: '🛒' },
     { id: 'yemeksepeti', name: 'Yemeksepeti', count: 30, icon: '🍽️' },
-    { id: 'migros-yemek', name: 'Migros Yemek', count: 30, icon: '🛍️' }
+    { id: 'migros-yemek', name: 'Migros Yemek', count: 30, icon: '🛍️' },
+    ...(geceCurrentBranch === 'SEKER' ? [{ id: 'loca', name: 'Loca', count: 1, icon: '📍' }] : [])
   ] : [];
   
   // Sultan Somatı için salon yapısı
@@ -9045,6 +9194,8 @@ function generateMobileHTML(serverURL) {
           <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
             <button id="donerSogansizBtn" onclick="toggleDonerOption('sogansiz')" style="padding: 14px 16px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 15px; font-weight: 800; color: #111827; cursor: pointer; transition: all 0.2s;">Soğansız</button>
             <button id="donerDomatessizBtn" onclick="toggleDonerOption('domatessiz')" style="padding: 14px 16px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 15px; font-weight: 800; color: #111827; cursor: pointer; transition: all 0.2s;">Domatessiz</button>
+            <button id="donerSadeBtn" onclick="toggleDonerOption('sade')" style="padding: 14px 16px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 15px; font-weight: 800; color: #111827; cursor: pointer; transition: all 0.2s;">Sade</button>
+            <button id="donerAzSoganliBtn" onclick="toggleDonerOption('azsoganli')" style="padding: 14px 16px; background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%); border: 2px solid #e5e7eb; border-radius: 16px; font-size: 15px; font-weight: 800; color: #111827; cursor: pointer; transition: all 0.2s;">Az Soğanlı</button>
           </div>
         </div>
         
@@ -9795,9 +9946,9 @@ function generateMobileHTML(serverURL) {
             '</button>';
           }
           
-          // Gece Dönercisi: 5x6 dağılım, büyük masa kartları (30 masa)
+          // Gece Dönercisi: 5x6 dağılım, büyük masa kartları (30 masa). LOCA masası mobilde "Loca" görünsün (tenant özel)
           if (isGeceDonercisiMode && table.id && table.type) {
-            const displayText = table.name || (table.type + ' ' + table.number);
+            const displayText = (table.type === 'loca' || table.id === 'loca-1') ? 'Loca' : (table.name || (table.type + ' ' + table.number));
             const bgColor = table.hasOrder ? 'linear-gradient(145deg, #fef2f2 0%, #fee2e2 100%)' : 'linear-gradient(145deg, #ffffff 0%, #f8fafc 100%)';
             const borderColor = selectedClass ? '#334155' : (table.hasOrder ? '#dc2626' : '#e2e8f0');
             const borderWidth = selectedClass ? '2px' : '1px';
@@ -11069,11 +11220,15 @@ function generateMobileHTML(serverURL) {
     let pendingDonerProduct = null;
     let donerSogansiz = false;
     let donerDomatessiz = false;
+    let donerSade = false;
+    let donerAzSoganli = false;
     
     function showDonerOptionsModal(productId, name, price) {
       pendingDonerProduct = { id: productId, name: name, price: price };
       donerSogansiz = false;
       donerDomatessiz = false;
+      donerSade = false;
+      donerAzSoganli = false;
       const nameEl = document.getElementById('donerProductName');
       if (nameEl) nameEl.textContent = name;
       updateDonerButtons();
@@ -11088,12 +11243,16 @@ function generateMobileHTML(serverURL) {
     function toggleDonerOption(which) {
       if (which === 'sogansiz') donerSogansiz = !donerSogansiz;
       if (which === 'domatessiz') donerDomatessiz = !donerDomatessiz;
+      if (which === 'sade') donerSade = !donerSade;
+      if (which === 'azsoganli') donerAzSoganli = !donerAzSoganli;
       updateDonerButtons();
     }
     
     function updateDonerButtons() {
       const soganBtn = document.getElementById('donerSogansizBtn');
       const domatesBtn = document.getElementById('donerDomatessizBtn');
+      const sadeBtn = document.getElementById('donerSadeBtn');
+      const azSoganliBtn = document.getElementById('donerAzSoganliBtn');
       const applyToggleStyle = (btn, active) => {
         if (!btn) return;
         if (active) {
@@ -11104,6 +11263,8 @@ function generateMobileHTML(serverURL) {
       };
       applyToggleStyle(soganBtn, donerSogansiz);
       applyToggleStyle(domatesBtn, donerDomatessiz);
+      applyToggleStyle(sadeBtn, donerSade);
+      applyToggleStyle(azSoganliBtn, donerAzSoganli);
     }
     
     function confirmDonerOptions() {
@@ -11122,9 +11283,14 @@ function generateMobileHTML(serverURL) {
         }
       }
       
-      const parts = [donerSogansiz ? 'Soğansız' : null, donerDomatessiz ? 'Domatessiz' : null].filter(Boolean);
+      const parts = [
+        donerSogansiz ? 'Soğansız' : null,
+        donerDomatessiz ? 'Domatessiz' : null,
+        donerSade ? 'Sade' : null,
+        donerAzSoganli ? 'Az Soğanlı' : null
+      ].filter(Boolean);
       const donerOptionsText = parts.join(' • ');
-      const donerKey = (donerSogansiz ? 'S' : 's') + '|' + (donerDomatessiz ? 'D' : 'd');
+      const donerKey = (donerSogansiz ? 'S' : 's') + '|' + (donerDomatessiz ? 'D' : 'd') + '|' + (donerSade ? 'P' : 'p') + '|' + (donerAzSoganli ? 'A' : 'a');
       
       const existing = cart.find(item => item.id === pendingDonerProduct.id && item.donerKey === donerKey);
       if (existing) {
@@ -12289,13 +12455,16 @@ function startAPIServer() {
       { id: 'ask-odasi', name: 'Aşk Odası', count: 1, icon: '💕' }
     ];
     
+    // Gece Dönercisi: LOCA masası sadece Şeker şubesinde
+    const geceBranch = isGeceDonercisi ? (geceBranchSelection?.branch || db.settings?.geceBranch || null) : null;
     const geceDonercisiCategories = [
       { id: 'salon', name: 'Salon', count: 30, icon: '🪑' },
       { id: 'bahce', name: 'Bahçe', count: 30, icon: '🌿' },
       { id: 'paket', name: 'Paket', count: 30, icon: '📦' },
       { id: 'trendyolgo', name: 'TrendyolGO', count: 30, icon: '🛒' },
       { id: 'yemeksepeti', name: 'Yemeksepeti', count: 30, icon: '🍽️' },
-      { id: 'migros-yemek', name: 'Migros Yemek', count: 30, icon: '🛍️' }
+      { id: 'migros-yemek', name: 'Migros Yemek', count: 30, icon: '🛍️' },
+      ...(geceBranch === 'SEKER' ? [{ id: 'loca', name: 'Loca', count: 1, icon: '📍' }] : [])
     ];
     
     const tables = [];

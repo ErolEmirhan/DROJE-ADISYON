@@ -14,6 +14,7 @@
     "preview": "vite preview",
     "deploy:admin": "firebase deploy --only hosting",
     "deploy:admin:preview": "firebase hosting:channel:deploy preview",
+    "deploy:gecedonercisi": "firebase use gecedonercisi-5fd97 && firebase deploy --only hosting:gecedonercisi",
     "firebase:login": "firebase login",
     "firebase:init": "firebase init hosting"
   },

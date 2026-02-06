@@ -19,14 +19,15 @@ export const SULTAN_SOMATI_SALONS = [
   { id: 'ask-odasi', name: 'Aşk Odası', count: 1, icon: '💕' }
 ];
 
-// Gece Dönercisi: 6 genel masa kategorisi (iç/dış değil) — mobil personel ile senkron
+// Gece Dönercisi: 7 genel masa kategorisi — mobil personel ile senkron (LOCA tek masa, mobilde "Loca" görünsün)
 export const GECE_DONERCISI_CATEGORIES = [
   { id: 'salon', name: 'Salon', count: GECE_DONERCISI_TABLE_COUNT_PER_CATEGORY, icon: '🪑' },
   { id: 'bahce', name: 'Bahçe', count: GECE_DONERCISI_TABLE_COUNT_PER_CATEGORY, icon: '🌿' },
   { id: 'paket', name: 'Paket', count: GECE_DONERCISI_TABLE_COUNT_PER_CATEGORY, icon: '📦' },
   { id: 'trendyolgo', name: 'TrendyolGO', count: GECE_DONERCISI_TABLE_COUNT_PER_CATEGORY, icon: '🛒' },
   { id: 'yemeksepeti', name: 'Yemeksepeti', count: GECE_DONERCISI_TABLE_COUNT_PER_CATEGORY, icon: '🍽️' },
-  { id: 'migros-yemek', name: 'Migros Yemek', count: GECE_DONERCISI_TABLE_COUNT_PER_CATEGORY, icon: '🛍️' }
+  { id: 'migros-yemek', name: 'Migros Yemek', count: GECE_DONERCISI_TABLE_COUNT_PER_CATEGORY, icon: '🛍️' },
+  { id: 'loca', name: 'Loca', count: 1, icon: '📍' }
 ];
 
 /**

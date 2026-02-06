@@ -1,10 +1,10 @@
 export const GECE_BRANCH_STORAGE_KEY = 'gece_donercisi_branch';
 export const GECE_DEVICE_ID_STORAGE_KEY = 'gece_donercisi_device_id';
 
-// DB'de sade değer tutuyoruz (ASCII); UI'da ŞEKER yazdırıyoruz.
+// DB'de SANCAK/SEKER tutuyoruz; Firebase'e #Sancak / #Şeker olarak kaydedilir.
 export const GECE_BRANCHES = [
-  { value: 'SANCAK', label: 'SANCAK' },
-  { value: 'SEKER', label: 'ŞEKER' },
+  { value: 'SANCAK', label: 'Sancak' },
+  { value: 'SEKER', label: 'Şeker' },
 ];
 
 export function isValidGeceBranch(branch) {

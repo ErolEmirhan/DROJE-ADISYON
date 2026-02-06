@@ -5,6 +5,13 @@ const DonerOptionsModal = ({ productName, themeColor = '#f97316', onClose, onCon
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   const [sogansiz, setSogansiz] = useState(false);
   const [domatessiz, setDomatessiz] = useState(false);
+  const [sade, setSade] = useState(false);
+  const [azSoganli, setAzSoganli] = useState(false);
+
+  const btnClass = (active) =>
+    `py-3 rounded-2xl border font-extrabold transition-all ${active ? 'bg-white shadow-md' : 'bg-gray-50 hover:bg-white'}`;
+  const btnStyle = (active) =>
+    active ? { borderColor: theme.primary500, color: theme.primary700 } : { borderColor: '#e5e7eb', color: '#111827' };
 
   return (
     <div
@@ -33,22 +40,34 @@ const DonerOptionsModal = ({ productName, themeColor = '#f97316', onClose, onCon
               <button
                 type="button"
                 onClick={() => setSogansiz((v) => !v)}
-                className={`py-3 rounded-2xl border font-extrabold transition-all ${
-                  sogansiz ? 'bg-white shadow-md' : 'bg-gray-50 hover:bg-white'
-                }`}
-                style={sogansiz ? { borderColor: theme.primary500, color: theme.primary700 } : { borderColor: '#e5e7eb', color: '#111827' }}
+                className={btnClass(sogansiz)}
+                style={btnStyle(sogansiz)}
               >
                 Soğansız
               </button>
               <button
                 type="button"
                 onClick={() => setDomatessiz((v) => !v)}
-                className={`py-3 rounded-2xl border font-extrabold transition-all ${
-                  domatessiz ? 'bg-white shadow-md' : 'bg-gray-50 hover:bg-white'
-                }`}
-                style={domatessiz ? { borderColor: theme.primary500, color: theme.primary700 } : { borderColor: '#e5e7eb', color: '#111827' }}
+                className={btnClass(domatessiz)}
+                style={btnStyle(domatessiz)}
               >
                 Domatessiz
+              </button>
+              <button
+                type="button"
+                onClick={() => setSade((v) => !v)}
+                className={btnClass(sade)}
+                style={btnStyle(sade)}
+              >
+                Sade
+              </button>
+              <button
+                type="button"
+                onClick={() => setAzSoganli((v) => !v)}
+                className={btnClass(azSoganli)}
+                style={btnStyle(azSoganli)}
+              >
+                Az Soğanlı
               </button>
             </div>
           </div>
@@ -63,7 +82,7 @@ const DonerOptionsModal = ({ productName, themeColor = '#f97316', onClose, onCon
             </button>
             <button
               type="button"
-              onClick={() => onConfirm?.({ sogansiz, domatessiz })}
+              onClick={() => onConfirm?.({ sogansiz, domatessiz, sade, azSoganli })}
               className="flex-1 py-3 rounded-2xl text-white font-extrabold shadow-md"
               style={{ backgroundImage: theme.gradient.main }}
             >
