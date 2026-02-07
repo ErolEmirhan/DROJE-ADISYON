@@ -14144,6 +14144,10 @@ async function syncSingleTableToFirebase(tableId) {
       }));
     }
 
+    const tenantInfo = tenantManager.getCurrentTenantInfo();
+    const isGeceDonercisiTenant = tenantInfo?.tenantId === GECE_TENANT_ID;
+    const geceBranch = isGeceDonercisiTenant ? (geceBranchSelection?.branch || db.settings?.geceBranch) : null;
+
     const tableData = {
       table_id: tableId,
       table_number: tableNumber,
@@ -14158,12 +14162,20 @@ async function syncSingleTableToFirebase(tableId) {
       items: items,
       last_updated: new Date().toISOString()
     };
+    if (isGeceDonercisiTenant && geceBranch) {
+      tableData.branch = geceBranch;
+    }
 
-    // Yeni Firebase'e kaydet (makaramasalar)
-    const tableRef = tablesFirebaseDoc(tablesFirestore, 'tables', tableId);
+    // Gece Dönercisi: Şeker/Sancak seçili cihaz kendi şubesine yazar (doc id: SEKER_salon-4, SANCAK_salon-4)
+    let firestoreDocId = tableId;
+    if (isGeceDonercisiTenant && (geceBranch === 'SEKER' || geceBranch === 'SANCAK')) {
+      firestoreDocId = `${geceBranch}_${tableId}`;
+    }
+
+    const tableRef = tablesFirebaseDoc(tablesFirestore, 'tables', firestoreDocId);
     await tablesFirebaseSetDoc(tableRef, tableData, { merge: true });
-    
-    console.log(`✅ Masa yeni Firebase'e kaydedildi: ${tableName} (${tableId})`);
+
+    console.log(`✅ Masa yeni Firebase'e kaydedildi: ${tableName} (${firestoreDocId})`);
     console.log(`📋 Kaydedilen veri: Dolu: ${isOccupied}, Tutar: ${totalAmount}, Item sayısı: ${items.length}`);
   } catch (error) {
     console.error(`❌ Masa yeni Firebase'e kaydedilemedi (${tableId}):`, error);

@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="tr">
 <head>
@@ -7,14 +8,14 @@
   <meta name="theme-color" content="#dc2626">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="PATRON">
+  <meta name="apple-mobile-web-app-title" content="Yaka's Grill">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <link rel="manifest" href="/manifest.json?v=2.5.1">
-  <link rel="icon" type="image/png" href="lacrimosa.jpg">
-  <link rel="apple-touch-icon" href="lacrimosa.jpg">
-  <title id="pageTitle">Lacrimosa - Admin Dashboard</title>
+  <link rel="icon" type="image/png" href="patron.png">
+  <link rel="apple-touch-icon" href="patron.png">
+  <title id="pageTitle">Yaka's Grill - Admin Dashboard</title>
   
   <script>
     // Service Worker Registration - Cache kontrolü için
@@ -125,7 +126,7 @@
 
     // Tenant bilgileri (dinamik olarak yüklenecek)
     let currentTenantInfo = null;
-    let businessName = 'PATRON'; // Varsayılan
+    let businessName = 'Gece Dönercisi'; // Varsayılan
     let firebaseConfig = null;
     let tablesFirebaseConfig = null;
     let insideTablesCount = 20; // Varsayılan
@@ -141,6 +142,10 @@
     let realtimeUnsubscribe = null;
     let allSales = []; // Tüm satışları sakla
     let activeTab = 'sales'; // 'sales', 'reports', 'staff', 'tables', 'cancels'
+    let staffSelectedProducts = []; // (kullanılmıyor - personel detayı sadece isim listesi + modal)
+    let reportBranchFilter = 'all'; // 'all' | 'SANCAK' | 'SEKER' - Detaylı raporlama şube filtresi
+    let salesDataLoaded = false; // Lazy load: satışlar sadece ilgili sekmeye girildiğinde yüklensin
+    let deleteSalePendingId = null; // Silme onayı bekleyen satış doc id
     let reportDateFilter = 'all'; // 'all', 'yesterday', 'week', 'month', 'custom'
     let salesDateFilter = 'all'; // Satış geçmişi için tarih filtresi
     let customDateRange = { start: null, end: null }; // Özel tarih aralığı
@@ -148,13 +153,11 @@
     let tablesUnsubscribe = null; // Masalar için real-time listener
     let activeTablesUnsubscribe = null; // Aktif masa sayısı için real-time listener
     let allStaticTables = {}; // Tüm masaları sakla (iç, dış, paket)
+    let selectedStaffForMerge = new Set(); // Birleştirilecek personeller
+    let allStaticTablesByBranch = { SEKER: {}, SANCAK: {} }; // Gece Dönercisi: şube bazlı masalar (doc id: SEKER_salon-4, SANCAK_salon-4)
     let isGeceDonercisi = false; // Gece Dönercisi tenant'ında salon/bahçe masaları gösterilir
-    let isLacromisa = false; // Lacrimosa Coffee tenant'ında inside/outside masalar gösterilir
     let tenantDbRef = null; // Tenant config Firestore (PIN güncelleme için)
     let tenantDocId = null; // Tenant doküman ID (PIN güncelleme için)
-    let saleIdToDelete = null; // Silme onayı için
-    let editingSaleId = null; // Düzenleme modalı için
-    let editingSaleItems = []; // Düzenlemede ürün listesi (quantity değiştirilebilir)
 
     // Gece Dönercisi - Şube bazlı stok/fiyat yönetimi (Admin Dashboard)
     const GECE_TENANT_ID = 'TENANT-1769602125250';
@@ -168,18 +171,6 @@
       messagingSenderId: "772077442379",
       appId: "1:772077442379:web:cd19d6c85810ceda93c4ce",
       measurementId: "G-689BHMKQ7X"
-    };
-
-    // Lacrimosa Coffee - Masalar için ayrı Firebase (lacromisamasalar)
-    const LACROMISA_TENANT_ID = 'TENANT-1769956051654';
-    const LACROMISA_MASALAR_FIREBASE_CONFIG = {
-      apiKey: "AIzaSyCXYMcQ_UsUo5tswMt9gKoEoVCWOU5l2zM",
-      authDomain: "lacromisamasalar.firebaseapp.com",
-      projectId: "lacromisamasalar",
-      storageBucket: "lacromisamasalar.firebasestorage.app",
-      messagingSenderId: "54584108706",
-      appId: "1:54584108706:web:9ab2eaf4486cdd6f66d9fb",
-      measurementId: "G-9B8CVKZRZH"
     };
     
     // PIN girişi (tenant'a göre dinamik olarak yüklenecek)
@@ -210,10 +201,9 @@
         // URL'den veya localStorage'dan tenant ID'yi al
         const urlParams = new URLSearchParams(window.location.search);
         let tenantId = urlParams.get('tenantId') || localStorage.getItem('admin_tenant_id');
-        // Bu admin dashboard artık Lacromisa tenant'ına özel
-        tenantId = LACROMISA_TENANT_ID;
-        isGeceDonercisi = false;
-        isLacromisa = true;
+        // Veriler Gece Dönercisi tenant'ı ile çekilsin
+        tenantId = 'TENANT-1769602125250';
+        isGeceDonercisi = true;
         
         console.log('🔍 Tenant ID kaynakları:', {
           url: urlParams.get('tenantId'),
@@ -326,16 +316,6 @@
           insideTablesCount = typeof insideTablesCount === 'number' ? insideTablesCount : (parseInt(insideTablesCount) || 20);
           outsideTablesCount = typeof outsideTablesCount === 'number' ? outsideTablesCount : (parseInt(outsideTablesCount) || 20);
           packageTablesCount = typeof packageTablesCount === 'number' ? packageTablesCount : (parseInt(packageTablesCount) || 5);
-
-          // Lacrimosa Coffee: sabit 15 içeri / 15 dışarı, paket yok + masalar Firebase'i lacromisamasalar
-          if (tenantId === LACROMISA_TENANT_ID) {
-            insideTablesCount = 15;
-            outsideTablesCount = 15;
-            packageTablesCount = 0;
-            tablesFirebaseConfig = LACROMISA_MASALAR_FIREBASE_CONFIG;
-            isLacromisa = true;
-            businessName = 'PATRON';
-          }
           
           // Tema rengini al
           themeColor = tenantData.themeColor || '#f97316';
@@ -447,20 +427,19 @@
 
     // UI'ı tenant bilgilerine göre güncelle
     function updateUIWithTenantInfo() {
-      // Dashboard başlığı: Lacrimosa Admin Dashboard (PATRON marka adı sadece splash/login için)
-      const dashboardTitle = businessName === 'PATRON' ? 'Lacrimosa' : businessName;
-      document.title = `${dashboardTitle} - Admin Dashboard`;
-
+      // Title güncelle
+      document.title = `${businessName} - Admin Dashboard`;
+      
       // Meta tag'leri güncelle
       const appleTitleMeta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
       if (appleTitleMeta) {
         appleTitleMeta.setAttribute('content', businessName);
       }
 
-      // Navbar title: Lacrimosa Admin Dashboard
+      // Navbar title güncelle
       const navbarTitle = document.getElementById('navbarBusinessName') || document.querySelector('.navbar-title');
       if (navbarTitle) {
-        navbarTitle.textContent = `${dashboardTitle} Admin Dashboard`;
+        navbarTitle.textContent = `${businessName} Admin Dashboard`;
       }
 
       // Splash screen title güncelle
@@ -495,6 +474,10 @@
         // Varsayılan tema rengini uygula
         applyThemeColors(themeColor);
       }
+
+      // Gece Dönercisi: rapor şube seçicisini göster/gizle
+      const reportBranchEl = document.getElementById('reportBranchSwitch');
+      if (reportBranchEl) reportBranchEl.style.display = isGeceDonercisi ? 'flex' : 'none';
     }
 
     // Tema renklerini dinamik olarak uygula
@@ -695,13 +678,6 @@
         console.log('✅ Ana Firebase başarıyla başlatıldı:', firebaseConfig.projectId);
         
         // Masalar için ayrı Firebase başlat
-        if (isLacromisa) {
-          // Lacrimosa admin dashboard: masaları lacromisamasalar projesinden çek
-          tablesFirebaseConfig = LACROMISA_MASALAR_FIREBASE_CONFIG;
-          insideTablesCount = 15;
-          outsideTablesCount = 15;
-          packageTablesCount = 0;
-        }
         if (!tablesFirebaseConfig) {
           console.warn('⚠️ tablesFirebaseConfig yüklenmedi, varsayılan değerler kullanılıyor');
           // Varsayılan masalar Firebase config
@@ -782,6 +758,32 @@
       return `${day}.${month}.${year}`;
     }
 
+    // Bir satışın hangi iş gününe ait olduğunu hesapla (00:00-03:00 arası satışlar önceki güne ait)
+    function getSaleBusinessDay(saleDate, saleTime) {
+      if (!saleDate || saleDate === 'Bilinmeyen') return saleDate;
+      if (!saleTime) return saleDate; // Saat yoksa tarihi olduğu gibi kullan
+      
+      try {
+        const [day, month, year] = saleDate.split('.');
+        if (!day || !month || !year) return saleDate;
+        
+        const [hourStr] = saleTime.split(':');
+        const hour = parseInt(hourStr, 10);
+        
+        // Eğer saat 03:00'dan önceyse, bir önceki günün iş günü
+        if (hour >= 0 && hour < 3) {
+          const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+          date.setDate(date.getDate() - 1);
+          return normalizeDateString(date);
+        }
+        
+        return saleDate;
+      } catch (e) {
+        console.warn('İş günü hesaplanamadı:', saleDate, saleTime, e);
+        return saleDate;
+      }
+    }
+
     function getTodayDateString() {
       const businessDay = getBusinessDayDate();
       // Her zaman normalize edilmiş format kullan (locale'den bağımsız)
@@ -836,22 +838,25 @@
     // Masa verilerini çek (sadece aktif masa sayısı için, render etmeden)
     function loadTablesDataForStats() {
       console.log('📊 Masa verileri istatistikler için yükleniyor...');
-      
-      if (!tablesDb) {
-        console.warn('⚠️ tablesDb bulunamadı - sadece statik masalar oluşturulacak');
+      const dbForTables = isGeceDonercisi && geceMasalarDb ? geceMasalarDb : tablesDb;
+      if (!dbForTables) {
+        console.warn('⚠️ Masa veritabanı bulunamadı - sadece statik masalar oluşturulacak');
         allStaticTables = {};
         if (isGeceDonercisi) {
+          const geceBase = {};
           for (let i = 1; i <= 30; i++) {
-            allStaticTables[`salon-${i}`] = { table_id: `salon-${i}`, table_name: `Salon ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-            allStaticTables[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+            const salonName = i === 1 ? 'LOCA' : `Salon ${i}`;
+            geceBase[`salon-${i}`] = { table_id: `salon-${i}`, table_name: salonName, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+            geceBase[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
           }
-        } else if (isLacromisa) {
-          for (let i = 1; i <= insideTablesCount; i++) {
-            allStaticTables[`inside-${i}`] = { table_id: `inside-${i}`, table_name: `İçeri ${i}`, table_type: 'inside', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-          }
-          for (let i = 1; i <= outsideTablesCount; i++) {
-            allStaticTables[`outside-${i}`] = { table_id: `outside-${i}`, table_name: `Dışarı ${i}`, table_type: 'outside', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-          }
+          allStaticTables = Object.assign({}, geceBase);
+          allStaticTablesByBranch.SEKER = {};
+          allStaticTablesByBranch.SANCAK = {};
+          Object.keys(geceBase).forEach(k => {
+            allStaticTablesByBranch.SEKER[k] = { ...geceBase[k] };
+            allStaticTablesByBranch.SANCAK[k] = { ...geceBase[k] };
+          });
+          if (allStaticTablesByBranch.SANCAK['salon-1']) allStaticTablesByBranch.SANCAK['salon-1'].table_name = 'Salon 1';
         } else {
           const totalTablesCount = insideTablesCount + outsideTablesCount;
           for (let i = 1; i <= totalTablesCount; i++) {
@@ -865,21 +870,24 @@
         return;
       }
 
-      console.log('✅ tablesDb mevcut, masa verileri çekiliyor...');
+      console.log('✅ Masa veritabanı mevcut, veriler çekiliyor...', isGeceDonercisi ? '(geceMasalarDb)' : '');
 
       allStaticTables = {};
       if (isGeceDonercisi) {
+        const geceBase = {};
         for (let i = 1; i <= 30; i++) {
-          allStaticTables[`salon-${i}`] = { table_id: `salon-${i}`, table_name: `Salon ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-          allStaticTables[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          const salonName = i === 1 ? 'LOCA' : `Salon ${i}`;
+          geceBase[`salon-${i}`] = { table_id: `salon-${i}`, table_name: salonName, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          geceBase[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
         }
-      } else if (isLacromisa) {
-        for (let i = 1; i <= insideTablesCount; i++) {
-          allStaticTables[`inside-${i}`] = { table_id: `inside-${i}`, table_name: `İçeri ${i}`, table_type: 'inside', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-        }
-        for (let i = 1; i <= outsideTablesCount; i++) {
-          allStaticTables[`outside-${i}`] = { table_id: `outside-${i}`, table_name: `Dışarı ${i}`, table_type: 'outside', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-        }
+        allStaticTables = Object.assign({}, geceBase);
+        allStaticTablesByBranch.SEKER = {};
+        allStaticTablesByBranch.SANCAK = {};
+        Object.keys(geceBase).forEach(k => {
+          allStaticTablesByBranch.SEKER[k] = { ...geceBase[k] };
+          allStaticTablesByBranch.SANCAK[k] = { ...geceBase[k] };
+        });
+        if (allStaticTablesByBranch.SANCAK['salon-1']) allStaticTablesByBranch.SANCAK['salon-1'].table_name = 'Salon 1';
       } else {
         const totalTablesCount = insideTablesCount + outsideTablesCount;
         for (let i = 1; i <= totalTablesCount; i++) {
@@ -894,61 +902,78 @@
 
       console.log(`📋 Toplam ${Object.keys(allStaticTables).length} statik masa oluşturuldu (istatistikler için)`);
       
-      // İlk aktif masa sayısını güncelle
       updateActiveTablesCount(calculateActiveTablesCount());
 
-      // Firebase'den masaları çek (tek seferlik, listener değil)
-      const tablesRef = tablesDb.collection('tables');
+      const tablesRef = dbForTables.collection('tables');
       tablesRef.get().then((snapshot) => {
         console.log(`📊 Masalar snapshot alındı (istatistikler için): ${snapshot.size} Firebase verisi bulundu`);
 
-        // Firebase'den gelen verileri statik masalarla birleştir
+        function applyOne(target, tableId, firebaseData) {
+          const isOccupied = firebaseData.is_occupied === true || firebaseData.is_occupied === 'true' || firebaseData.is_occupied === 1 ||
+            (firebaseData.items && Array.isArray(firebaseData.items) && firebaseData.items.length > 0);
+          if (target[tableId]) {
+            target[tableId].is_occupied = isOccupied;
+            target[tableId].total_amount = parseFloat(firebaseData.total_amount || 0);
+            target[tableId].items = Array.isArray(firebaseData.items) ? firebaseData.items : [];
+            target[tableId].order_id = firebaseData.order_id || null;
+            target[tableId].order_date = firebaseData.order_date || null;
+            target[tableId].order_time = firebaseData.order_time || null;
+            target[tableId].order_note = firebaseData.order_note || null;
+            if (firebaseData.table_name) target[tableId].table_name = firebaseData.table_name;
+            if (firebaseData.table_type) target[tableId].table_type = firebaseData.table_type;
+          }
+        }
+
         snapshot.forEach((doc) => {
           const firebaseData = doc.data();
-          const tableId = firebaseData.table_id || doc.id;
-          
-          if (allStaticTables[tableId]) {
-            // Firebase'den gelen verileri statik masaya ekle
-            allStaticTables[tableId].is_occupied = firebaseData.is_occupied === true || 
-                                                   firebaseData.is_occupied === 'true' || 
-                                                   firebaseData.is_occupied === 1 ||
-                                                   (firebaseData.items && Array.isArray(firebaseData.items) && firebaseData.items.length > 0);
-            allStaticTables[tableId].total_amount = parseFloat(firebaseData.total_amount || 0);
-            allStaticTables[tableId].items = Array.isArray(firebaseData.items) ? firebaseData.items : [];
-            allStaticTables[tableId].order_id = firebaseData.order_id || null;
-            allStaticTables[tableId].order_date = firebaseData.order_date || null;
-            allStaticTables[tableId].order_time = firebaseData.order_time || null;
-            allStaticTables[tableId].order_note = firebaseData.order_note || null;
-            // Firebase'den gelen table_name ve table_type'ı da güncelle
-            if (firebaseData.table_name) {
-              allStaticTables[tableId].table_name = firebaseData.table_name;
+          const docId = doc.id;
+          let tableId = firebaseData.table_id || docId;
+          if (isGeceDonercisi) {
+            if (docId.startsWith('SEKER_')) {
+              tableId = docId.slice(6);
+              applyOne(allStaticTablesByBranch.SEKER, tableId, firebaseData);
+            } else if (docId.startsWith('SANCAK_')) {
+              tableId = docId.slice(7);
+              applyOne(allStaticTablesByBranch.SANCAK, tableId, firebaseData);
+            } else {
+              const br = firebaseData.branch;
+              const isSeker = br === 'SEKER' || br === '#Şeker' || br === 'Şeker';
+              const isSancak = br === 'SANCAK' || br === '#Sancak' || br === 'Sancak';
+              if (isSeker) applyOne(allStaticTablesByBranch.SEKER, tableId, firebaseData);
+              else if (isSancak) applyOne(allStaticTablesByBranch.SANCAK, tableId, firebaseData);
             }
-            if (firebaseData.table_type) {
-              allStaticTables[tableId].table_type = firebaseData.table_type;
-            }
-            console.log(`✅ Masa güncellendi (istatistikler için): ${tableId} - Dolu: ${allStaticTables[tableId].is_occupied}`);
           } else {
-            // Firebase'de var ama statik listede yok - yeni masa ekle (dinamik)
-            allStaticTables[tableId] = {
-              table_id: tableId,
-              table_name: firebaseData.table_name || tableId,
-              table_type: firebaseData.table_type || 'table',
-              table_number: firebaseData.table_number || parseInt(tableId.replace(/\D/g, '')) || 0,
-              is_occupied: firebaseData.is_occupied === true || 
-                          firebaseData.is_occupied === 'true' || 
-                          firebaseData.is_occupied === 1 ||
-                          (firebaseData.items && Array.isArray(firebaseData.items) && firebaseData.items.length > 0),
-              total_amount: parseFloat(firebaseData.total_amount || 0),
-              items: Array.isArray(firebaseData.items) ? firebaseData.items : [],
-              order_id: firebaseData.order_id || null,
-              order_date: firebaseData.order_date || null,
-              order_time: firebaseData.order_time || null,
-              order_note: firebaseData.order_note || null
-            };
-            console.log(`➕ Yeni masa eklendi (istatistikler için): ${tableId}`);
+            if (allStaticTables[tableId]) {
+              applyOne(allStaticTables, tableId, firebaseData);
+            } else {
+              allStaticTables[tableId] = {
+                table_id: tableId,
+                table_name: firebaseData.table_name || tableId,
+                table_type: firebaseData.table_type || 'table',
+                table_number: firebaseData.table_number || parseInt(tableId.replace(/\D/g, '')) || 0,
+                is_occupied: firebaseData.is_occupied === true || firebaseData.is_occupied === 'true' || firebaseData.is_occupied === 1 ||
+                  (firebaseData.items && Array.isArray(firebaseData.items) && firebaseData.items.length > 0),
+                total_amount: parseFloat(firebaseData.total_amount || 0),
+                items: Array.isArray(firebaseData.items) ? firebaseData.items : [],
+                order_id: firebaseData.order_id || null,
+                order_date: firebaseData.order_date || null,
+                order_time: firebaseData.order_time || null,
+                order_note: firebaseData.order_note || null
+              };
+              console.log(`➕ Yeni masa eklendi (istatistikler için): ${tableId}`);
+            }
           }
         });
-        
+
+        if (isGeceDonercisi) {
+          const allIds = new Set([...Object.keys(allStaticTablesByBranch.SEKER), ...Object.keys(allStaticTablesByBranch.SANCAK)]);
+          allIds.forEach(tid => {
+            allStaticTables[tid] = allStaticTables[tid] || {};
+            allStaticTables[tid].is_occupied = (allStaticTablesByBranch.SEKER[tid] && allStaticTablesByBranch.SEKER[tid].is_occupied) ||
+              (allStaticTablesByBranch.SANCAK[tid] && allStaticTablesByBranch.SANCAK[tid].is_occupied);
+          });
+        }
+
         // Aktif masa sayısını güncelle
         updateActiveTablesCount(calculateActiveTablesCount());
         console.log('✅ Aktif masa sayısı güncellendi (istatistikler için)');
@@ -972,8 +997,8 @@
         mgmtBtn.style.display = isGeceDonercisi ? 'inline-flex' : 'none';
       }
 
-      loadSales();
-      startRealtimeListener();
+      // İlk açılışta aktif sekmeyi render et; Satış Geçmişi seçiliyse veriyi yükle
+      setActiveTab(activeTab);
       // Dashboard açılır açılmaz masa verilerini çek (aktif masa sayısı için)
       loadTablesDataForStats();
     }
@@ -1229,7 +1254,7 @@
       }, 2500);
     });
 
-    // Satışları yükle - SADECE SON 2 GÜNÜ YÜKLE (Firebase read limitini korumak için)
+    // Satışları yükle - SON 3 GÜNÜ YÜKLE (00:00-03:00 arası satışları kaçırmamak için)
     async function loadSales() {
       if (!db) {
         console.error('Firebase başlatılamadı');
@@ -1240,17 +1265,17 @@
         showLoading(true);
         const salesRef = db.collection('sales');
         
-        // Son 2 günü hesapla (gece 03:00'a göre iş günü)
+        // Son 3 günü hesapla (gece 03:00'a göre iş günü; 00:00-03:00 arası satışlar için +1 gün güvenlik)
         const businessDay = getBusinessDayDate();
-        const twoDaysAgo = new Date(businessDay);
-        twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
-        twoDaysAgo.setHours(0, 0, 0, 0);
+        const threeDaysAgo = new Date(businessDay);
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 2);
+        threeDaysAgo.setHours(0, 0, 0, 0);
         
         // Tarih string formatına çevir (DD.MM.YYYY)
-        const twoDaysAgoStr = twoDaysAgo.toLocaleDateString('tr-TR');
-        const businessDayStr = businessDay.toLocaleDateString('tr-TR');
+        const threeDaysAgoStr = normalizeDateString(threeDaysAgo);
+        const businessDayStr = normalizeDateString(businessDay);
         
-        // Son 2 günün satışlarını yükle
+        // Son 3 günün satışlarını yükle (00:00-03:00 arası satışları kaçırmamak için)
         let allDocs = [];
         let lastDoc = null;
         let hasMore = true;
@@ -1294,28 +1319,28 @@
               const data = doc.data();
               const saleDate = data.sale_date || '';
               
-              // Son 2 gün içindeki satışları al
+              // Son 3 gün içindeki satışları al (00:00-03:00 arası satışlar için)
               if (saleDate && saleDate !== 'Bilinmeyen') {
                 const [day, month, year] = saleDate.split('.');
                 if (day && month && year) {
                   const saleDateObj = new Date(year, month - 1, day);
                   saleDateObj.setHours(0, 0, 0, 0);
                   
-                  // Son 2 gün içindeyse ekle
-                  if (saleDateObj >= twoDaysAgo && saleDateObj <= businessDay) {
+                  // Son 3 gün içindeyse ekle
+                  if (saleDateObj >= threeDaysAgo && saleDateObj <= businessDay) {
                     allDocs.push(doc);
                     daysLoaded.add(saleDate);
-                  } else if (saleDateObj < twoDaysAgo) {
-                    // 2 günden eski tarih bulundu, dur
+                  } else if (saleDateObj < threeDaysAgo) {
+                    // 3 günden eski tarih bulundu, dur
                     foundOldDate = true;
                   }
                 }
               } else {
-                // Tarih bilinmeyen satışları da ekle (son 2 gün içinde oluşturulmuş olabilir)
+                // Tarih bilinmeyen satışları da ekle (son 3 gün içinde oluşturulmuş olabilir)
                 if (data.created_at) {
                   const timestamp = data.created_at;
                   const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
-                  if (date >= twoDaysAgo) {
+                  if (date >= threeDaysAgo) {
                     allDocs.push(doc);
                   } else {
                     foundOldDate = true;
@@ -1327,7 +1352,7 @@
             // Son dokümanı kaydet
             lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1];
             
-            // Eğer 2 günden eski tarih bulunduysa veya 500'den az kayıt geldiyse, dur
+            // Eğer 3 günden eski tarih bulunduysa veya 500'den az kayıt geldiyse, dur
             if (foundOldDate || querySnapshot.docs.length < 500) {
               hasMore = false;
             }
@@ -1408,6 +1433,7 @@
             table_name: data.table_name || null,
             table_type: data.table_type || null,
             order_source: data.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
+            branch: data.branch || null, // Gece Dönercisi: SANCAK | SEKER
             items: items,
             items_array: itemsArray, // Gerçek Firebase verileri
             itemsText: data.items || 'Ürün bulunamadı',
@@ -1445,6 +1471,8 @@
         });
 
         allSales = sales; // Tüm satışları sakla
+        salesDataLoaded = true; // Lazy load: bir kez yüklendi
+        if (!realtimeUnsubscribe) startRealtimeListener(); // Real-time dinleme ilk yüklemeden sonra başlat
         renderCurrentView();
         updateStats(sales);
         showLoading(false);
@@ -1555,6 +1583,7 @@
             table_name: data.table_name || null,
             table_type: data.table_type || null,
             order_source: data.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
+            branch: data.branch || null, // Gece Dönercisi: SANCAK | SEKER
             items: items,
             items_array: itemsArray, // Gerçek Firebase verileri
             itemsText: data.items || 'Ürün bulunamadı',
@@ -1622,22 +1651,21 @@
       if (salesDateFilter === 'yesterday') {
         const yesterday = new Date(businessDay);
         yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toLocaleDateString('tr-TR');
+        const yesterdayStr = normalizeDateString(yesterday);
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-          return sale.sale_date === yesterdayStr;
+          const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+          return saleBusinessDay === yesterdayStr;
         });
       } else if (salesDateFilter === 'week') {
         const weekAgo = new Date(businessDay);
         weekAgo.setDate(weekAgo.getDate() - 7);
-        const weekAgoStr = weekAgo.toLocaleDateString('tr-TR');
-        const todayStr = businessDay.toLocaleDateString('tr-TR');
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-          // Tarih string karşılaştırması için parse et
-          const [day, month, year] = sale.sale_date.split('.');
+          const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+          const [day, month, year] = saleBusinessDay.split('.');
           if (!day || !month || !year) return false;
           const saleDate = new Date(year, month - 1, day);
           const weekAgoDate = new Date(weekAgo);
@@ -1650,11 +1678,11 @@
       } else if (salesDateFilter === 'month') {
         const monthAgo = new Date(businessDay);
         monthAgo.setMonth(monthAgo.getMonth() - 1);
-        const todayStr = businessDay.toLocaleDateString('tr-TR');
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-          const [day, month, year] = sale.sale_date.split('.');
+          const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+          const [day, month, year] = saleBusinessDay.split('.');
           if (!day || !month || !year) return false;
           const saleDate = new Date(year, month - 1, day);
           const monthAgoDate = new Date(monthAgo);
@@ -1672,7 +1700,8 @@
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-          const [day, month, year] = sale.sale_date.split('.');
+          const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+          const [day, month, year] = saleBusinessDay.split('.');
           if (!day || !month || !year) return false;
           const saleDate = new Date(year, month - 1, day);
           saleDate.setHours(0, 0, 0, 0);
@@ -1765,10 +1794,12 @@
         return;
       }
 
-      // Tarihe göre grupla (filtrelenmiş satışlar üzerinde)
+      // Tarihe göre grupla (filtrelenmiş satışlar üzerinde) - İŞ GÜNÜNE GÖRE GRUPLA (00:00-03:00 arası satışlar önceki güne ait)
       const salesByDate = {};
       filteredSales.forEach(sale => {
-        const date = sale.sale_date || 'Bilinmeyen';
+        // 00:00-03:00 arası satışlar için iş günü hesapla
+        const businessDate = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+        const date = businessDate || 'Bilinmeyen';
         if (!salesByDate[date]) {
           salesByDate[date] = [];
         }
@@ -1789,21 +1820,11 @@
       sortedDates.forEach(date => {
         let daySales = salesByDate[date];
         
-        // Her tarih grubu içindeki satışları saat bilgisine göre sırala (en yeni önce)
+        // Her tarih grubu içindeki satışları sale_id'ye göre sırala (en büyükten en küçüğe - en yeni satış önce)
         daySales.sort((a, b) => {
-          // Önce saat bilgisine göre sırala
-          if (a.sale_time && b.sale_time) {
-            const [hA, mA, sA] = a.sale_time.split(':').map(Number);
-            const [hB, mB, sB] = b.sale_time.split(':').map(Number);
-            const timeA = (hA || 0) * 3600 + (mA || 0) * 60 + (sA || 0);
-            const timeB = (hB || 0) * 3600 + (mB || 0) * 60 + (sB || 0);
-            if (timeB !== timeA) return timeB - timeA; // En yeni saat önce
-          }
-          
-          // Saat bilgisi yoksa veya eşitse sale_id'ye göre sırala (büyükten küçüğe)
           const idA = parseInt(a.sale_id || a.id || 0);
           const idB = parseInt(b.sale_id || b.id || 0);
-          return idB - idA;
+          return idB - idA; // Büyükten küçüğe (en yeni önce)
         });
         
         // Masrafları hariç tut
@@ -1864,6 +1885,12 @@
                           <p class="expense-value">₺${parseFloat(sale.total_amount || 0).toFixed(2)}</p>
                         </div>
                       </div>
+                      <div class="sale-card-footer">
+                        <button type="button" class="sale-delete-btn" data-sale-id="${(sale.id || '').replace(/"/g, '&quot;')}" onclick="confirmDeleteSale(this)" title="Satışı sil">
+                          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                          Sil
+                        </button>
+                      </div>
                     </div>
                   `;
                 }
@@ -1890,6 +1917,7 @@
                           ${sale.payment_method === 'Nakit' ? '💵 Nakit' : '💳 Kart'}
                         </span>
                         ${sale.staff_name ? `<span class="badge badge-staff">👤 ${sale.staff_name}</span>` : ''}
+                        ${sale.branch ? `<span class="badge badge-branch">#${sale.branch}</span>` : ''}
                         ${sale.table_name ? `<span class="badge badge-table">🪑 ${sale.table_name}${sale.table_type ? ` (${sale.table_type})` : ''}</span>` : ''}
                       </div>
                     </div>
@@ -1904,9 +1932,11 @@
                       ${itemsHtml}
                     </div>
                   </div>
-                  <div class="sale-card-actions">
-                    <button type="button" class="sale-action-btn sale-edit-btn" onclick="openEditSaleModal('${(sale.id || '').toString().replace(/'/g, "\\'")}')" title="Düzenle">Düzenle</button>
-                    <button type="button" class="sale-action-btn sale-delete-btn" onclick="openDeleteConfirm('${(sale.id || '').toString().replace(/'/g, "\\'")}')" title="Sil">Sil</button>
+                  <div class="sale-card-footer">
+                    <button type="button" class="sale-delete-btn" data-sale-id="${(sale.id || '').replace(/"/g, '&quot;')}" onclick="confirmDeleteSale(this)" title="Satışı sil">
+                      <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                      Sil
+                    </button>
                   </div>
                 </div>
               `;
@@ -1917,6 +1947,54 @@
       });
 
       container.innerHTML = html;
+    }
+
+    function confirmDeleteSale(btnOrId) {
+      const saleId = typeof btnOrId === 'string' ? btnOrId : (btnOrId && btnOrId.getAttribute && btnOrId.getAttribute('data-sale-id'));
+      if (!saleId) return;
+      deleteSalePendingId = saleId;
+      const modal = document.getElementById('deleteSaleConfirmModal');
+      if (modal) {
+        modal.style.display = 'flex';
+        modal.onclick = closeDeleteSaleModal;
+        const confirmBtn = document.getElementById('deleteSaleConfirmBtn');
+        if (confirmBtn) {
+          confirmBtn.onclick = doDeleteSale;
+        }
+      }
+    }
+
+    function closeDeleteSaleModal() {
+      deleteSalePendingId = null;
+      const modal = document.getElementById('deleteSaleConfirmModal');
+      if (modal) {
+        modal.style.display = 'none';
+        modal.onclick = null;
+        const confirmBtn = document.getElementById('deleteSaleConfirmBtn');
+        if (confirmBtn) confirmBtn.onclick = null;
+      }
+    }
+
+    async function doDeleteSale() {
+      if (!deleteSalePendingId) {
+        closeDeleteSaleModal();
+        return;
+      }
+      const saleId = deleteSalePendingId;
+      closeDeleteSaleModal();
+      if (!db || !db.collection) {
+        alert('Veritabanı bağlantısı yok.');
+        return;
+      }
+      try {
+        await db.collection('sales').doc(saleId).delete();
+        allSales = allSales.filter(s => s.id !== saleId);
+        renderCurrentView();
+        updateStats(allSales);
+      } catch (err) {
+        console.error('Satış silinemedi:', err);
+        alert('Satış silinirken hata oluştu: ' + (err.message || err));
+      }
     }
 
     // Satış geçmişi tarih filtresini güncelle
@@ -2002,168 +2080,13 @@
       }
     }
 
-    // --- Satış Silme Onay ---
-    function openDeleteConfirm(saleId) {
-      saleIdToDelete = saleId;
-      const overlay = document.getElementById('deleteSaleConfirmOverlay');
-      if (overlay) {
-        overlay.style.display = 'flex';
-        overlay.style.alignItems = 'center';
-        overlay.style.justifyContent = 'center';
-      }
-    }
-    function closeDeleteConfirm() {
-      saleIdToDelete = null;
-      const overlay = document.getElementById('deleteSaleConfirmOverlay');
-      if (overlay) overlay.style.display = 'none';
-    }
-    async function confirmDeleteSale() {
-      if (!saleIdToDelete || !db) return;
-      const btn = document.getElementById('deleteSaleConfirmBtn');
-      if (btn) { btn.disabled = true; btn.textContent = 'Siliniyor…'; }
-      try {
-        const salesRef = db.collection('sales');
-        await salesRef.doc(saleIdToDelete).delete();
-        closeDeleteConfirm();
-        allSales = allSales.filter(s => s.id !== saleIdToDelete);
-        renderSales(allSales);
-        updateStats(allSales);
-      } catch (e) {
-        console.error('Satış silinirken hata:', e);
-        if (btn) { btn.disabled = false; btn.textContent = 'Sil'; }
-        alert('Satış silinirken bir hata oluştu: ' + (e.message || e));
-      }
-      if (btn) { btn.disabled = false; btn.textContent = 'Sil'; }
-    }
-
-    // --- Satış Düzenleme Modal ---
-    function openEditSaleModal(saleId) {
-      const sale = allSales.find(s => s.id === saleId);
-      if (!sale || sale.isExpense) return;
-      editingSaleId = saleId;
-      const raw = (sale.items_array && sale.items_array.length) ? sale.items_array : (sale.items || []).map(it => ({
-        product_id: it.product_id || null,
-        product_name: it.product_name || it.name || 'Ürün',
-        quantity: it.quantity || 1,
-        price: it.price != null ? parseFloat(it.price) : 0,
-        isGift: it.isGift || false,
-        staff_id: it.staff_id || null,
-        staff_name: it.staff_name || null
-      }));
-      editingSaleItems = raw.map(it => ({ ...it, quantity: Math.max(0, parseInt(it.quantity, 10) || 1) }));
-      const sel = document.getElementById('editSalePaymentMethod');
-      if (sel) sel.value = (sale.payment_method === 'Kredi Kartı' || sale.payment_method === 'Kart') ? 'Kredi Kartı' : 'Nakit';
-      renderEditSaleItems();
-      updateEditSaleTotal();
-      const overlay = document.getElementById('editSaleOverlay');
-      if (overlay) {
-        overlay.style.display = 'flex';
-        overlay.style.alignItems = 'center';
-        overlay.style.justifyContent = 'center';
-      }
-    }
-    function closeEditSaleModal() {
-      editingSaleId = null;
-      editingSaleItems = [];
-      const overlay = document.getElementById('editSaleOverlay');
-      if (overlay) overlay.style.display = 'none';
-    }
-    function editSaleItemQty(index, delta) {
-      if (!editingSaleItems[index]) return;
-      const q = Math.max(0, (editingSaleItems[index].quantity || 0) + delta);
-      editingSaleItems[index].quantity = q;
-      if (q === 0) editingSaleItems.splice(index, 1);
-      renderEditSaleItems();
-      updateEditSaleTotal();
-    }
-    function renderEditSaleItems() {
-      const list = document.getElementById('editSaleItemsList');
-      if (!list) return;
-      list.innerHTML = editingSaleItems.map((it, i) => {
-        const price = parseFloat(it.price) || 0;
-        const lineTotal = (it.quantity || 0) * price;
-        return `
-          <div class="edit-sale-item-row" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;">
-            <div style="flex:1;min-width:0;">
-              <div style="font-weight:700;color:#0f172a;font-size:14px;">${(it.product_name || 'Ürün').replace(/</g,'&lt;')}</div>
-              <div style="font-size:12px;color:#64748b;">₺${price.toFixed(2)} × ${it.quantity} = ₺${lineTotal.toFixed(2)}</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <button type="button" onclick="editSaleItemQty(${i}, -1)" style="width:36px;height:36px;border:2px solid #e2e8f0;border-radius:10px;background:#fff;font-size:18px;font-weight:700;color:#475569;cursor:pointer;">−</button>
-              <span style="min-width:28px;text-align:center;font-weight:700;">${it.quantity}</span>
-              <button type="button" onclick="editSaleItemQty(${i}, 1)" style="width:36px;height:36px;border:2px solid #e2e8f0;border-radius:10px;background:#fff;font-size:18px;font-weight:700;color:#475569;cursor:pointer;">+</button>
-            </div>
-          </div>`;
-      }).join('');
-    }
-    function updateEditSaleTotal() {
-      let total = 0;
-      editingSaleItems.forEach(it => { total += (parseFloat(it.price) || 0) * (it.quantity || 0); });
-      const el = document.getElementById('editSaleTotalDisplay');
-      if (el) el.textContent = '₺' + total.toFixed(2);
-    }
-    async function saveEditSale() {
-      if (!editingSaleId || !db) return;
-      const paymentMethod = document.getElementById('editSalePaymentMethod');
-      const method = paymentMethod ? paymentMethod.value : 'Nakit';
-      const itemsToSave = editingSaleItems.filter(it => (it.quantity || 0) > 0);
-      if (itemsToSave.length === 0) {
-        alert('En az bir ürün kalmalı. Silmek için Satış Sil butonunu kullanın.');
-        return;
-      }
-      let totalAmount = 0;
-      itemsToSave.forEach(it => { totalAmount += (parseFloat(it.price) || 0) * (it.quantity || 0); });
-      const sale = allSales.find(s => s.id === editingSaleId);
-      if (totalAmount === 0 && sale && parseFloat(sale.total_amount) > 0) totalAmount = parseFloat(sale.total_amount);
-      const itemsText = itemsToSave.map(it => {
-        const g = it.isGift ? ' (İKRAM)' : '';
-        return `${it.product_name} x${it.quantity}${g}`;
-      }).join(', ');
-      const itemsArray = itemsToSave.map(it => ({
-        product_id: it.product_id || null,
-        product_name: it.product_name,
-        quantity: it.quantity,
-        price: parseFloat(it.price) || 0,
-        isGift: it.isGift || false,
-        staff_id: it.staff_id || null,
-        staff_name: it.staff_name || null
-      }));
-      const btn = document.getElementById('editSaleSaveBtn');
-      if (btn) { btn.disabled = true; btn.textContent = 'Kaydediliyor…'; }
-      try {
-        const salesRef = db.collection('sales');
-        await salesRef.doc(editingSaleId).update({
-          payment_method: method,
-          total_amount: totalAmount,
-          items: itemsText,
-          items_array: itemsArray
-        });
-        const idx = allSales.findIndex(s => s.id === editingSaleId);
-        if (idx !== -1) {
-          allSales[idx] = { ...allSales[idx], payment_method: method, total_amount: totalAmount, items: itemsToSave.map(i => ({ product_name: i.product_name, quantity: i.quantity, isGift: i.isGift })), items_array: itemsArray };
-        }
-        closeEditSaleModal();
-        renderSales(allSales);
-        updateStats(allSales);
-      } catch (e) {
-        console.error('Satış güncellenirken hata:', e);
-        if (btn) { btn.disabled = false; btn.textContent = 'Kaydet'; }
-        alert('Satış güncellenirken bir hata oluştu: ' + (e.message || e));
-      }
-      if (btn) { btn.disabled = false; btn.textContent = 'Kaydet'; }
-    }
-
     // Aktif masa sayısını hesapla (sadece iç ve dış masalar; Gece Dönercisi: salon + bahçe)
     function calculateActiveTablesCount() {
       let activeCount = 0;
       
       Object.values(allStaticTables).forEach(table => {
         const tableId = table.table_id || '';
-        const isTable =
-          tableId.startsWith('masa-') ||
-          tableId.startsWith('inside-') ||
-          tableId.startsWith('outside-') ||
-          (isGeceDonercisi && (tableId.startsWith('salon-') || tableId.startsWith('bahce-')));
+        const isTable = tableId.startsWith('masa-') || (isGeceDonercisi && (tableId.startsWith('salon-') || tableId.startsWith('bahce-')));
         const isPackage = tableId.startsWith('paket-');
         
         if (isTable && !isPackage) {
@@ -2200,17 +2123,127 @@
       }
     }
 
-    // İstatistikleri güncelle
+    // İstatistikleri güncelle (Gece Dönercisi için Sancak ve Şeker ayrı ciro)
     function updateStats(sales) {
       const today = getTodayDateString();
-      // Masrafları hariç tut
+      
+      // Gece Dönercisi için Sancak ve Şeker ayrı hesapla - 00:00-03:00 arası satışlar için iş günü hesapla
+      if (isGeceDonercisi) {
+        const todayAllSales = sales.filter(s => {
+          const businessDate = getSaleBusinessDay(s.sale_date, s.sale_time);
+          return businessDate === today && !s.isExpense && s.payment_method !== 'Masraf';
+        });
+        
+        const sekerSales = todayAllSales.filter(s => s.branch === '#Şeker' || s.branch === 'SEKER');
+        const sancakSales = todayAllSales.filter(s => s.branch === '#Sancak' || s.branch === 'SANCAK');
+        
+        const sekerRevenue = sekerSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        const sancakRevenue = sancakSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        
+        // Ödeme detayları - Şeker
+        const sekerCash = sekerSales.filter(s => s.payment_method === 'Nakit').reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        const sekerCard = sekerSales.filter(s => s.payment_method && s.payment_method !== 'Nakit' && s.payment_method !== 'Online' && s.payment_method !== 'Masraf').reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        const sekerOnline = sekerSales.filter(s => s.payment_method === 'Online' || s.order_source === 'Trendyol' || s.order_source === 'Yemeksepeti' || s.order_source === 'Migros Yemek').reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        
+        // Ödeme detayları - Sancak
+        const sancakCash = sancakSales.filter(s => s.payment_method === 'Nakit').reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        const sancakCard = sancakSales.filter(s => s.payment_method && s.payment_method !== 'Nakit' && s.payment_method !== 'Online' && s.payment_method !== 'Masraf').reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        const sancakOnline = sancakSales.filter(s => s.payment_method === 'Online' || s.order_source === 'Trendyol' || s.order_source === 'Yemeksepeti' || s.order_source === 'Migros Yemek').reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        
+        // Masraflar (şubeye göre ayrılabilir ama şimdilik toplam) - 00:00-03:00 arası için iş günü hesapla
+        const todayExpenses = sales.filter(s => {
+          const businessDate = getSaleBusinessDay(s.sale_date, s.sale_time);
+          return businessDate === today && (s.isExpense || s.payment_method === 'Masraf');
+        });
+        const todayExpenseTotal = todayExpenses.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+        
+        const statsGrid = document.getElementById('statsGrid');
+        if (!statsGrid) return;
+        
+        statsGrid.innerHTML = `
+          <div class="stat-card-wrapper">
+            <div class="stat-card stat-card-green">
+              <div class="stat-icon">🍬</div>
+              <div class="stat-content">
+                <h3>Şeker Şubesi Günlük Ciro</h3>
+                <div class="stat-value">₺${sekerRevenue.toFixed(2)}</div>
+              </div>
+            </div>
+            <div class="payment-breakdown-card">
+              <div class="payment-breakdown-item">
+                <span class="payment-breakdown-label">💵 Nakit:</span>
+                <span class="payment-breakdown-value">₺${sekerCash.toFixed(2)}</span>
+              </div>
+              <div class="payment-breakdown-item">
+                <span class="payment-breakdown-label">💳 Kart:</span>
+                <span class="payment-breakdown-value">₺${sekerCard.toFixed(2)}</span>
+              </div>
+              <div class="payment-breakdown-item">
+                <span class="payment-breakdown-label">🌐 Online:</span>
+                <span class="payment-breakdown-value">₺${sekerOnline.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+          <div class="stat-card-wrapper">
+            <div class="stat-card stat-card-blue">
+              <div class="stat-icon">🚩</div>
+              <div class="stat-content">
+                <h3>Sancak Şubesi Günlük Ciro</h3>
+                <div class="stat-value">₺${sancakRevenue.toFixed(2)}</div>
+              </div>
+            </div>
+            <div class="payment-breakdown-card">
+              <div class="payment-breakdown-item">
+                <span class="payment-breakdown-label">💵 Nakit:</span>
+                <span class="payment-breakdown-value">₺${sancakCash.toFixed(2)}</span>
+              </div>
+              <div class="payment-breakdown-item">
+                <span class="payment-breakdown-label">💳 Kart:</span>
+                <span class="payment-breakdown-value">₺${sancakCard.toFixed(2)}</span>
+              </div>
+              <div class="payment-breakdown-item">
+                <span class="payment-breakdown-label">🌐 Online:</span>
+                <span class="payment-breakdown-value">₺${sancakOnline.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+          <div class="stat-card stat-card-red">
+            <div class="stat-icon">💸</div>
+            <div class="stat-content">
+              <h3>Günlük Masraf</h3>
+              <div class="stat-value">₺${todayExpenseTotal.toFixed(2)}</div>
+            </div>
+          </div>
+          <div class="stat-card stat-card-purple">
+            <div class="stat-icon">📊</div>
+            <div class="stat-content">
+              <h3>Bugünkü Satış</h3>
+              <div class="stat-value">${todayAllSales.length}</div>
+            </div>
+          </div>
+          <div class="stat-card stat-card-pink">
+            <div class="stat-icon">🪑</div>
+            <div class="stat-content">
+              <h3>Aktif Masa</h3>
+              <div class="stat-value">0</div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+      
+      // Normal tenant için mevcut mantık
+      if (reportBranchFilter !== 'all') {
+        sales = sales.filter(s => s.branch === reportBranchFilter);
+      }
+      // Masrafları hariç tut - 00:00-03:00 arası satışlar için iş günü hesapla
       const todaySales = sales.filter(s => {
-        const saleDate = s.sale_date || '';
-        const matches = saleDate === today;
+        const businessDate = getSaleBusinessDay(s.sale_date, s.sale_time);
+        const matches = businessDate === today;
         return matches && !s.isExpense && s.payment_method !== 'Masraf';
       });
-      // total_amount kullanarak hesaplama yap
-      const todayRevenue = todaySales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+      // calculateSaleRevenue kullanarak tutarlı hesaplama yap
+      const todayRevenue = todaySales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
       
       // Nakit, kart ve online tutarlarını hesapla
       // Önce tüm ödeme yöntemlerini logla
@@ -2253,27 +2286,27 @@
           !s.isExpense;
       });
       
-      // total_amount kullanarak hesaplama yap
-      const cashTotal = cashSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
-      const cardTotal = cardSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
-      const onlineTotal = onlineSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+      // calculateSaleRevenue kullanarak tutarlı hesaplama yap
+      const cashTotal = cashSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+      const cardTotal = cardSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+      const onlineTotal = onlineSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
       
-      // Günlük masrafları hesapla
-      const todayExpenses = sales.filter(s => 
-        s.sale_date === today && 
-        (s.isExpense || s.payment_method === 'Masraf')
-      );
+      // Günlük masrafları hesapla - 00:00-03:00 arası için iş günü hesapla
+      const todayExpenses = sales.filter(s => {
+        const businessDate = getSaleBusinessDay(s.sale_date, s.sale_time);
+        return businessDate === today && (s.isExpense || s.payment_method === 'Masraf');
+      });
       const todayExpenseTotal = todayExpenses.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
       
       const statsGrid = document.getElementById('statsGrid');
       if (!statsGrid) return;
-      
+      const branchLabel = (isGeceDonercisi && reportBranchFilter !== 'all') ? ` (${reportBranchFilter === 'SEKER' ? 'ŞEKER' : reportBranchFilter})` : '';
       statsGrid.innerHTML = `
         <div class="stat-card-wrapper">
           <div class="stat-card stat-card-green">
             <div class="stat-icon">💰</div>
             <div class="stat-content">
-              <h3>Günlük Ciro</h3>
+              <h3>Günlük Ciro${branchLabel}</h3>
               <div class="stat-value">₺${todayRevenue.toFixed(2)}</div>
             </div>
           </div>
@@ -2329,8 +2362,13 @@
     // Aktif sekme değiştir
     function setActiveTab(tab) {
       activeTab = tab;
-      renderCurrentView();
       updateTabButtons();
+      // Her zaman önce mevcut görünümü render et (container görünürlüğü + içerik)
+      renderCurrentView();
+      // Lazy load: satış verisi sadece Satış Geçmişi veya Raporlama sekmesine girildiğinde yüklensin
+      if ((tab === 'sales' || tab === 'reports') && !salesDataLoaded) {
+        loadSales();
+      }
     }
 
     // Tab butonlarını güncelle
@@ -2385,7 +2423,7 @@
       }
     }
 
-    // Tarih filtresine göre satışları filtrele
+    // Tarih filtresine göre satışları filtrele - 00:00-03:00 arası satışlar için iş günü hesapla
     function filterSalesByDate(sales) {
       const businessDay = getBusinessDayDate();
       const now = new Date();
@@ -2394,11 +2432,12 @@
       if (reportDateFilter === 'yesterday') {
         const yesterday = new Date(businessDay);
         yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toLocaleDateString('tr-TR');
+        const yesterdayStr = normalizeDateString(yesterday);
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-          return sale.sale_date === yesterdayStr;
+          const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+          return saleBusinessDay === yesterdayStr;
         });
       } else if (reportDateFilter === 'week') {
         const weekAgo = new Date(businessDay);
@@ -2406,7 +2445,8 @@
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-          const [day, month, year] = sale.sale_date.split('.');
+          const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+          const [day, month, year] = saleBusinessDay.split('.');
           if (!day || !month || !year) return false;
           const saleDate = new Date(year, month - 1, day);
           const weekAgoDate = new Date(weekAgo);
@@ -2422,7 +2462,8 @@
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-          const [day, month, year] = sale.sale_date.split('.');
+          const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+          const [day, month, year] = saleBusinessDay.split('.');
           if (!day || !month || !year) return false;
           const saleDate = new Date(year, month - 1, day);
           const monthAgoDate = new Date(monthAgo);
@@ -2440,7 +2481,8 @@
         
         return sales.filter(sale => {
           if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-          const [day, month, year] = sale.sale_date.split('.');
+          const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+          const [day, month, year] = saleBusinessDay.split('.');
           if (!day || !month || !year) return false;
           const saleDate = new Date(year, month - 1, day);
           saleDate.setHours(0, 0, 0, 0);
@@ -2663,65 +2705,6 @@
       if (overlay) overlay.style.display = 'none';
     }
 
-    function closeExpenseDetailModal() {
-      const overlay = document.getElementById('expenseDetailOverlay');
-      if (overlay) overlay.style.display = 'none';
-    }
-
-    function openExpenseDetailModal() {
-      const data = window._lastPeriodExpenseData;
-      const overlay = document.getElementById('expenseDetailOverlay');
-      const periodEl = document.getElementById('expenseDetailPeriodInfo');
-      const bodyEl = document.getElementById('expenseDetailBody');
-      const totalEl = document.getElementById('expenseDetailTotal');
-      if (!overlay || !bodyEl || !totalEl) return;
-
-      if (!data || !data.periodExpenses || !Array.isArray(data.periodExpenses)) {
-        if (periodEl) periodEl.textContent = '';
-        bodyEl.innerHTML = '<p style="color:#64748b;font-weight:600;">Seçilen zaman diliminde masraf kaydı yok.</p>';
-        totalEl.textContent = '₺0.00';
-        overlay.style.display = 'flex';
-        overlay.style.alignItems = 'center';
-        overlay.style.justifyContent = 'center';
-        return;
-      }
-
-      const periodInfo = data.periodInfo || 'Seçilen zaman dilimi';
-      if (periodEl) periodEl.textContent = periodInfo;
-
-      var byTitle = {};
-      data.periodExpenses.forEach(function(sale) {
-        var title = (sale.items_array && sale.items_array[0] && sale.items_array[0].product_name)
-          ? sale.items_array[0].product_name
-          : (sale.itemsText || sale.items || 'Masraf');
-        if (!byTitle[title]) byTitle[title] = { total: 0, items: [] };
-        var amt = parseFloat(sale.total_amount || 0);
-        byTitle[title].total += amt;
-        byTitle[title].items.push({ amount: amt, date: sale.sale_date || '', time: sale.sale_time || '' });
-      });
-
-      var totalExpense = 0;
-      var html = '';
-      Object.keys(byTitle).sort().forEach(function(title) {
-        var g = byTitle[title];
-        totalExpense += g.total;
-        html += '<div style="margin-bottom:20px;padding:16px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;">';
-        html += '<div style="font-weight:800;font-size:15px;color:#0f172a;margin-bottom:8px;">' + (title.replace(/</g,'&lt;')) + '</div>';
-        html += '<div style="font-size:13px;color:#64748b;margin-bottom:6px;">' + g.items.length + ' kayıt • Toplam <span style="font-weight:700;color:#dc2626;">₺' + g.total.toFixed(2) + '</span></div>';
-        html += '<ul style="margin:0;padding-left:18px;font-size:12px;color:#475569;">';
-        g.items.forEach(function(it) {
-          html += '<li>₺' + it.amount.toFixed(2) + (it.date ? ' • ' + it.date + (it.time ? ' ' + it.time : '') : '') + '</li>';
-        });
-        html += '</ul></div>';
-      });
-      bodyEl.innerHTML = html || '<p style="color:#64748b;">Kayıt yok.</p>';
-      totalEl.textContent = '₺' + totalExpense.toFixed(2);
-
-      overlay.style.display = 'flex';
-      overlay.style.alignItems = 'center';
-      overlay.style.justifyContent = 'center';
-    }
-
     function formatMoneyTR(amount) {
       const n = Number(amount || 0);
       return '₺' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
@@ -2922,6 +2905,15 @@
       renderReports();
     }
 
+    function setReportBranchFilter(branch) {
+      reportBranchFilter = branch;
+      document.querySelectorAll('.report-branch-opt').forEach(btn => {
+        btn.classList.toggle('active', (btn.getAttribute('data-branch') || '') === branch);
+      });
+      updateStats(allSales);
+      if (activeTab === 'reports') renderReports();
+    }
+
     // Tarih filtresi modal'ını aç/kapa
     function toggleDateFilterModal(event) {
       if (event) {
@@ -2952,11 +2944,14 @@
       const modal = document.getElementById('dailyRevenueModal');
       if (!modal) return;
 
-      // Seçilen zaman dilimindeki satışları al
+      // Seçilen zaman dilimindeki satışları al (şube filtresi uygula)
       let reportSales = allSales.filter(sale => 
         !sale.isExpense && sale.payment_method !== 'Masraf'
       );
       reportSales = filterSalesByDate(reportSales);
+      if (isGeceDonercisi && reportBranchFilter !== 'all') {
+        reportSales = reportSales.filter(s => s.branch === reportBranchFilter);
+      }
 
       // Günlere göre grupla
       const dailyStats = {};
@@ -2972,9 +2967,11 @@
       let modalTotal = 0;
       
       reportSales.forEach(sale => {
-        const saleRevenue = parseFloat(sale.total_amount || 0);
+        const saleRevenue = calculateSaleRevenue(sale);
         modalTotal += saleRevenue; // Tüm satışları topla
-        const saleDate = sale.sale_date;
+        // İŞ GÜNÜ hesapla (00:00-03:00 arası satışlar önceki güne ait)
+        const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+        const saleDate = saleBusinessDay || sale.sale_date;
         
         // Ödeme yöntemine göre dağıt
         const paymentMethod = sale.payment_method || '';
@@ -3039,7 +3036,7 @@
       }
       
       // Toplam kontrolü: Modal'daki toplam ile ana karttaki toplamı karşılaştır
-      const mainCardTotal = reportSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+      const mainCardTotal = reportSales.reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
 
       // Modal içeriğini oluştur
       const modalContent = document.getElementById('dailyRevenueModalContent');
@@ -3176,23 +3173,18 @@
       const tableStats = {};
       
       // Tüm masaları al (iç ve dış masalar, paketler hariç)
-      if (isLacromisa) {
-        for (let i = 1; i <= insideTablesCount; i++) {
-          const tableId = 'inside-' + i;
-          const tableName = 'İçeri ' + i;
-          tableStats[tableId] = { tableName, tableNumber: i, totalSales: 0, totalRevenue: 0, products: {} };
-        }
-        for (let i = 1; i <= outsideTablesCount; i++) {
-          const tableId = 'outside-' + i;
-          const tableName = 'Dışarı ' + i;
-          tableStats[tableId] = { tableName, tableNumber: i, totalSales: 0, totalRevenue: 0, products: {} };
-        }
-      } else {
-        for (let i = 1; i <= (insideTablesCount + outsideTablesCount); i++) {
-          const tableId = 'masa-' + i;
-          const tableName = 'Masa ' + i;
-          tableStats[tableId] = { tableName, tableNumber: i, totalSales: 0, totalRevenue: 0, products: {} };
-        }
+      for (let i = 1; i <= (insideTablesCount + outsideTablesCount); i++) {
+        const tableId = 'masa-' + i;
+        const tableName = 'Masa ' + i;
+        
+        // Başlangıç değerleri
+        tableStats[tableId] = {
+          tableName: tableName,
+          tableNumber: i,
+          totalSales: 0,
+          totalRevenue: 0,
+          products: {} // Ürün bazlı sayılar
+        };
       }
       
       console.log('📊 [generateTablesReportHTML] Toplam satış sayısı:', reportSales.length);
@@ -3220,9 +3212,7 @@
         
         // Önce table_id kontrolü
         if (tableId) {
-          if (tableId.startsWith('inside-') || tableId.startsWith('outside-')) {
-            matchedTable = tableId;
-          } else if (tableId.startsWith('masa-')) {
+          if (tableId.startsWith('masa-')) {
             matchedTable = tableId;
           } else if (tableId.startsWith('Masa')) {
             // "Masa 1" formatından numara çıkar
@@ -3230,29 +3220,15 @@
             if (match) {
               matchedTable = 'masa-' + match[1];
             }
-          } else if (tableId.toLowerCase().startsWith('içeri') || tableId.toLowerCase().startsWith('iceri')) {
-            const match = tableId.match(/(?:içeri|iceri)\s*-?\s*(\d+)/i);
-            if (match) matchedTable = 'inside-' + match[1];
-          } else if (tableId.toLowerCase().startsWith('dışarı') || tableId.toLowerCase().startsWith('disari')) {
-            const match = tableId.match(/(?:dışarı|disari)\s*-?\s*(\d+)/i);
-            if (match) matchedTable = 'outside-' + match[1];
           }
         }
         
         // table_id yoksa table_name kontrolü
         if (!matchedTable && tableName) {
           // "Masa 1", "Masa1", "masa-1" gibi formatları kontrol et
-          const matchMasa = tableName.match(/(?:masa|Masa)[\s-]*(\d+)/i);
-          if (matchMasa) {
-            matchedTable = 'masa-' + matchMasa[1];
-          }
-          if (!matchedTable) {
-            const matchInside = tableName.match(/(?:içeri|iceri)[\s-]*(\d+)/i);
-            if (matchInside) matchedTable = 'inside-' + matchInside[1];
-          }
-          if (!matchedTable) {
-            const matchOutside = tableName.match(/(?:dışarı|disari)[\s-]*(\d+)/i);
-            if (matchOutside) matchedTable = 'outside-' + matchOutside[1];
+          const match = tableName.match(/(?:masa|Masa)[\s-]*(\d+)/i);
+          if (match) {
+            matchedTable = 'masa-' + match[1];
           }
         }
         
@@ -3409,8 +3385,17 @@
       `;
     }
 
-    // Satış cirosunu hesapla - HER ZAMAN total_amount kullan (Satış Geçmişi ile tutarlı)
+    // Satış cirosunu hesapla (items_array'den gerçek fiyatlar, ikram edilenler hariç)
     function calculateSaleRevenue(sale) {
+      if (sale.items_array && Array.isArray(sale.items_array) && sale.items_array.length > 0) {
+        return sale.items_array.reduce((itemSum, item) => {
+          if (item.isExpense || item.isGift) return itemSum;
+          const price = parseFloat(item.price || 0);
+          const quantity = item.quantity || 1;
+          return itemSum + (price * quantity);
+        }, 0);
+      }
+      // Eski veriler için fallback: total_amount kullan
       return parseFloat(sale.total_amount || 0);
     }
 
@@ -3427,7 +3412,7 @@
         );
         
         // Günlük ciroyu hesapla
-        const totalRevenue = daySales.reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+        const totalRevenue = daySales.reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
         
         // Ödeme yöntemlerine göre dağıt
         const onlineSales = daySales.filter(s => 
@@ -3452,9 +3437,9 @@
             !s.isExpense;
         });
         
-        const cashTotal = cashSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
-        const cardTotal = cardSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
-        const onlineTotal = onlineSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+        const cashTotal = cashSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        const cardTotal = cardSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
+        const onlineTotal = onlineSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
         
         // Firebase'de kaydet
         const dailyRevenuesRef = db.collection('daily_revenues');
@@ -3498,6 +3483,9 @@
       );
       
       reportSales = filterSalesByDate(reportSales);
+      if (isGeceDonercisi && reportBranchFilter !== 'all') {
+        reportSales = reportSales.filter(s => s.branch === reportBranchFilter);
+      }
 
       if (reportSales.length === 0) {
         container.innerHTML = `
@@ -3601,80 +3589,21 @@
           paymentMethods[sale.payment_method] = { count: 0, total: 0 };
         }
         paymentMethods[sale.payment_method].count++;
-        // total_amount kullanarak hesaplama yap
-        paymentMethods[sale.payment_method].total += parseFloat(sale.total_amount || 0);
+        // calculateSaleRevenue kullanarak tutarlı hesaplama yap
+        paymentMethods[sale.payment_method].total += calculateSaleRevenue(sale);
       });
 
-      // Toplam ciroyu hesapla - Günlük ciroları Firebase'den yükle ve topla
-      let totalRevenue = 0;
-      
-      // Eğer seçilen zaman dilimi 'all' değilse, günlük ciroları Firebase'den yükle ve topla
-      if (reportDateFilter !== 'all' && db) {
-        try {
-          const dailyRevenuesRef = db.collection('daily_revenues');
-          let startDate, endDate;
-          const businessDay = getBusinessDayDate();
-          
-          if (reportDateFilter === 'yesterday') {
-            const yesterday = new Date(businessDay);
-            yesterday.setDate(yesterday.getDate() - 1);
-            startDate = yesterday.toLocaleDateString('tr-TR');
-            endDate = yesterday.toLocaleDateString('tr-TR');
-          } else if (reportDateFilter === 'week') {
-            const weekAgo = new Date(businessDay);
-            weekAgo.setDate(weekAgo.getDate() - 7);
-            startDate = weekAgo.toLocaleDateString('tr-TR');
-            endDate = businessDay.toLocaleDateString('tr-TR');
-          } else if (reportDateFilter === 'month') {
-            const monthAgo = new Date(businessDay);
-            monthAgo.setMonth(monthAgo.getMonth() - 1);
-            startDate = monthAgo.toLocaleDateString('tr-TR');
-            endDate = businessDay.toLocaleDateString('tr-TR');
-          } else if (reportDateFilter === 'custom' && customDateRange.start && customDateRange.end) {
-            startDate = customDateRange.start.toLocaleDateString('tr-TR');
-            endDate = customDateRange.end.toLocaleDateString('tr-TR');
-          }
-          
-          if (startDate && endDate) {
-            // Tarih aralığındaki günlük ciroları yükle
-            const [startDay, startMonth, startYear] = startDate.split('.');
-            const [endDay, endMonth, endYear] = endDate.split('.');
-            const startDateObj = new Date(startYear, startMonth - 1, startDay);
-            const endDateObj = new Date(endYear, endMonth - 1, endDay);
-            
-            // Tüm günleri döngüye al ve günlük ciroları topla
-            const currentDate = new Date(startDateObj);
-            while (currentDate <= endDateObj) {
-              const dateStr = currentDate.toLocaleDateString('tr-TR');
-              const dailyRevenueDoc = await dailyRevenuesRef.doc(dateStr).get();
-              
-              if (dailyRevenueDoc.exists) {
-                const data = dailyRevenueDoc.data();
-                totalRevenue += parseFloat(data.total_revenue || 0);
-              }
-              
-              currentDate.setDate(currentDate.getDate() + 1);
-            }
-            
-          }
-        } catch (error) {
-          // Günlük cirolar yüklenemedi, satışlardan hesapla
-          // Fallback: Satışlardan hesapla
-          totalRevenue = reportSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
-        }
-      } else {
-        // 'all' veya Firebase yoksa, satışlardan hesapla
-        totalRevenue = reportSales.reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
-      }
+      // Toplam ciroyu her zaman seçilen dönemdeki satışlardan hesapla (dün / hafta / ay / özel tarih tutarlı görünsün)
+      const totalRevenue = reportSales.reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
 
-      // Trendyol / Yemeksepeti / Migros Yemek cirolarını hesapla (total_amount'tan)
+      // Trendyol / Yemeksepeti / Migros Yemek cirolarını hesapla (items_array'den gerçek fiyatlar)
       const trendyolRevenue = reportSales
         .filter(sale => sale.order_source === 'Trendyol')
-        .reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+        .reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
       
       const yemeksepetiRevenue = reportSales
         .filter(sale => sale.order_source === 'Yemeksepeti')
-        .reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+        .reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
 
       const migrosYemekRevenue = reportSales
         .filter(sale => {
@@ -3684,7 +3613,7 @@
             .trim();
           return src === 'migros yemek' || src === 'migrosyemek' || src === 'migros';
         })
-        .reduce((sum, sale) => sum + parseFloat(sale.total_amount || 0), 0);
+        .reduce((sum, sale) => sum + calculateSaleRevenue(sale), 0);
 
       // Görsellerin path'lerini dinamik olarak oluştur
       // Firebase Hosting veya localhost için doğru path'i oluştur
@@ -3743,7 +3672,9 @@
       } else {
         periodInfo = 'Tüm Zamanlar';
       }
-      window._lastPeriodExpenseData = { periodExpenses, periodInfo };
+      if (isGeceDonercisi && reportBranchFilter !== 'all') {
+        periodInfo += ` • ${reportBranchFilter === 'SEKER' ? 'ŞEKER' : reportBranchFilter}`;
+      }
 
       let html = `
         <div class="reports-container">
@@ -3838,7 +3769,7 @@
               </div>
             </div>
             <div class="period-expense-stack">
-              <div class="period-expense-card" onclick="openExpenseDetailModal()" style="cursor: pointer;">
+              <div class="period-expense-card">
                 <div class="period-card-background"></div>
                 <div class="period-card-icon">
                   <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -4799,63 +4730,58 @@
       return chartHTML + tableHTML;
     }
 
-    // Tüm masaları render et (helper function)
-    function renderAllTables(allStaticTables) {
+    // Tüm masaları render et (helper function). Gece Dönercisi'nde data = allStaticTablesByBranch { SEKER, SANCAK }
+    function renderAllTables(data) {
       const container = document.getElementById('tablesContainer');
       if (!container || activeTab !== 'tables') {
         return;
       }
+      const tablesForNonGece = data;
+      const byBranch = isGeceDonercisi && data && data.SEKER && data.SANCAK ? data : null;
 
-      // Gece Dönercisi: Salon ve Bahçe ayrı bölümler; diğer tenant'lar: tek Masalar listesi
+      // Gece Dönercisi: Şeker ve Sancak şubeleri ayrı veri (her şube kendi masaları)
       let html = '';
       if (isGeceDonercisi) {
-        const salonTables = Object.values(allStaticTables)
-          .filter(t => t.table_id.startsWith('salon-'))
-          .sort((a, b) => a.table_number - b.table_number);
-        const bahceTables = Object.values(allStaticTables)
-          .filter(t => t.table_id.startsWith('bahce-'))
-          .sort((a, b) => a.table_number - b.table_number);
-        html = `
-        <div class="tables-container">
+        const tablesSeker = byBranch ? byBranch.SEKER : data;
+        const tablesSancak = byBranch ? byBranch.SANCAK : data;
+        const toSalonBahce = (tables) => {
+          const salonTables = Object.values(tables)
+            .filter(t => t.table_id.startsWith('salon-'))
+            .sort((a, b) => a.table_number - b.table_number);
+          const bahceTables = Object.values(tables)
+            .filter(t => t.table_id.startsWith('bahce-'))
+            .sort((a, b) => a.table_number - b.table_number);
+          return { salonTables, bahceTables };
+        };
+        const seker = toSalonBahce(tablesSeker);
+        const sancak = toSalonBahce(tablesSancak);
+        const renderSalonBahce = (salonList, bahceList) => `
           <div class="tables-section">
             <h2 class="section-title">🪑 Salon</h2>
             <div class="tables-grid">
-              ${salonTables.map(table => renderTableCard(table)).join('')}
+              ${salonList.map(table => renderTableCard(table)).join('')}
             </div>
           </div>
           <div class="tables-section">
             <h2 class="section-title">🌿 Bahçe</h2>
             <div class="tables-grid">
-              ${bahceTables.map(table => renderTableCard(table)).join('')}
+              ${bahceList.map(table => renderTableCard(table)).join('')}
             </div>
-          </div>
-        </div>
-        `;
-      } else if (isLacromisa) {
-        const insideTables = Object.values(allStaticTables)
-          .filter(t => t.table_id.startsWith('inside-'))
-          .sort((a, b) => a.table_number - b.table_number);
-        const outsideTables = Object.values(allStaticTables)
-          .filter(t => t.table_id.startsWith('outside-'))
-          .sort((a, b) => a.table_number - b.table_number);
+          </div>`;
         html = `
         <div class="tables-container">
-          <div class="tables-section">
-            <h2 class="section-title">🏠 İçeri</h2>
-            <div class="tables-grid">
-              ${insideTables.map(table => renderTableCard(table)).join('')}
-            </div>
+          <div class="tables-branch-block">
+            <h2 class="branch-section-title">🍬 Şeker Şubesi</h2>
+            ${renderSalonBahce(seker.salonTables, seker.bahceTables)}
           </div>
-          <div class="tables-section">
-            <h2 class="section-title">🌳 Dışarı</h2>
-            <div class="tables-grid">
-              ${outsideTables.map(table => renderTableCard(table)).join('')}
-            </div>
+          <div class="tables-branch-block">
+            <h2 class="branch-section-title">🚩 Sancak Şubesi</h2>
+            ${renderSalonBahce(sancak.salonTables, sancak.bahceTables)}
           </div>
         </div>
         `;
       } else {
-        const tables = Object.values(allStaticTables)
+        const tables = Object.values(tablesForNonGece)
           .filter(table => table.table_id.startsWith('masa-'))
           .sort((a, b) => a.table_number - b.table_number);
         html = `
@@ -4894,23 +4820,26 @@
         </div>
       `;
 
-      // Yeni Firebase'den masaları dinle (makaramasalar)
-      if (!tablesDb) {
-        console.warn('⚠️ tablesDb bulunamadı - sadece statik masalar gösterilecek');
-        // Firebase olmasa bile tüm masaları göster (dinamik)
+      // Gece Dönercisi: masalar gecedonercisimasalar (geceMasalarDb); diğer tenant: tablesDb
+      const tablesDbToUse = isGeceDonercisi && geceMasalarDb ? geceMasalarDb : tablesDb;
+      if (!tablesDbToUse) {
+        console.warn('⚠️ Masalar için veritabanı yok - sadece statik masalar gösterilecek');
         allStaticTables = {};
         if (isGeceDonercisi) {
+          const geceBase = {};
           for (let i = 1; i <= 30; i++) {
-            allStaticTables[`salon-${i}`] = { table_id: `salon-${i}`, table_name: `Salon ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-            allStaticTables[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+            const salonName = i === 1 ? 'LOCA' : `Salon ${i}`;
+            geceBase[`salon-${i}`] = { table_id: `salon-${i}`, table_name: salonName, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+            geceBase[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
           }
-        } else if (isLacromisa) {
-          for (let i = 1; i <= insideTablesCount; i++) {
-            allStaticTables[`inside-${i}`] = { table_id: `inside-${i}`, table_name: `İçeri ${i}`, table_type: 'inside', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-          }
-          for (let i = 1; i <= outsideTablesCount; i++) {
-            allStaticTables[`outside-${i}`] = { table_id: `outside-${i}`, table_name: `Dışarı ${i}`, table_type: 'outside', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-          }
+          allStaticTables = Object.assign({}, geceBase);
+          allStaticTablesByBranch.SEKER = {}; allStaticTablesByBranch.SANCAK = {};
+          Object.keys(geceBase).forEach(k => {
+            allStaticTablesByBranch.SEKER[k] = { ...geceBase[k] };
+            allStaticTablesByBranch.SANCAK[k] = { ...geceBase[k] };
+          });
+          if (allStaticTablesByBranch.SANCAK['salon-1']) allStaticTablesByBranch.SANCAK['salon-1'].table_name = 'Salon 1';
+          renderAllTables(allStaticTablesByBranch);
         } else {
           const totalTablesCount = insideTablesCount + outsideTablesCount;
           for (let i = 1; i <= totalTablesCount; i++) {
@@ -4919,14 +4848,12 @@
           for (let i = 1; i <= packageTablesCount; i++) {
             allStaticTables[`paket-${i}`] = { table_id: `paket-${i}`, table_name: `Paket ${i}`, table_type: 'package', table_number: i, is_occupied: false, total_amount: 0, items: [] };
           }
+          renderAllTables(allStaticTables);
         }
-        renderAllTables(allStaticTables);
-        // Aktif masa sayısını güncelle
         updateActiveTablesCount(calculateActiveTablesCount());
         return;
       }
-
-      console.log('✅ tablesDb mevcut, masalar dinleniyor...');
+      console.log('✅ Masalar dinleniyor:', isGeceDonercisi ? 'geceMasalarDb (gecedonercisimasalar)' : 'tablesDb');
 
       // Önceki listener'ı temizle
       if (tablesUnsubscribe) {
@@ -4943,17 +4870,21 @@
       // TÜM masaları statik olarak oluştur (masaüstü uygulamasındaki gibi)
       allStaticTables = {};
       if (isGeceDonercisi) {
+        const geceBase = {};
         for (let i = 1; i <= 30; i++) {
-          allStaticTables[`salon-${i}`] = { table_id: `salon-${i}`, table_name: `Salon ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-          allStaticTables[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          const salonName = i === 1 ? 'LOCA' : `Salon ${i}`;
+          geceBase[`salon-${i}`] = { table_id: `salon-${i}`, table_name: salonName, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
+          geceBase[`bahce-${i}`] = { table_id: `bahce-${i}`, table_name: `Bahçe ${i}`, table_type: 'table', table_number: i, is_occupied: false, total_amount: 0, items: [] };
         }
-      } else if (isLacromisa) {
-        for (let i = 1; i <= insideTablesCount; i++) {
-          allStaticTables[`inside-${i}`] = { table_id: `inside-${i}`, table_name: `İçeri ${i}`, table_type: 'inside', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-        }
-        for (let i = 1; i <= outsideTablesCount; i++) {
-          allStaticTables[`outside-${i}`] = { table_id: `outside-${i}`, table_name: `Dışarı ${i}`, table_type: 'outside', table_number: i, is_occupied: false, total_amount: 0, items: [] };
-        }
+        allStaticTables = Object.assign({}, geceBase);
+        allStaticTablesByBranch.SEKER = {};
+        allStaticTablesByBranch.SANCAK = {};
+        Object.keys(geceBase).forEach(k => {
+          allStaticTablesByBranch.SEKER[k] = { ...geceBase[k] };
+          allStaticTablesByBranch.SANCAK[k] = { ...geceBase[k] };
+        });
+        // LOCA sadece Şeker şubesinde; Sancak'ta salon-1 = Salon 1
+        if (allStaticTablesByBranch.SANCAK['salon-1']) allStaticTablesByBranch.SANCAK['salon-1'].table_name = 'Salon 1';
       } else {
         for (let i = 1; i <= totalTablesCount; i++) {
           const tableId = `masa-${i}`;
@@ -4970,53 +4901,52 @@
       }
 
       // İlk render - tüm masaları göster (Firebase verisi olmasa bile)
-      renderAllTables(allStaticTables);
+      renderAllTables(isGeceDonercisi ? allStaticTablesByBranch : allStaticTables);
       
       // Aktif masa sayısını güncelle
       updateActiveTablesCount(calculateActiveTablesCount());
 
-      const tablesRef = tablesDb.collection('tables');
-      console.log('📡 Firebase collection dinleniyor: tables');
+      const tablesRef = tablesDbToUse.collection('tables');
+      console.log('📡 Firebase collection dinleniyor: tables', isGeceDonercisi ? '(gecedonercisimasalar)' : '');
       
       tablesUnsubscribe = tablesRef.onSnapshot((snapshot) => {
         console.log(`📊 Masalar snapshot alındı: ${snapshot.size} Firebase verisi bulundu`);
 
-        // Firebase'den gelen verileri statik masalarla birleştir
-        snapshot.forEach((doc) => {
-          const firebaseData = doc.data();
-          const tableId = firebaseData.table_id || doc.id;
-          
-          if (allStaticTables[tableId]) {
-            // Firebase'den gelen verileri statik masaya ekle
-            allStaticTables[tableId].is_occupied = firebaseData.is_occupied === true || 
-                                                   firebaseData.is_occupied === 'true' || 
-                                                   firebaseData.is_occupied === 1 ||
-                                                   (firebaseData.items && Array.isArray(firebaseData.items) && firebaseData.items.length > 0);
-            allStaticTables[tableId].total_amount = parseFloat(firebaseData.total_amount || 0);
-            allStaticTables[tableId].items = Array.isArray(firebaseData.items) ? firebaseData.items : [];
-            allStaticTables[tableId].order_id = firebaseData.order_id || null;
-            allStaticTables[tableId].order_date = firebaseData.order_date || null;
-            allStaticTables[tableId].order_time = firebaseData.order_time || null;
-            allStaticTables[tableId].order_note = firebaseData.order_note || null;
-            // Firebase'den gelen table_name ve table_type'ı da güncelle
-            if (firebaseData.table_name) {
-              allStaticTables[tableId].table_name = firebaseData.table_name;
-            }
-            if (firebaseData.table_type) {
-              allStaticTables[tableId].table_type = firebaseData.table_type;
-            }
-            console.log(`✅ Masa güncellendi: ${tableId} - Dolu: ${allStaticTables[tableId].is_occupied}, Tutar: ${allStaticTables[tableId].total_amount}`);
+        if (isGeceDonercisi) {
+          ['SEKER', 'SANCAK'].forEach(b => {
+            Object.keys(allStaticTablesByBranch[b]).forEach(tid => {
+              allStaticTablesByBranch[b][tid].is_occupied = false;
+              allStaticTablesByBranch[b][tid].items = [];
+              allStaticTablesByBranch[b][tid].total_amount = 0;
+              allStaticTablesByBranch[b][tid].order_id = null;
+              allStaticTablesByBranch[b][tid].order_date = null;
+              allStaticTablesByBranch[b][tid].order_time = null;
+              allStaticTablesByBranch[b][tid].order_note = null;
+            });
+          });
+        }
+
+        // Firebase'den gelen verileri statik masalarla birleştir (Gece: doc id SEKER_salon-4 / SANCAK_salon-4)
+        function applyTableData(target, tableId, firebaseData) {
+          const isOccupied = firebaseData.is_occupied === true || firebaseData.is_occupied === 'true' || firebaseData.is_occupied === 1 ||
+            (firebaseData.items && Array.isArray(firebaseData.items) && firebaseData.items.length > 0);
+          if (target[tableId]) {
+            target[tableId].is_occupied = isOccupied;
+            target[tableId].total_amount = parseFloat(firebaseData.total_amount || 0);
+            target[tableId].items = Array.isArray(firebaseData.items) ? firebaseData.items : [];
+            target[tableId].order_id = firebaseData.order_id || null;
+            target[tableId].order_date = firebaseData.order_date || null;
+            target[tableId].order_time = firebaseData.order_time || null;
+            target[tableId].order_note = firebaseData.order_note || null;
+            if (firebaseData.table_name) target[tableId].table_name = firebaseData.table_name;
+            if (firebaseData.table_type) target[tableId].table_type = firebaseData.table_type;
           } else {
-            // Firebase'de var ama statik listede yok - yeni masa ekle (dinamik)
-            allStaticTables[tableId] = {
+            target[tableId] = {
               table_id: tableId,
               table_name: firebaseData.table_name || tableId,
               table_type: firebaseData.table_type || 'table',
-              table_number: firebaseData.table_number || parseInt(tableId.replace(/\D/g, '')) || 0,
-              is_occupied: firebaseData.is_occupied === true || 
-                          firebaseData.is_occupied === 'true' || 
-                          firebaseData.is_occupied === 1 ||
-                          (firebaseData.items && Array.isArray(firebaseData.items) && firebaseData.items.length > 0),
+              table_number: firebaseData.table_number || parseInt(String(tableId).replace(/\D/g, '')) || 0,
+              is_occupied: isOccupied,
               total_amount: parseFloat(firebaseData.total_amount || 0),
               items: Array.isArray(firebaseData.items) ? firebaseData.items : [],
               order_id: firebaseData.order_id || null,
@@ -5024,10 +4954,39 @@
               order_time: firebaseData.order_time || null,
               order_note: firebaseData.order_note || null
             };
-            console.log(`➕ Yeni masa eklendi: ${tableId}`);
+          }
+        }
+        snapshot.forEach((doc) => {
+          const firebaseData = doc.data();
+          const docId = doc.id;
+          let tableId = firebaseData.table_id || docId;
+          if (isGeceDonercisi) {
+            if (docId.startsWith('SEKER_')) {
+              tableId = docId.slice(6);
+              applyTableData(allStaticTablesByBranch.SEKER, tableId, firebaseData);
+            } else if (docId.startsWith('SANCAK_')) {
+              tableId = docId.slice(7);
+              applyTableData(allStaticTablesByBranch.SANCAK, tableId, firebaseData);
+            } else {
+              // Prefix yok: cihazdaki branch alanına göre yönlendir (SEKER/SANCAK veya #Şeker/#Sancak)
+              const br = firebaseData.branch;
+              const isSeker = br === 'SEKER' || br === '#Şeker' || br === 'Şeker';
+              const isSancak = br === 'SANCAK' || br === '#Sancak' || br === 'Sancak';
+              if (isSeker) applyTableData(allStaticTablesByBranch.SEKER, tableId, firebaseData);
+              else if (isSancak) applyTableData(allStaticTablesByBranch.SANCAK, tableId, firebaseData);
+            }
+          } else {
+            applyTableData(allStaticTables, tableId, firebaseData);
           }
         });
-        
+        if (isGeceDonercisi) {
+          const allIds = new Set([...Object.keys(allStaticTablesByBranch.SEKER), ...Object.keys(allStaticTablesByBranch.SANCAK)]);
+          allIds.forEach(tid => {
+            allStaticTables[tid] = allStaticTables[tid] || {};
+            allStaticTables[tid].is_occupied = (allStaticTablesByBranch.SEKER[tid] && allStaticTablesByBranch.SEKER[tid].is_occupied) ||
+              (allStaticTablesByBranch.SANCAK[tid] && allStaticTablesByBranch.SANCAK[tid].is_occupied);
+          });
+        }
         // Aktif masa sayısını her zaman güncelle (masalar sekmesinde olmasak bile)
         updateActiveTablesCount(calculateActiveTablesCount());
 
@@ -5044,7 +5003,7 @@
           }
 
           // Tüm masaları render et
-          renderAllTables(allStaticTables);
+          renderAllTables(isGeceDonercisi ? allStaticTablesByBranch : allStaticTables);
         });
       }, (error) => {
         console.error('Masalar yüklenirken hata:', error);
@@ -5071,13 +5030,7 @@
       const items = Array.isArray(table.items) ? table.items : [];
       const itemsCount = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
       
-      const isTable =
-        table.table_type === 'table' ||
-        table.table_type === 'inside' ||
-        table.table_type === 'outside' ||
-        table.table_id.startsWith('masa-') ||
-        table.table_id.startsWith('inside-') ||
-        table.table_id.startsWith('outside-');
+      const isTable = table.table_type === 'table' || table.table_id.startsWith('masa-');
       const isPackage = table.table_type === 'package' || table.table_id.startsWith('paket-');
       
       // Renkleri belirle
@@ -5150,7 +5103,7 @@
 
       // Boş masalar için mevcut tasarım
       return `
-        <div class="table-card ${(!isOccupied && (table.table_id.startsWith('inside-') || table.table_id.startsWith('outside-'))) ? 'inside-empty' : ''}" style="background: ${bgColor}; border-color: ${borderColor};">
+        <div class="table-card" style="background: ${bgColor}; border-color: ${borderColor};">
           <div class="table-card-header">
             <div class="table-number" style="color: var(--text-main);">${table.table_number}</div>
             <div class="table-status" style="background: ${statusColor}20; color: ${statusColor};">
@@ -5254,10 +5207,6 @@
                   <span class="cancel-detail-value">${orderStaffName || 'Bilinmiyor'}</span>
                 </div>
               </div>
-              <div class="cancel-reason">
-                <div class="cancel-reason-label">İptal Açıklaması:</div>
-                <div class="cancel-reason-text">${cancel.cancel_reason || 'Açıklama yok'}</div>
-              </div>
             </div>
           `;
         });
@@ -5347,10 +5296,6 @@
                       <span class="cancel-detail-label">Sipariş Sorumlusu Garson:</span>
                       <span class="cancel-detail-value">${orderStaffName || 'Bilinmiyor'}</span>
                     </div>
-                  </div>
-                  <div class="cancel-reason">
-                    <div class="cancel-reason-label">İptal Açıklaması:</div>
-                    <div class="cancel-reason-text">${cancel.cancel_reason || 'Açıklama yok'}</div>
                   </div>
                 </div>
               `;
@@ -5998,83 +5943,127 @@
       }
     }
 
+    function openStaffDetailModal(staffName) {
+      const stats = window._staffStatsForDetail && window._staffStatsForDetail[staffName];
+      const modalEl = document.getElementById('staffDetailModal');
+      if (!modalEl || !stats) return;
+      const productEntries = Object.entries(stats.products || {})
+        .map(([name, data]) => ({ name, count: typeof data === 'object' ? (data.count || 0) : data, revenue: typeof data === 'object' ? (data.revenue || 0) : 0 }))
+        .sort((a, b) => b.revenue - a.revenue);
+      const rows = productEntries.map(p => `
+        <tr class="staff-detail-row">
+          <td class="staff-detail-product">${(p.name || '').replace(/</g, '&lt;')}</td>
+          <td class="staff-detail-count">${Math.round(Number(p.count) || 0)}</td>
+          <td class="staff-detail-revenue">₺${(p.revenue || 0).toFixed(2)}</td>
+        </tr>
+      `).join('');
+      modalEl.innerHTML = `
+        <div class="staff-detail-overlay" onclick="closeStaffDetailModal()"></div>
+        <div class="staff-detail-panel">
+          <div class="staff-detail-header">
+            <h2 class="staff-detail-title">${(staffName || '').replace(/</g, '&lt;')}</h2>
+            <button type="button" class="staff-detail-close" onclick="closeStaffDetailModal()" aria-label="Kapat">×</button>
+          </div>
+          <div class="staff-detail-summary">
+            <div class="staff-detail-sum-item"><span class="staff-detail-sum-label">Ciro</span><span class="staff-detail-sum-value">₺${(stats.totalRevenue || 0).toFixed(2)}</span></div>
+            <div class="staff-detail-sum-item"><span class="staff-detail-sum-label">Satış</span><span class="staff-detail-sum-value">${stats.totalSales || 0}</span></div>
+            <div class="staff-detail-sum-item"><span class="staff-detail-sum-label">Ürün</span><span class="staff-detail-sum-value">${Math.round(stats.totalItemsSold || 0)}</span></div>
+          </div>
+          <div class="staff-detail-table-wrap">
+            <table class="staff-detail-table">
+              <thead>
+                <tr><th>Ürün</th><th>Adet</th><th>Ciro</th></tr>
+              </thead>
+              <tbody>${rows || '<tr><td colspan="3" class="staff-detail-empty">Kayıt yok</td></tr>'}</tbody>
+            </table>
+          </div>
+          <div class="staff-detail-footer">
+            <button type="button" class="staff-detail-btn-back" onclick="closeStaffDetailModal()">Kapat</button>
+          </div>
+        </div>
+      `;
+      modalEl.classList.add('staff-detail-modal-open');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeStaffDetailModal() {
+      const modalEl = document.getElementById('staffDetailModal');
+      if (modalEl) { modalEl.classList.remove('staff-detail-modal-open'); modalEl.innerHTML = ''; }
+      document.body.style.overflow = '';
+    }
+
     function renderStaffDetails() {
       const container = document.getElementById('staffContainer');
       if (!container) return;
 
-      const reportSales = allSales.filter(sale => !sale.isExpense);
+      // Virgüllü "İsmail Şef, Derviş Yılmaz" gibi isimleri tek tek isimlere böl (kombinasyon yok, her personel ayrı)
+      function parseStaffNames(str) {
+        if (!str || typeof str !== 'string') return [];
+        return str.split(',').map(s => s.trim()).filter(Boolean);
+      }
+
+      let reportSales = allSales.filter(sale => !sale.isExpense);
+      reportSales = filterSalesByDate(reportSales);
       const staffStats = {};
       
+      function ensureStaff(name) {
+        if (!staffStats[name]) {
+          staffStats[name] = {
+            name: name,
+            totalRevenue: 0,
+            totalSales: 0,
+            products: {},
+            averageSale: 0,
+            totalItemsSold: 0,
+            totalGiftItems: 0
+          };
+        }
+      }
+
       reportSales.forEach(sale => {
         if (sale.items_array && Array.isArray(sale.items_array) && sale.items_array.length > 0) {
           const staffInThisSale = new Set();
           
           sale.items_array.forEach(item => {
-            const itemStaffName = item.staff_name || sale.staff_name;
+            const itemStaffRaw = item.staff_name || sale.staff_name;
+            if (!itemStaffRaw) return;
             
-            if (!itemStaffName) return;
+            const names = parseStaffNames(itemStaffRaw);
+            if (names.length === 0) return;
             
-            staffInThisSale.add(itemStaffName);
-            
-            if (!staffStats[itemStaffName]) {
-              staffStats[itemStaffName] = {
-                name: itemStaffName,
-                totalRevenue: 0,
-                totalSales: 0,
-                products: {},
-                averageSale: 0,
-                totalItemsSold: 0,
-                totalGiftItems: 0
-              };
-            }
-            
+            names.forEach(n => staffInThisSale.add(n));
             const productName = item.product_name;
             const quantity = item.quantity || 0;
             const price = parseFloat(item.price || 0);
             const isGift = item.isGift || false;
+            const revenue = !isGift ? price * quantity : 0;
+            const q = quantity / names.length;
+            const r = revenue / names.length;
             
-            if (!isGift) {
-              staffStats[itemStaffName].totalRevenue += (price * quantity);
-            }
-            
-            if (!staffStats[itemStaffName].products[productName]) {
-              staffStats[itemStaffName].products[productName] = {
-                count: 0,
-                revenue: 0
-              };
-            }
-            
-            staffStats[itemStaffName].products[productName].count += quantity;
-            if (!isGift) {
-              staffStats[itemStaffName].products[productName].revenue += (price * quantity);
-            }
-            
-            staffStats[itemStaffName].totalItemsSold += quantity;
-            if (isGift) {
-              staffStats[itemStaffName].totalGiftItems += quantity;
-            }
+            names.forEach(staffName => {
+              ensureStaff(staffName);
+              staffStats[staffName].totalRevenue += r;
+              if (!staffStats[staffName].products[productName]) {
+                staffStats[staffName].products[productName] = { count: 0, revenue: 0 };
+              }
+              staffStats[staffName].products[productName].count += q;
+              staffStats[staffName].products[productName].revenue += r;
+              staffStats[staffName].totalItemsSold += q;
+              if (isGift) staffStats[staffName].totalGiftItems += q;
+            });
           });
           
           staffInThisSale.forEach(staffName => {
-            if (staffStats[staffName]) {
-              staffStats[staffName].totalSales += 1;
-            }
+            if (staffStats[staffName]) staffStats[staffName].totalSales += 1;
           });
         } else if (sale.staff_name) {
-          if (!staffStats[sale.staff_name]) {
-            staffStats[sale.staff_name] = {
-              name: sale.staff_name,
-              totalRevenue: 0,
-              totalSales: 0,
-              products: {},
-              averageSale: 0,
-              totalItemsSold: 0,
-              totalGiftItems: 0
-            };
-          }
-          
-          staffStats[sale.staff_name].totalRevenue += parseFloat(sale.total_amount);
-          staffStats[sale.staff_name].totalSales += 1;
+          const names = parseStaffNames(sale.staff_name);
+          if (names.length === 0) return;
+          const amount = parseFloat(sale.total_amount) / names.length;
+          names.forEach(staffName => {
+            ensureStaff(staffName);
+            staffStats[staffName].totalRevenue += amount;
+            staffStats[staffName].totalSales += 1;
+          });
         }
       });
       
@@ -6084,91 +6073,349 @@
       });
       
       const sortedStaff = Object.values(staffStats).sort((a, b) => b.totalRevenue - a.totalRevenue);
-      
+      window._staffStatsForDetail = staffStats;
+
       if (sortedStaff.length === 0) {
         container.innerHTML = `
-          <div class="empty-state">
-            <div class="empty-icon">👥</div>
-            <h3>Personel satış verisi bulunamadı</h3>
-            <p>Henüz personel satış verisi yok</p>
+          <div class="staff-container staff-container--list">
+            <h2 class="staff-title">👥 Personel Detayları</h2>
+            <div class="empty-state">
+              <div class="empty-icon">👥</div>
+              <h3>Personel satış verisi bulunamadı</h3>
+              <p>Henüz personel satış verisi yok</p>
+            </div>
           </div>
         `;
         return;
       }
 
-      let html = `
-        <div class="staff-container">
-          <h2 class="staff-title">👥 Personel Detayları</h2>
-          <div class="staff-grid">
-            ${sortedStaff.map((staff, index) => {
-              const topProducts = Object.entries(staff.products)
-                .map(([name, data]) => [name, typeof data === 'object' ? data.count : data])
-                .sort(([, a], [, b]) => b - a)
-                .slice(0, 3);
-              
-              return `
-                <div class="staff-card">
-                  <div class="staff-header">
-                    <div class="staff-avatar ${index === 0 ? 'gold' : index === 1 ? 'silver' : index === 2 ? 'bronze' : ''}">
-                      ${index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '👤'}
-                    </div>
-                    <div class="staff-info">
-                      <h3 class="staff-name">${staff.name}</h3>
-                      <p class="staff-sales-count">${staff.totalSales} satış yaptı</p>
-                    </div>
-                  </div>
-                  
-                  <div class="staff-stats-grid">
-                    <div class="staff-stat-card green">
-                      <p class="staff-stat-label">Toplam Ciro</p>
-                      <p class="staff-stat-value">₺${staff.totalRevenue.toFixed(2)}</p>
-                    </div>
-                    <div class="staff-stat-card blue">
-                      <p class="staff-stat-label">Ortalama Satış</p>
-                      <p class="staff-stat-value">₺${staff.averageSale.toFixed(2)}</p>
-                    </div>
-                    <div class="staff-stat-card purple">
-                      <p class="staff-stat-label">Toplam Satış</p>
-                      <p class="staff-stat-value">${staff.totalSales}</p>
-                    </div>
-                    <div class="staff-stat-card orange">
-                      <p class="staff-stat-label">Toplam Ürün</p>
-                      <p class="staff-stat-value">${staff.totalItemsSold || 0}</p>
-                      ${staff.totalGiftItems > 0 ? `<p class="staff-stat-sub">(${staff.totalGiftItems} ikram)</p>` : ''}
-                    </div>
-                  </div>
-                  
-                  ${topProducts.length > 0 ? `
-                    <div class="staff-top-products">
-                      <h4 class="staff-top-products-title">En Çok Sattığı Ürünler</h4>
-                      <div class="staff-products-list">
-                        ${topProducts.map(([productName, countOrData], idx) => {
-                          const productData = typeof countOrData === 'object' ? countOrData : { count: countOrData, revenue: 0 };
-                          const count = productData.count || 0;
-                          const revenue = productData.revenue || 0;
-                          
-                          return `
-                            <div class="staff-product-item">
-                              <div class="staff-product-rank">${idx + 1}</div>
-                              <div class="staff-product-info">
-                                <span class="staff-product-name">${productName}</span>
-                                ${revenue > 0 ? `<span class="staff-product-revenue">₺${revenue.toFixed(2)} kazandırdı</span>` : ''}
-                              </div>
-                              <span class="staff-product-count">${count} adet</span>
-                            </div>
-                          `;
-                        }).join('')}
-                      </div>
-                    </div>
-                  ` : ''}
-                </div>
-              `;
-            }).join('')}
+      const listHtml = sortedStaff.map(staff => {
+        const safeName = (staff.name || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        const isSelected = selectedStaffForMerge.has(staff.name);
+        return `
+        <div class="staff-list-item-wrapper ${isSelected ? 'selected' : ''}">
+          <div class="staff-checkbox-wrapper">
+            <input type="checkbox" 
+                   class="staff-merge-checkbox" 
+                   data-staff-name="${safeName}" 
+                   ${isSelected ? 'checked' : ''}
+                   onchange="toggleStaffSelection(this.getAttribute('data-staff-name'), this.checked)"
+                   onclick="event.stopPropagation()">
+          </div>
+          <button type="button" class="staff-list-item" data-staff-name="${safeName}" onclick="openStaffDetailModal(this.getAttribute('data-staff-name'))">
+            <span class="staff-list-name">${(staff.name || '').replace(/</g, '&lt;')}</span>
+            <span class="staff-list-meta"><span class="staff-list-sales">${staff.totalSales}</span><span class="staff-list-sep">·</span><span class="staff-list-revenue">₺${(staff.totalRevenue || 0).toFixed(2)}</span></span>
+            <span class="staff-list-arrow">→</span>
+          </button>
+          <button type="button" class="staff-delete-btn" data-staff-name="${safeName}" onclick="event.stopPropagation(); confirmDeleteStaff(this.getAttribute('data-staff-name'))" title="Personeli sil">🗑️</button>
+        </div>
+      `;
+      }).join('');
+
+      const selectedCount = selectedStaffForMerge.size;
+      const mergeButtonHtml = selectedCount >= 2 ? `
+        <button class="merge-staff-btn" onclick="showMergeStaffModal()">
+          <span class="merge-staff-icon">🔗</span>
+          <span class="merge-staff-text">Personel Birleştir (${selectedCount})</span>
+        </button>
+      ` : '';
+
+      container.innerHTML = `
+        <div class="staff-container staff-container--list">
+          <div class="staff-header-row">
+            <div class="staff-title-section">
+              <h2 class="staff-title">👥 Personel Detayları</h2>
+              <p class="staff-subtitle">Personel adına tıklayarak ürün bazlı satış ve ciro detayını görüntüleyin.</p>
+            </div>
+            ${mergeButtonHtml}
+          </div>
+          <div class="staff-list">
+            ${listHtml}
+          </div>
+          <div id="staffDetailModal" class="staff-detail-modal"></div>
+        </div>
+      `;
+    }
+
+    // Personel birleştirme fonksiyonları
+    function toggleStaffSelection(staffName, isChecked) {
+      if (isChecked) {
+        selectedStaffForMerge.add(staffName);
+      } else {
+        selectedStaffForMerge.delete(staffName);
+      }
+      renderStaffDetails(); // Listeyi yeniden render et
+    }
+
+    let _staffConfirmOnConfirm = null;
+
+    function showStaffConfirmModal(opts) {
+      const modal = document.getElementById('staffConfirmModal');
+      const titleEl = document.getElementById('staffConfirmTitle');
+      const messageEl = document.getElementById('staffConfirmMessage');
+      const iconWrap = document.getElementById('staffConfirmIconWrap');
+      const okBtn = document.getElementById('staffConfirmOkBtn');
+      if (!modal || !titleEl || !messageEl || !okBtn) return;
+      _staffConfirmOnConfirm = opts.onConfirm || null;
+      titleEl.textContent = opts.title || 'Emin misiniz?';
+      messageEl.textContent = opts.message || '';
+      iconWrap.textContent = opts.danger ? '🗑️' : '⚠️';
+      okBtn.textContent = opts.confirmText || 'Evet';
+      modal.classList.toggle('app-confirm-danger', !!opts.danger);
+      modal.style.display = 'flex';
+      okBtn.onclick = function() {
+        const fn = _staffConfirmOnConfirm;
+        closeStaffConfirmModal();
+        if (typeof fn === 'function') fn();
+      };
+    }
+
+    function closeStaffConfirmModal() {
+      const modal = document.getElementById('staffConfirmModal');
+      if (modal) modal.style.display = 'none';
+      _staffConfirmOnConfirm = null;
+    }
+
+    function confirmDeleteStaff(staffName) {
+      if (!staffName || !staffName.trim()) return;
+      const name = staffName.trim();
+      showStaffConfirmModal({
+        title: 'Personeli Sil',
+        message: `"${name}" adlı personeli tüm satış kayıtlarından kalıcı olarak kaldırmak istediğinize emin misiniz?\n\nBu işlem geri alınamaz.`,
+        confirmText: 'Evet, Sil',
+        cancelText: 'İptal',
+        danger: true,
+        onConfirm: function() { deleteStaffPermanently(name); }
+      });
+    }
+
+    async function deleteStaffPermanently(staffName) {
+      if (!db) {
+        showToast('error', 'Bağlantı hatası', 'Veritabanı bağlantısı yok.');
+        return;
+      }
+      showLoading(true);
+      try {
+        const salesRef = db.collection('sales');
+        const snapshot = await salesRef.get();
+        let updatedCount = 0;
+        const batch = db.batch();
+
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          let needsUpdate = false;
+          let newData = { ...data };
+
+          function removeStaffFromNames(str) {
+            if (!str || typeof str !== 'string') return { result: str, changed: false };
+            const names = str.split(',').map(n => n.trim()).filter(Boolean);
+            const filtered = names.filter(n => n !== staffName);
+            if (filtered.length === names.length) return { result: str, changed: false };
+            return { result: filtered.join(', '), changed: true };
+          }
+
+          if (data.staff_name) {
+            const { result, changed } = removeStaffFromNames(data.staff_name);
+            if (changed) {
+              newData.staff_name = result || null;
+              needsUpdate = true;
+            }
+          }
+
+          if (data.items_array && Array.isArray(data.items_array)) {
+            let itemsUpdated = false;
+            newData.items_array = data.items_array.map(item => {
+              if (item.staff_name) {
+                const { result, changed } = removeStaffFromNames(item.staff_name);
+                if (changed) {
+                  itemsUpdated = true;
+                  return { ...item, staff_name: result || null };
+                }
+              }
+              return item;
+            });
+            if (itemsUpdated) needsUpdate = true;
+          }
+
+          if (needsUpdate) {
+            batch.update(doc.ref, newData);
+            updatedCount++;
+          }
+        });
+
+        if (updatedCount > 0) await batch.commit();
+        selectedStaffForMerge.delete(staffName);
+        await loadSales();
+        renderStaffDetails();
+        showLoading(false);
+        showToast(updatedCount > 0 ? 'success' : 'error',
+          updatedCount > 0 ? 'Personel kaldırıldı' : 'Kayıt bulunamadı',
+          updatedCount > 0 ? 'Personel satış kayıtlarından kalıcı olarak kaldırıldı.' : 'Bu personel adına ait satış kaydı bulunamadı.');
+      } catch (err) {
+        console.error('Personel silme hatası:', err);
+        showLoading(false);
+        showToast('error', 'Hata', err.message || 'Personel kaldırılamadı.');
+      }
+    }
+
+    function showMergeStaffModal() {
+      if (selectedStaffForMerge.size < 2) {
+        showToast('error', 'Yetersiz seçim', 'En az 2 personel seçmelisiniz.');
+        return;
+      }
+
+      const staffList = Array.from(selectedStaffForMerge).map(name => 
+        `<li class="merge-staff-list-item">${name.replace(/</g, '&lt;')}</li>`
+      ).join('');
+
+      const modal = document.getElementById('mergeStaffModal');
+      if (!modal) return;
+
+      modal.innerHTML = `
+        <div class="merge-staff-modal-overlay" onclick="closeMergeStaffModal()"></div>
+        <div class="merge-staff-modal-content" onclick="event.stopPropagation()">
+          <div class="merge-staff-modal-header">
+            <h2>🔗 Personel Birleştir</h2>
+            <button class="merge-staff-modal-close" onclick="closeMergeStaffModal()">×</button>
+          </div>
+          <div class="merge-staff-modal-body">
+            <p class="merge-staff-info">Aşağıdaki personellerin tüm satış verileri birleştirilecek:</p>
+            <ul class="merge-staff-list">
+              ${staffList}
+            </ul>
+            <div class="merge-staff-input-group">
+              <label for="mergedStaffName" class="merge-staff-label">Yeni Personel İsmi:</label>
+              <input type="text" 
+                     id="mergedStaffName" 
+                     class="merge-staff-input" 
+                     placeholder="Birleştirilmiş personel için yeni isim girin..."
+                     autocomplete="off">
+            </div>
+            <div class="merge-staff-warning">
+              ⚠️ Bu işlem geri alınamaz! Seçilen personellerin tüm satışları yeni isim altında birleştirilecek.
+            </div>
+          </div>
+          <div class="merge-staff-modal-footer">
+            <button class="merge-staff-btn-cancel" onclick="closeMergeStaffModal()">İptal</button>
+            <button class="merge-staff-btn-confirm" onclick="confirmMergeStaff()">Birleştir</button>
           </div>
         </div>
       `;
+      modal.style.display = 'flex';
+      setTimeout(() => document.getElementById('mergedStaffName')?.focus(), 100);
+    }
 
-      container.innerHTML = html;
+    function closeMergeStaffModal() {
+      const modal = document.getElementById('mergeStaffModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    async function confirmMergeStaff() {
+      const newNameInput = document.getElementById('mergedStaffName');
+      const newName = newNameInput?.value?.trim();
+
+      if (!newName) {
+        showToast('error', 'Eksik bilgi', 'Lütfen yeni personel ismi girin.');
+        newNameInput?.focus();
+        return;
+      }
+
+      if (selectedStaffForMerge.size < 2) {
+        showToast('error', 'Yetersiz seçim', 'En az 2 personel seçmelisiniz.');
+        return;
+      }
+
+      const oldNames = Array.from(selectedStaffForMerge);
+      const confirmMsg = `${oldNames.length} personeli "${newName}" olarak birleştirmek istediğinize emin misiniz?\n\nBirleştirilecek: ${oldNames.join(', ')}\n\nBu işlem geri alınamaz.`;
+
+      closeMergeStaffModal();
+      showStaffConfirmModal({
+        title: 'Personel Birleştir',
+        message: confirmMsg,
+        confirmText: 'Evet, Birleştir',
+        cancelText: 'İptal',
+        danger: false,
+        onConfirm: function() { doMergeStaff(newName, oldNames); }
+      });
+    }
+
+    async function doMergeStaff(newName, oldNames) {
+      try {
+        showLoading(true);
+
+        if (!db) {
+          throw new Error('Firebase bağlantısı yok');
+        }
+
+        // Tüm satışları al ve eski personel isimlerini yeni isimle değiştir
+        const salesRef = db.collection('sales');
+        const snapshot = await salesRef.get();
+        
+        let updatedCount = 0;
+        const batch = db.batch();
+        const oldNamesSet = new Set(oldNames);
+
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          let needsUpdate = false;
+          let newData = { ...data };
+
+          // staff_name kontrolü (virgülle ayrılmış personel isimleri)
+          if (data.staff_name) {
+            const names = data.staff_name.split(',').map(n => n.trim());
+            const hasOldName = names.some(n => oldNamesSet.has(n));
+            
+            if (hasOldName) {
+              // Eski isimleri yeni isimle değiştir, tekrarları önle
+              const updatedNames = names.map(n => oldNamesSet.has(n) ? newName : n);
+              const uniqueNames = [...new Set(updatedNames)];
+              newData.staff_name = uniqueNames.join(', ');
+              needsUpdate = true;
+            }
+          }
+
+          // items_array içindeki her item'ın staff_name'ini kontrol et
+          if (data.items_array && Array.isArray(data.items_array)) {
+            let itemsUpdated = false;
+            newData.items_array = data.items_array.map(item => {
+              if (item.staff_name) {
+                const itemNames = item.staff_name.split(',').map(n => n.trim());
+                const hasOldName = itemNames.some(n => oldNamesSet.has(n));
+                
+                if (hasOldName) {
+                  const updatedNames = itemNames.map(n => oldNamesSet.has(n) ? newName : n);
+                  const uniqueNames = [...new Set(updatedNames)];
+                  itemsUpdated = true;
+                  return { ...item, staff_name: uniqueNames.join(', ') };
+                }
+              }
+              return item;
+            });
+            if (itemsUpdated) needsUpdate = true;
+          }
+
+          if (needsUpdate) {
+            batch.update(doc.ref, newData);
+            updatedCount++;
+          }
+        });
+
+        if (updatedCount > 0) {
+          await batch.commit();
+          console.log(`✅ ${updatedCount} satış kaydı güncellendi`);
+        }
+
+        // Seçimi temizle ve listeyi yenile
+        selectedStaffForMerge.clear();
+        await loadSales(); // Satışları yeniden yükle
+
+        showLoading(false);
+        showToast('success', 'Birleştirme tamamlandı', `${oldNames.length} personel "${newName}" olarak birleştirildi. ${updatedCount} satış kaydı güncellendi.`);
+      } catch (error) {
+        console.error('Personel birleştirme hatası:', error);
+        showLoading(false);
+        showToast('error', 'Hata', error.message || 'Personel birleştirilemedi.');
+      }
     }
 
     // Modal dışına tıklanınca kapat - sayfa yüklendiğinde ekle
@@ -6229,7 +6476,9 @@
       reportSales.forEach(sale => {
         if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return;
         
-        const dateKey = sale.sale_date; // DD.MM.YYYY formatı
+        // İŞ GÜNÜ hesapla (00:00-03:00 arası satışlar önceki güne ait)
+        const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+        const dateKey = saleBusinessDay || sale.sale_date; // DD.MM.YYYY formatı
         
         if (!dailyRevenue[dateKey]) {
           dailyRevenue[dateKey] = {
@@ -6239,8 +6488,8 @@
           };
         }
         
-        // total_amount kullanarak hesaplama yap
-        const saleRevenue = parseFloat(sale.total_amount || 0);
+        // calculateSaleRevenue kullanarak tutarlı hesaplama yap
+        const saleRevenue = calculateSaleRevenue(sale);
         dailyRevenue[dateKey].revenue += saleRevenue;
         dailyRevenue[dateKey].salesCount += 1;
       });
@@ -6372,17 +6621,15 @@
       const today = getTodayDateString();
       const yesterdayStr = getYesterdayDateString();
       
-      // Masrafları hariç tut
-      const todaySales = allSales.filter(s => 
-        s.sale_date === today && 
-        !s.isExpense && 
-        s.payment_method !== 'Masraf'
-      );
-      const yesterdaySales = allSales.filter(s => 
-        s.sale_date === yesterdayStr && 
-        !s.isExpense && 
-        s.payment_method !== 'Masraf'
-      );
+      // Masrafları hariç tut - 00:00-03:00 arası için iş günü hesapla
+      const todaySales = allSales.filter(s => {
+        const businessDate = getSaleBusinessDay(s.sale_date, s.sale_time);
+        return businessDate === today && !s.isExpense && s.payment_method !== 'Masraf';
+      });
+      const yesterdaySales = allSales.filter(s => {
+        const businessDate = getSaleBusinessDay(s.sale_date, s.sale_time);
+        return businessDate === yesterdayStr && !s.isExpense && s.payment_method !== 'Masraf';
+      });
       
       const todayRevenue = todaySales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
       const yesterdayRevenue = yesterdaySales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
@@ -6974,7 +7221,12 @@
     window.verifyPin = verifyPin;
     window.loadSales = loadSales;
     window.setActiveTab = setActiveTab;
+    window.toggleStaffSelection = toggleStaffSelection;
+    window.showMergeStaffModal = showMergeStaffModal;
+    window.closeMergeStaffModal = closeMergeStaffModal;
+    window.confirmMergeStaff = confirmMergeStaff;
     window.setReportDateFilter = setReportDateFilter;
+    window.setReportBranchFilter = setReportBranchFilter;
     window.setCustomDateRange = setCustomDateRange;
     window.toggleDateFilterModal = toggleDateFilterModal;
     window.closeDateFilterModal = closeDateFilterModal;
@@ -7063,6 +7315,10 @@
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(12px); }
       to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes scaleIn {
+      from { opacity: 0; transform: scale(0.96); }
+      to { opacity: 1; transform: scale(1); }
     }
 
     /* Header kaldırıldı - navbar kullanılıyor */
@@ -7495,6 +7751,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
+      flex-wrap: wrap;
     }
 
     /* Yönetim butonu (Gece Dönercisi) */
@@ -8055,6 +8312,58 @@
       }
     }
 
+    .report-branch-wrap {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+    }
+    .report-branch-segmented {
+      display: inline-flex;
+      border-radius: 12px;
+      padding: 3px;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.04);
+    }
+    .report-branch-opt {
+      padding: 8px 14px;
+      min-height: 40px;
+      min-width: 56px;
+      font-size: 12px;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: #64748b;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .report-branch-opt:hover {
+      color: var(--primary, #f97316);
+      background: rgba(249, 115, 22, 0.08);
+    }
+    .report-branch-opt.active {
+      background: #fff;
+      color: var(--primary, #f97316);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }
+    @media (max-width: 480px) {
+      .report-branch-wrap {
+        width: 100%;
+        justify-content: flex-start;
+      }
+      .report-branch-segmented {
+        flex: 0 1 auto;
+        max-width: 100%;
+      }
+      .report-branch-opt {
+        padding: 10px 12px;
+        min-width: 52px;
+        font-size: 11px;
+      }
+    }
+
     .refresh-btn,
     .logout-btn {
       border-radius: 12px;
@@ -8523,6 +8832,12 @@
       border-color: #fde68a;
     }
 
+    .badge-branch {
+      background: #dbeafe;
+      color: #1d4ed8;
+      border-color: #93c5fd;
+    }
+
     .badge-expense {
       background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
       color: #c62828;
@@ -8799,45 +9114,422 @@
       border: 1px solid #a7f3d0;
     }
 
-    .sale-card-actions {
+    .sale-card-footer {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border-subtle);
       display: flex;
       justify-content: flex-end;
-      gap: 8px;
-      margin-top: 12px;
-      padding-top: 10px;
-      border-top: 1px solid #f3f4f6;
-    }
-
-    .sale-action-btn {
-      padding: 6px 14px;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      border: none;
-      transition: all 0.2s ease;
-    }
-
-    .sale-edit-btn {
-      background: #eff6ff;
-      color: #1d4ed8;
-      border: 1px solid #bfdbfe;
-    }
-
-    .sale-edit-btn:hover {
-      background: #dbeafe;
-      border-color: #93c5fd;
     }
 
     .sale-delete-btn {
-      background: #fef2f2;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
       color: #dc2626;
+      background: #fef2f2;
       border: 1px solid #fecaca;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
     }
-
     .sale-delete-btn:hover {
       background: #fee2e2;
       border-color: #f87171;
+      color: #b91c1c;
+    }
+
+    .delete-sale-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(4px);
+      z-index: 1100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      animation: fadeIn 0.2s ease;
+    }
+    .delete-sale-modal {
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.15);
+      max-width: 400px;
+      width: 100%;
+      padding: 28px 24px;
+      text-align: center;
+    }
+    .delete-sale-modal-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+    .delete-sale-modal-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin: 0 0 8px;
+    }
+    .delete-sale-modal-desc {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin: 0 0 24px;
+      line-height: 1.5;
+    }
+    .delete-sale-modal-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .delete-sale-btn {
+      padding: 12px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 12px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .delete-sale-btn-cancel {
+      background: #f1f5f9;
+      color: #475569;
+    }
+    .delete-sale-btn-cancel:hover {
+      background: #e2e8f0;
+    }
+    .delete-sale-btn-confirm {
+      background: #dc2626;
+      color: #fff;
+    }
+    .delete-sale-btn-confirm:hover {
+      background: #b91c1c;
+      box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);
+    }
+
+    /* Personel Birleştirme Modal */
+    .merge-staff-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .merge-staff-modal-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+    }
+
+    .merge-staff-modal-content {
+      position: relative;
+      background: white;
+      border-radius: 16px;
+      max-width: 500px;
+      width: 100%;
+      max-height: 90vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      animation: modalSlideIn 0.3s ease-out;
+    }
+
+    @keyframes modalSlideIn {
+      from {
+        opacity: 0;
+        transform: scale(0.9) translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
+    }
+
+    .merge-staff-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 24px;
+      border-bottom: 1px solid #e5e7eb;
+      background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+    }
+
+    .merge-staff-modal-header h2 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      color: #111827;
+    }
+
+    .merge-staff-modal-close {
+      width: 32px;
+      height: 32px;
+      border: none;
+      background: #e5e7eb;
+      border-radius: 8px;
+      font-size: 24px;
+      line-height: 1;
+      color: #6b7280;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .merge-staff-modal-close:hover {
+      background: #d1d5db;
+      color: #374151;
+    }
+
+    .merge-staff-modal-body {
+      padding: 24px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .merge-staff-info {
+      font-size: 14px;
+      color: #6b7280;
+      margin-bottom: 16px;
+    }
+
+    .merge-staff-list {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 24px 0;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .merge-staff-list-item {
+      padding: 12px 16px;
+      background: #f9fafb;
+      border-bottom: 1px solid #e5e7eb;
+      font-size: 14px;
+      font-weight: 500;
+      color: #374151;
+    }
+
+    .merge-staff-list-item:last-child {
+      border-bottom: none;
+    }
+
+    .merge-staff-input-group {
+      margin-bottom: 20px;
+    }
+
+    .merge-staff-label {
+      display: block;
+      font-size: 14px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 8px;
+    }
+
+    .merge-staff-input {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid #e5e7eb;
+      border-radius: 10px;
+      font-size: 15px;
+      color: #111827;
+      transition: all 0.2s;
+      outline: none;
+    }
+
+    .merge-staff-input:focus {
+      border-color: #10b981;
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+    }
+
+    .merge-staff-warning {
+      padding: 12px 16px;
+      background: #fef3c7;
+      border: 1px solid #fde68a;
+      border-radius: 10px;
+      font-size: 13px;
+      color: #92400e;
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    .merge-staff-modal-footer {
+      display: flex;
+      gap: 12px;
+      padding: 20px 24px;
+      border-top: 1px solid #e5e7eb;
+      background: #f9fafb;
+    }
+
+    .merge-staff-btn-cancel,
+    .merge-staff-btn-confirm {
+      flex: 1;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .merge-staff-btn-cancel {
+      background: #e5e7eb;
+      color: #374151;
+    }
+
+    .merge-staff-btn-cancel:hover {
+      background: #d1d5db;
+    }
+
+    .merge-staff-btn-confirm {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: white;
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+    }
+
+    .merge-staff-btn-confirm:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+    }
+
+    .merge-staff-btn-confirm:active {
+      transform: translateY(0);
+    }
+
+    /* Uygulama içi onay modalı (personel silme / birleştirme) */
+    .app-confirm-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(8px);
+      z-index: 1300;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      animation: appConfirmFadeIn 0.25s ease;
+    }
+    @keyframes appConfirmFadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .app-confirm-modal {
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255,255,255,0.05) inset;
+      max-width: 420px;
+      width: 100%;
+      padding: 28px 26px;
+      text-align: center;
+      animation: appConfirmSlideIn 0.3s cubic-bezier(0.34, 1.2, 0.64, 1);
+    }
+    @keyframes appConfirmSlideIn {
+      from { opacity: 0; transform: scale(0.92) translateY(12px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .app-confirm-icon-wrap {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 16px;
+      background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+      border: 2px solid #f59e0b;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+    }
+    .app-confirm-overlay.app-confirm-danger .app-confirm-icon-wrap {
+      background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+      border-color: #ef4444;
+    }
+    .app-confirm-title {
+      font-size: 20px;
+      font-weight: 800;
+      color: #0f172a;
+      margin: 0 0 10px;
+      letter-spacing: -0.02em;
+    }
+    .app-confirm-message {
+      font-size: 15px;
+      color: #475569;
+      line-height: 1.55;
+      margin: 0 0 24px;
+      white-space: pre-line;
+    }
+    .app-confirm-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .app-confirm-btn {
+      padding: 12px 24px;
+      font-size: 15px;
+      font-weight: 600;
+      border-radius: 12px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+      min-width: 100px;
+    }
+    .app-confirm-cancel {
+      background: #f1f5f9;
+      color: #475569;
+    }
+    .app-confirm-cancel:hover {
+      background: #e2e8f0;
+      color: #334155;
+    }
+    .app-confirm-ok {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+    }
+    .app-confirm-ok:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+    }
+    .app-confirm-overlay.app-confirm-danger .app-confirm-ok {
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+    }
+    .app-confirm-overlay.app-confirm-danger .app-confirm-ok:hover {
+      box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);
+    }
+
+    @media (max-width: 768px) {
+      .merge-staff-modal {
+        padding: 0;
+        align-items: flex-end;
+      }
+
+      .merge-staff-modal-content {
+        max-width: 100%;
+        max-height: 95vh;
+        border-radius: 20px 20px 0 0;
+      }
+
+      .staff-header-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .merge-staff-btn {
+        width: 100%;
+        justify-content: center;
+      }
     }
 
     /* Boş & hata durumları */
@@ -8896,6 +9588,23 @@
       margin-bottom: 10px;
       padding-bottom: 8px;
       border-bottom: 2px solid var(--border-subtle);
+    }
+
+    .tables-branch-block {
+      background: var(--bg-subtle, #f8fafc);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      margin-bottom: 24px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .branch-section-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 3px solid var(--border-subtle);
     }
 
     .tables-grid {
@@ -10371,9 +11080,6 @@
         }
       }
     }
-      color: #1f2937;
-      min-height: 200px;
-    }
 
     .analysis-text-content {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -11313,6 +12019,542 @@
       margin-top: 2px;
     }
 
+    .staff-product-filter-bar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+      border-radius: 14px;
+      border: 1px solid var(--border-subtle);
+    }
+    .staff-product-filter-bar .filter-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .staff-product-pick-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      border: 2px dashed var(--border-subtle);
+      background: #fff;
+      color: var(--text-main);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .staff-product-pick-btn:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+      background: rgba(var(--primary-rgb), 0.06);
+    }
+    .staff-product-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      background: #fff;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-main);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .staff-product-chip .chip-remove {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: none;
+      background: #fee2e2;
+      color: #dc2626;
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      transition: background 0.2s;
+    }
+    .staff-product-chip .chip-remove:hover {
+      background: #fecaca;
+    }
+    .staff-selected-summary {
+      margin-left: auto;
+      padding: 8px 14px;
+      border-radius: 10px;
+      background: #fff;
+      border: 1px solid var(--border-subtle);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .staff-selected-summary span { color: var(--text-muted); font-weight: 500; }
+    .staff-picker-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      animation: fadeIn 0.2s ease;
+    }
+    .staff-picker-modal {
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: 0 24px 48px rgba(0,0,0,0.15);
+      max-width: 420px;
+      width: 100%;
+      max-height: 85vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      animation: scaleIn 0.25s ease;
+    }
+    .staff-picker-modal h3 {
+      padding: 18px 20px;
+      margin: 0;
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--text-main);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .staff-picker-modal .modal-body {
+      padding: 12px;
+      overflow-y: auto;
+      max-height: 50vh;
+    }
+    .staff-picker-option {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .staff-picker-option:hover { background: #f8fafc; }
+    .staff-picker-option input { accent-color: var(--primary); cursor: pointer; }
+    .staff-picker-option span { font-size: 14px; font-weight: 500; color: var(--text-main); }
+    .staff-picker-modal .modal-footer {
+      padding: 14px 20px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .staff-picker-modal .modal-footer button {
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .staff-picker-modal .modal-footer .btn-cancel {
+      background: #f1f5f9;
+      color: var(--text-main);
+    }
+    .staff-picker-modal .modal-footer .btn-cancel:hover { background: #e2e8f0; }
+    .staff-picker-modal .modal-footer .btn-ok {
+      background: var(--primary);
+      color: #fff;
+    }
+    .staff-picker-modal .modal-footer .btn-ok:hover { opacity: 0.9; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+    .staff-selected-block {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+      border: 1px solid var(--border-subtle);
+    }
+    .staff-selected-block-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 8px;
+    }
+    .staff-selected-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      font-size: 13px;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
+    }
+    .staff-selected-row:last-child { border-bottom: none; }
+    .staff-selected-row .row-name { font-weight: 500; color: var(--text-main); }
+    .staff-selected-row .row-values { font-weight: 600; color: var(--text-main); }
+    .staff-selected-total-row {
+      margin-top: 6px;
+      padding-top: 8px;
+      border-top: 2px solid var(--border-subtle);
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--text-main);
+    }
+
+    /* Personel listesi — kurumsal palet, tek satır, mobil uyumlu */
+    .staff-container--list { max-width: 100%; padding: 0 2px; box-sizing: border-box; }
+    .staff-subtitle {
+      font-size: 12px;
+      color: #64748b;
+      margin: -4px 0 12px 0;
+      line-height: 1.3;
+    }
+    .staff-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .staff-title-section {
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .merge-staff-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+    }
+
+    .merge-staff-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+    }
+
+    .merge-staff-btn:active {
+      transform: translateY(0);
+    }
+
+    .merge-staff-icon {
+      font-size: 18px;
+    }
+
+    .staff-list { display: flex; flex-direction: column; gap: 6px; }
+    
+    .staff-list-item-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 10px;
+      transition: all 0.2s;
+    }
+
+    .staff-list-item-wrapper.selected {
+      background: #d1fae5;
+    }
+
+    .staff-checkbox-wrapper {
+      display: flex;
+      align-items: center;
+      padding-left: 8px;
+    }
+
+    .staff-merge-checkbox {
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+      accent-color: #10b981;
+    }
+
+    .staff-list-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-height: 44px;
+      padding: 10px 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #ffffff;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 14px;
+      font-weight: 600;
+      color: #1e293b;
+      box-sizing: border-box;
+      flex-wrap: nowrap;
+    }
+    .staff-list-item:hover {
+      border-color: #334155;
+      background: #f8fafc;
+      box-shadow: 0 2px 8px rgba(15,23,42,0.06);
+    }
+    .staff-list-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #1e293b;
+    }
+    .staff-list-meta {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: #475569;
+      white-space: nowrap;
+    }
+    .staff-list-sales { color: #475569; }
+    .staff-list-sep { color: #94a3b8; font-weight: 400; }
+    .staff-list-revenue { color: #0d9488; }
+    .staff-list-arrow {
+      flex-shrink: 0;
+      font-size: 14px;
+      color: #94a3b8;
+      font-weight: 400;
+    }
+
+    .staff-delete-btn {
+      flex-shrink: 0;
+      width: 36px;
+      height: 36px;
+      min-width: 36px;
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      background: #fef2f2;
+      color: #dc2626;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .staff-delete-btn:hover {
+      background: #fee2e2;
+      border-color: #f87171;
+      transform: scale(1.05);
+    }
+    .staff-delete-btn:active {
+      transform: scale(0.98);
+    }
+
+    /* Personel detay modal — kurumsal palet, tek satır, mobil */
+    .staff-detail-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 10000;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    .staff-detail-modal.staff-detail-modal-open { display: flex; }
+    .staff-detail-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.45);
+      backdrop-filter: blur(6px);
+      cursor: pointer;
+    }
+    .staff-detail-panel {
+      position: relative;
+      width: 100%;
+      max-width: 480px;
+      max-height: 90vh;
+      background: #ffffff;
+      border-radius: 14px;
+      box-shadow: 0 20px 40px rgba(15,23,42,0.15);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+    }
+    .staff-detail-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 14px 16px;
+      border-bottom: 1px solid #e2e8f0;
+      background: #f8fafc;
+      flex-shrink: 0;
+    }
+    .staff-detail-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1e293b;
+      margin: 0;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .staff-detail-close {
+      width: 32px;
+      height: 32px;
+      border: none;
+      border-radius: 8px;
+      background: #e2e8f0;
+      color: #475569;
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      flex-shrink: 0;
+    }
+    .staff-detail-close:hover {
+      background: #cbd5e1;
+      color: #1e293b;
+    }
+    .staff-detail-summary {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 12px 16px;
+      background: #fff;
+      border-bottom: 1px solid #e2e8f0;
+      flex-shrink: 0;
+    }
+    .staff-detail-sum-item {
+      flex: 1;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 6px;
+      border-radius: 8px;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      min-width: 0;
+      white-space: nowrap;
+    }
+    .staff-detail-sum-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .staff-detail-sum-value {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1e293b;
+      white-space: nowrap;
+    }
+    .staff-detail-table-wrap {
+      flex: 1;
+      overflow: auto;
+      padding: 12px 16px;
+      min-height: 0;
+    }
+    .staff-detail-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      table-layout: fixed;
+    }
+    .staff-detail-table th {
+      text-align: left;
+      padding: 8px 10px;
+      font-weight: 600;
+      color: #64748b;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      border-bottom: 2px solid #e2e8f0;
+      white-space: nowrap;
+    }
+    .staff-detail-table th:nth-child(1) { width: 50%; }
+    .staff-detail-table th:nth-child(2) { width: 22%; text-align: right; }
+    .staff-detail-table th:nth-child(3) { width: 28%; text-align: right; }
+    .staff-detail-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #f1f5f9;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .staff-detail-table td:nth-child(2),
+    .staff-detail-table td:nth-child(3) { text-align: right; }
+    .staff-detail-product {
+      font-weight: 500;
+      color: #1e293b;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .staff-detail-count { color: #475569; font-weight: 500; }
+    .staff-detail-revenue { font-weight: 600; color: #0d9488; }
+    .staff-detail-empty { color: #94a3b8; font-style: italic; text-align: center; padding: 20px 10px !important; white-space: normal; }
+    .staff-detail-footer {
+      padding: 12px 16px;
+      border-top: 1px solid #e2e8f0;
+      background: #f8fafc;
+      flex-shrink: 0;
+    }
+    .staff-detail-btn-back {
+      width: 100%;
+      padding: 10px 16px;
+      border-radius: 10px;
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      color: #475569;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .staff-detail-btn-back:hover {
+      background: #f1f5f9;
+      border-color: #94a3b8;
+      color: #1e293b;
+    }
+    @media (max-width: 480px) {
+      .staff-list-item { padding: 10px 10px; gap: 6px; font-size: 13px; }
+      .staff-list-meta { font-size: 11px; }
+      .staff-detail-modal { padding: 8px; }
+      .staff-detail-sum-item { padding: 6px 4px; gap: 4px; }
+      .staff-detail-sum-label { font-size: 9px; }
+      .staff-detail-sum-value { font-size: 12px; }
+      .staff-detail-table { font-size: 11px; }
+      .staff-detail-table th,
+      .staff-detail-table td { padding: 6px 8px; }
+    }
+
     .staff-top-products-title {
       font-size: 13px;
       font-weight: 500;
@@ -11795,8 +13037,8 @@
 <body>
   <div id="loader" class="admin-splash-screen">
     <div class="splash-content">
-      <img src="lacrimosa.jpg" alt="PATRON Logo" class="splash-logo" onerror="this.style.display='none';">
-      <h1 class="splash-main-text" id="splashBusinessName">PATRON</h1>
+      <img src="tenant.png" alt="Logo" class="splash-logo" onerror="this.style.display='none';">
+      <h1 class="splash-main-text" id="splashBusinessName">Gece Dönercisi</h1>
       <div class="splash-decorative-line"></div>
       <p class="splash-subtitle-text">Admin Dashboard</p>
     </div>
@@ -11805,9 +13047,9 @@
   <div class="container">
     <div id="loginSection" class="pin-section">
       <div class="login-header">
-        <img src="lacrimosa.jpg" alt="PATRON Logo" class="login-logo" onerror="this.style.display='none';">
+        <img src="tenant.png" alt="Logo" class="login-logo" onerror="this.style.display='none';">
         <h2>Admin Girişi</h2>
-        <p class="login-subtitle" id="loginBusinessName">PATRON</p>
+        <p class="login-subtitle" id="loginBusinessName">Gece Dönercisi</p>
       </div>
       
       <div class="pin-form">
@@ -11876,15 +13118,22 @@
       <nav class="admin-navbar">
         <div class="navbar-content">
           <div class="navbar-brand">
-            <img src="lacrimosa.jpg" alt="PATRON Logo" class="navbar-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <img src="tenant.png" alt="Gece Dönercisi Logo" class="navbar-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
             <div class="navbar-logo" style="display: none;">M</div>
             <div class="navbar-title-group">
-              <h1 class="navbar-title" id="navbarBusinessName">Lacrimosa Admin Dashboard</h1>
+              <h1 class="navbar-title" id="navbarBusinessName">Yaka's Grill Admin Dashboard</h1>
               <p class="navbar-subtitle">Anlık Satış Detayları ve İstatistikler</p>
             </div>
           </div>
           <div class="navbar-actions navbar-actions-stack">
             <div class="navbar-actions-row">
+              <div class="report-branch-wrap" id="reportBranchSwitch" style="display: none;">
+                <div class="report-branch-segmented" role="group" aria-label="Şube seçimi">
+                  <button type="button" class="report-branch-opt active" data-branch="all" onclick="setReportBranchFilter('all')">Tümü</button>
+                  <button type="button" class="report-branch-opt" data-branch="SANCAK" onclick="setReportBranchFilter('SANCAK')">SANCAK</button>
+                  <button type="button" class="report-branch-opt" data-branch="SEKER" onclick="setReportBranchFilter('SEKER')">ŞEKER</button>
+                </div>
+              </div>
               <button onclick="loadSales()" class="refresh-btn">
                 <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/>
@@ -11952,71 +13201,34 @@
       <div id="staffContainer" style="min-height: 200px; display: none;"></div>
       <div id="tablesContainer" style="min-height: 200px; display: none;"></div>
       <div id="cancelsContainer" style="min-height: 200px; display: none;"></div>
-    </div>
-  </div>
 
-  <!-- Satış Silme Onay Modal -->
-  <div id="deleteSaleConfirmOverlay" style="display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.6); z-index: 10050; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(6px);" onclick="if(event.target === this) closeDeleteConfirm()">
-    <div style="background: #fff; border-radius: 20px; max-width: 400px; width: 100%; box-shadow: 0 25px 60px rgba(0,0,0,0.25); overflow: hidden; animation: modalSlide 0.25s ease;">
-      <div style="padding: 28px 24px; text-align: center;">
-        <div style="width: 56px; height: 56px; margin: 0 auto 16px; background: #fef2f2; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
-          <svg width="28" height="28" fill="none" stroke="#dc2626" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-        </div>
-        <h3 style="margin: 0 0 8px; font-size: 20px; font-weight: 800; color: #0f172a;">Emin misiniz?</h3>
-        <p style="margin: 0; font-size: 15px; color: #64748b; line-height: 1.5;">Bu satış kalıcı olarak silinecektir. Bu işlem geri alınamaz.</p>
-      </div>
-      <div style="display: flex; gap: 12px; padding: 20px 24px; background: #f8fafc; border-top: 1px solid #e2e8f0;">
-        <button type="button" onclick="closeDeleteConfirm()" style="flex:1; padding: 14px 20px; border: 2px solid #e2e8f0; border-radius: 12px; background: #fff; font-weight: 700; font-size: 15px; color: #475569; cursor: pointer;">İptal</button>
-        <button type="button" id="deleteSaleConfirmBtn" onclick="confirmDeleteSale()" style="flex:1; padding: 14px 20px; border: none; border-radius: 12px; background: #dc2626; color: #fff; font-weight: 700; font-size: 15px; cursor: pointer;">Sil</button>
-      </div>
-    </div>
-  </div>
+      <!-- Personel Birleştirme Modal -->
+      <div id="mergeStaffModal" class="merge-staff-modal" style="display: none;"></div>
 
-  <!-- Satış Düzenleme Modal -->
-  <div id="editSaleOverlay" style="display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.6); z-index: 10050; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(6px); overflow-y: auto;" onclick="if(event.target === this) closeEditSaleModal()">
-    <div style="background: #fff; border-radius: 20px; max-width: 480px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 25px 60px rgba(0,0,0,0.25); overflow: hidden; animation: modalSlide 0.25s ease;">
-      <div style="padding: 24px; border-bottom: 1px solid #e2e8f0;">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <h2 style="margin: 0; font-size: 20px; font-weight: 800; color: #0f172a;">Satışı Düzenle</h2>
-          <button type="button" onclick="closeEditSaleModal()" style="width: 40px; height: 40px; border: none; background: #f1f5f9; border-radius: 10px; cursor: pointer; font-size: 20px; color: #64748b;">×</button>
+      <!-- Personel onay modalı (silme / birleştirme son onay) -->
+      <div id="staffConfirmModal" class="app-confirm-overlay" style="display: none;" onclick="if(event.target === this) closeStaffConfirmModal()">
+        <div class="app-confirm-modal" onclick="event.stopPropagation()">
+          <div class="app-confirm-icon-wrap" id="staffConfirmIconWrap">⚠️</div>
+          <h3 class="app-confirm-title" id="staffConfirmTitle">Emin misiniz?</h3>
+          <p class="app-confirm-message" id="staffConfirmMessage"></p>
+          <div class="app-confirm-actions">
+            <button type="button" class="app-confirm-btn app-confirm-cancel" onclick="closeStaffConfirmModal()">İptal</button>
+            <button type="button" class="app-confirm-btn app-confirm-ok" id="staffConfirmOkBtn">Evet</button>
+          </div>
         </div>
       </div>
-      <div style="flex: 1; overflow-y: auto; padding: 24px;">
-        <div style="margin-bottom: 20px;">
-          <label style="display: block; margin-bottom: 8px; font-size: 13px; font-weight: 700; color: #475569;">Ödeme Yöntemi</label>
-          <select id="editSalePaymentMethod" style="width: 100%; padding: 12px 14px; border: 2px solid #e2e8f0; border-radius: 12px; font-size: 15px; font-weight: 600;">
-            <option value="Nakit">💵 Nakit</option>
-            <option value="Kredi Kartı">💳 Kart</option>
-          </select>
-        </div>
-        <div style="margin-bottom: 8px; font-size: 13px; font-weight: 700; color: #475569;">Ürünler</div>
-        <div id="editSaleItemsList" style="display: flex; flex-direction: column; gap: 10px;"></div>
-        <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
-          <span style="font-size: 16px; font-weight: 700; color: #0f172a;">Toplam</span>
-          <span id="editSaleTotalDisplay" style="font-size: 20px; font-weight: 800; color: #0f172a;">₺0.00</span>
-        </div>
-      </div>
-      <div style="padding: 20px 24px; border-top: 1px solid #e2e8f0; background: #f8fafc; display: flex; gap: 12px;">
-        <button type="button" onclick="closeEditSaleModal()" style="flex:1; padding: 14px; border: 2px solid #e2e8f0; border-radius: 12px; background: #fff; font-weight: 700; color: #475569; cursor: pointer;">İptal</button>
-        <button type="button" id="editSaleSaveBtn" onclick="saveEditSale()" style="flex:1; padding: 14px; border: none; border-radius: 12px; background: #0f172a; color: #fff; font-weight: 700; cursor: pointer;">Kaydet</button>
-      </div>
-    </div>
-  </div>
 
-  <!-- Masraf Detay Modal (Detaylı Raporlama - başlığa göre masraflar) -->
-  <div id="expenseDetailOverlay" style="display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.6); z-index: 10050; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(6px); overflow-y: auto;" onclick="if(event.target === this) closeExpenseDetailModal()">
-    <div style="background: #fff; border-radius: 20px; max-width: 520px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 25px 60px rgba(0,0,0,0.25); overflow: hidden;">
-      <div style="padding: 24px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
-        <div>
-          <h2 style="margin: 0; font-size: 20px; font-weight: 800; color: #0f172a;">Masraf Detayları</h2>
-          <p id="expenseDetailPeriodInfo" style="margin: 4px 0 0; font-size: 13px; color: #64748b; font-weight: 600;"></p>
+      <!-- Satış silme onay modal -->
+      <div id="deleteSaleConfirmModal" class="delete-sale-modal-overlay" style="display: none;">
+        <div class="delete-sale-modal" onclick="event.stopPropagation()">
+          <div class="delete-sale-modal-icon">⚠️</div>
+          <h3 class="delete-sale-modal-title">Satışı silmek istediğinize emin misiniz?</h3>
+          <p class="delete-sale-modal-desc">Bu işlem geri alınamaz. Satış veritabanından kalıcı olarak silinecektir.</p>
+          <div class="delete-sale-modal-actions">
+            <button type="button" class="delete-sale-btn delete-sale-btn-cancel" onclick="closeDeleteSaleModal()">Hayır, vazgeç</button>
+            <button type="button" class="delete-sale-btn delete-sale-btn-confirm" id="deleteSaleConfirmBtn">Evet, sil</button>
+          </div>
         </div>
-        <button type="button" onclick="closeExpenseDetailModal()" style="width: 40px; height: 40px; border: none; background: #f1f5f9; border-radius: 10px; cursor: pointer; font-size: 20px; color: #64748b;">×</button>
-      </div>
-      <div id="expenseDetailBody" style="flex: 1; overflow-y: auto; padding: 24px;"></div>
-      <div style="padding: 16px 24px; border-top: 1px solid #e2e8f0; background: #f8fafc; display: flex; justify-content: space-between; align-items: center;">
-        <span style="font-size: 15px; font-weight: 700; color: #0f172a;">Toplam Masraf</span>
-        <span id="expenseDetailTotal" style="font-size: 20px; font-weight: 800; color: #dc2626;">₺0.00</span>
       </div>
     </div>
   </div>
