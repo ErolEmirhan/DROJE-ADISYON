@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { isSultanSomati, generateSultanSomatiTables, isYakasGrill, generateYakasGrillTables, isGeceDonercisi, generateGeceDonercisiTables, isLacromisa } from '../utils/sultanSomatTables';
+import { isSultanSomati, generateSultanSomatiTables, isYakasGrill, generateYakasGrillTables, isGeceDonercisi, generateGeceDonercisiTables, isLacromisa, LACROMISA_INSIDE_LABEL, LACROMISA_OUTSIDE_LABEL } from '../utils/sultanSomatTables';
 
 const TableTransferModal = ({ 
   currentOrder, 
@@ -56,16 +56,18 @@ const TableTransferModal = ({
     return generateGeceDonercisiTables();
   }, [isGeceDonercisiMode]);
 
-  // Normal mod için masalar
+  // Normal mod / Lacromisa için masalar (Lacromisa: Salon/Bahçe isimleri)
+  const insideTableLabel = isLacromisaMode ? LACROMISA_INSIDE_LABEL : 'İçeri';
+  const outsideTableLabel = isLacromisaMode ? LACROMISA_OUTSIDE_LABEL : 'Dışarı';
   const insideTables = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
     return Array.from({ length: effectiveInsideTablesCount }, (_, i) => ({
       id: `inside-${i + 1}`,
       number: i + 1,
       type: 'inside',
-      name: `İçeri ${i + 1}`
+      name: `${insideTableLabel} ${i + 1}`
     }));
-  }, [effectiveInsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode]);
+  }, [effectiveInsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode, insideTableLabel]);
 
   const outsideTables = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
@@ -73,9 +75,9 @@ const TableTransferModal = ({
       id: `outside-${i + 1}`,
       number: i + 1,
       type: 'outside',
-      name: `Dışarı ${i + 1}`
+      name: `${outsideTableLabel} ${i + 1}`
     }));
-  }, [effectiveOutsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode]);
+  }, [effectiveOutsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode, outsideTableLabel]);
 
   // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı ve Yaka's Grill'de yok
   const packageTablesInside = useMemo(() => {

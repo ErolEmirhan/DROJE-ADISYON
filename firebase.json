@@ -204,6 +204,14 @@
           "destination": "/customer.html"
         },
         {
+          "source": "/salon**",
+          "destination": "/customer.html"
+        },
+        {
+          "source": "/bahce**",
+          "destination": "/customer.html"
+        },
+        {
           "source": "/iceri**",
           "destination": "/customer.html"
         },

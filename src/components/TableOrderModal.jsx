@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { isGeceDonercisi } from '../utils/sultanSomatTables';
+import { isGeceDonercisi, isLacromisa, getLacromisaTableTypeLabel } from '../utils/sultanSomatTables';
 
 const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPayment, onRequestAdisyon, onAddItems, onItemCancelled, onCancelEntireTable, tenantId }) => {
   const [sessionDuration, setSessionDuration] = useState('');
@@ -312,7 +312,7 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                 <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
                   Sipariş Detayları
                 </h2>
-                <p className="text-sm text-gray-500 mt-0.5">Masa: {order.table_name} • {order.table_type === 'inside' ? 'İç Masa' : 'Dış Masa'}</p>
+                <p className="text-sm text-gray-500 mt-0.5">Masa: {order.table_name} • {tenantId && isLacromisa(tenantId) ? getLacromisaTableTypeLabel(order.table_type) : (order.table_type === 'inside' ? 'İç Masa' : 'Dış Masa')}</p>
               </div>
             </div>
             <button
@@ -337,7 +337,7 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Tip</p>
                 <p className="text-base font-bold text-gray-900">
-                  {order.table_type === 'inside' ? 'İç Masa' : 'Dış Masa'}
+                  {tenantId && isLacromisa(tenantId) ? getLacromisaTableTypeLabel(order.table_type) : (order.table_type === 'inside' ? 'İç Masa' : 'Dış Masa')}
                 </p>
               </div>
               <div>
@@ -955,7 +955,7 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
               <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">İptal Edilecek Masa</p>
                 <p className="text-lg font-bold text-gray-900">{order.table_name}</p>
-                <p className="text-xs text-gray-500 mt-1">{order.table_type === 'inside' ? 'İç Masa' : 'Dış Masa'}</p>
+                <p className="text-xs text-gray-500 mt-1">{tenantId && isLacromisa(tenantId) ? getLacromisaTableTypeLabel(order.table_type) : (order.table_type === 'inside' ? 'İç Masa' : 'Dış Masa')}</p>
               </div>
             </div>
 

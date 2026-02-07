@@ -49,6 +49,7 @@ function App() {
   const [updateDownloadProgress, setUpdateDownloadProgress] = useState(null);
   const [tableRefreshTrigger, setTableRefreshTrigger] = useState(0);
   const [tableIdToOpenInTables, setTableIdToOpenInTables] = useState(null); // Gece Dönercisi: Masaya Kaydet sonrası masalar bölümünde bu masanın detayını aç
+  const [customerOrderPulsingTableId, setCustomerOrderPulsingTableId] = useState(null); // Müşteri siparişi (customer.html) geldiğinde bu masa altın yanıp söner, tıklanınca durur
   const [showExitSplash, setShowExitSplash] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showExpenseModal, setShowExpenseModal] = useState(false);
@@ -205,15 +206,16 @@ function App() {
           console.error('❌ window.electronAPI.onTenantSuspended mevcut değil!');
         }
 
-        // Customer order sound (customer.html)
+        // Customer order sound (customer.html) + sipariş gelen masayı altın yanıp söndür
         if (window.electronAPI.onCustomerOrderReceived) {
           const cleanup = window.electronAPI.onCustomerOrderReceived((data) => {
             try {
-              // /public/order.mp3 -> Vite dev: /order.mp3, build: /order.mp3
+              // Sipariş gelen masayı yanıp söndür (tıklanana kadar)
+              if (data && data.tableId) setCustomerOrderPulsingTableId(data.tableId);
+              // Ses
               const audio = new Audio('/order.mp3');
               audio.volume = 0.30;
               audio.currentTime = 0;
-              // aynı anda birden fazla çalmasın diye ref'te tut
               try {
                 if (customerOrderAudioRef.current) {
                   customerOrderAudioRef.current.pause();
@@ -718,8 +720,8 @@ function App() {
         setCart([]);
         setOrderNote('');
         
-        // Gece Dönercisi (TENANT-1769602125250): Masaya Kaydet sonrası masalar bölümüne geç ve bu masanın detayını aç
-        if (isGeceDonercisiMode && selectedTable?.id) {
+        // Gece Dönercisi ve Lacrimosa: Masaya Kaydet sonrası masalar bölümüne geç ve bu masanın detayını aç
+        if ((isGeceDonercisiMode || isLacromisaMode) && selectedTable?.id) {
           setTableIdToOpenInTables(selectedTable.id);
           setCurrentView('tables');
         }
@@ -1123,6 +1125,8 @@ function App() {
             refreshTrigger={tableRefreshTrigger}
             openTableId={tableIdToOpenInTables}
             onClearOpenTableId={() => setTableIdToOpenInTables(null)}
+            pulsingTableId={customerOrderPulsingTableId}
+            onClearPulsingTable={() => setCustomerOrderPulsingTableId(null)}
             onShowReceipt={(receiptData) => {
               setReceiptData(receiptData);
               setShowReceiptModal(true);
@@ -1265,7 +1269,7 @@ function App() {
         </div>
       ) : (
         <div className="p-6">
-          <SalesHistory themeColor={themeColor} />
+          <SalesHistory themeColor={themeColor} tenantId={tenantId} />
         </div>
       )}
 

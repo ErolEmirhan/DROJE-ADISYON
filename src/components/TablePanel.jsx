@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import TableOrderModal from './TableOrderModal';
 import TablePartialPaymentModal from './TablePartialPaymentModal';
 import TableTransferModal from './TableTransferModal';
-import { isSultanSomati, generateSultanSomatiTables, SULTAN_SOMATI_SALONS, isYakasGrill, generateYakasGrillTables, isGeceDonercisi, generateGeceDonercisiTables, GECE_DONERCISI_CATEGORIES, isLacromisa } from '../utils/sultanSomatTables';
+import { isSultanSomati, generateSultanSomatiTables, SULTAN_SOMATI_SALONS, isYakasGrill, generateYakasGrillTables, isGeceDonercisi, generateGeceDonercisiTables, GECE_DONERCISI_CATEGORIES, isLacromisa, LACROMISA_INSIDE_LABEL, LACROMISA_OUTSIDE_LABEL, getLacromisaTableName } from '../utils/sultanSomatTables';
 import { getGeceSelectedBranch } from '../utils/geceDonercisiBranchSelection';
 
-const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, insideTablesCount = 20, outsideTablesCount = 20, packageTablesCount = 5, openTableId = null, onClearOpenTableId = null }) => {
+const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, insideTablesCount = 20, outsideTablesCount = 20, packageTablesCount = 5, openTableId = null, onClearOpenTableId = null, pulsingTableId = null, onClearPulsingTable = null }) => {
   const isSultanSomatiMode = isSultanSomati(tenantId);
   const isYakasGrillMode = isYakasGrill(tenantId);
   const isGeceDonercisiMode = isGeceDonercisi(tenantId);
@@ -145,7 +145,9 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
     return geceDonercisiTables.filter(table => table.type === selectedType);
   }, [isGeceDonercisiMode, geceDonercisiTables, selectedType, openTablesFromOrders]);
 
-  // Normal mod için masalar
+  // Normal mod için masalar (Lacromisa: Salon/Bahçe isimleri)
+  const insideTableLabel = isLacromisaMode ? LACROMISA_INSIDE_LABEL : 'İçeri';
+  const outsideTableLabel = isLacromisaMode ? LACROMISA_OUTSIDE_LABEL : 'Dışarı';
   const insideTables = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
     console.log('🔄 insideTables oluşturuluyor, count:', effectiveInsideTablesCount);
@@ -153,9 +155,9 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       id: `inside-${i + 1}`,
       number: i + 1,
       type: 'inside',
-      name: `İçeri ${i + 1}`
+      name: `${insideTableLabel} ${i + 1}`
     }));
-  }, [effectiveInsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode]);
+  }, [effectiveInsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode, insideTableLabel]);
 
   const outsideTables = useMemo(() => {
     if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return [];
@@ -164,9 +166,9 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
       id: `outside-${i + 1}`,
       number: i + 1,
       type: 'outside',
-      name: `Dışarı ${i + 1}`
+      name: `${outsideTableLabel} ${i + 1}`
     }));
-  }, [effectiveOutsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode]);
+  }, [effectiveOutsideTablesCount, isSultanSomatiMode, isYakasGrillMode, isGeceDonercisiMode, outsideTableLabel]);
 
   // Paket masaları (hem içeri hem dışarı için) - Sultan Somatı, Yaka's Grill ve Gece Dönercisi'nde yok
   const packageTables = useMemo(() => {
@@ -286,14 +288,13 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
     }
   };
 
-  // Masa butonuna tıklandığında
+  // Masa butonuna tıklandığında (müşteri siparişi yanıp sönmesi varsa tıklanınca durdur)
   const handleTableClick = (table) => {
+    if (onClearPulsingTable && table.id === pulsingTableId) onClearPulsingTable();
     const order = getTableOrder(table.id);
     if (order) {
-      // Sipariş varsa detayları göster
       handleViewOrder(table);
     } else {
-      // Sipariş yoksa yeni sipariş oluştur
       onSelectTable(table);
     }
   };
@@ -397,7 +398,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
             id: tableId,
             number: number,
             type: 'inside',
-            name: `İçeri ${number}`
+            name: isLacromisaMode ? getLacromisaTableName(tableId) : `İçeri ${number}`
           };
         } else if (tableId.startsWith('outside-')) {
           const number = parseInt(tableId.replace('outside-', ''));
@@ -405,7 +406,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
             id: tableId,
             number: number,
             type: 'outside',
-            name: `Dışarı ${number}`
+            name: isLacromisaMode ? getLacromisaTableName(tableId) : `Dışarı ${number}`
           };
         } else if (tableId.startsWith('package-')) {
           const parts = tableId.split('-');
@@ -912,7 +913,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
           ))}
         </div>
       ) : (
-        /* Normal Mod için Masa Tipi Seçimi */
+        /* Normal Mod / Lacromisa için Masa Tipi Seçimi (Lacromisa: Salon/Bahçe) */
         <div className="flex justify-center gap-4 mb-4">
           <button
             onClick={() => setSelectedType('inside')}
@@ -926,7 +927,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
               </svg>
-              <span>İçeri</span>
+              <span>{insideTableLabel}</span>
             </div>
           </button>
           
@@ -942,7 +943,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
               </svg>
-              <span>Dışarı</span>
+              <span>{outsideTableLabel}</span>
             </div>
           </button>
         </div>
@@ -970,11 +971,13 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
           const isGeceYemeksepeti = isGeceDonercisiMode && table.type === 'yemeksepeti';
           const isGeceMigros = isGeceDonercisiMode && table.type === 'migros-yemek';
 
+          const isPulsing = pulsingTableId === table.id;
+
           return (
             <button
               key={table.id}
               onClick={() => handleTableClick(table)}
-              className={`table-btn group relative overflow-hidden rounded-md p-1 border transition-all duration-300 hover:shadow-sm hover:scale-105 active:scale-95 aspect-square ${
+              className={`table-btn group relative overflow-hidden rounded-md p-1 border transition-all duration-300 hover:shadow-sm hover:scale-105 active:scale-95 aspect-square ${isPulsing ? 'customer-order-pulse' : ''} ${
                 hasOrder
                   // Dolu masalar – kan kırmızısı tonlar
                   ? 'bg-gradient-to-br from-red-700 to-red-900 border-red-800 hover:border-red-900'
@@ -1009,6 +1012,15 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
                   : 'bg-gradient-to-br from-pink-50 to-pink-100 border-pink-200 hover:border-pink-300'
               }`}
             >
+              {/* Müşteri siparişi geldi: yanıp sönerken "Sipariş Geldi" + zil */}
+              {isPulsing && (
+                <div className="absolute inset-x-0 top-0 rounded-t-md bg-amber-500/95 text-white flex items-center justify-center gap-1.5 py-1 px-2 z-10 shadow-inner">
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+                  <span className="font-bold text-[10px] leading-tight uppercase tracking-wide whitespace-nowrap">Sipariş Geldi</span>
+                </div>
+              )}
               <div className="flex flex-col items-center justify-center space-y-1 h-full">
                 {/* Gece Dönercisi: Masa numarası/adı en üstte, büyük (Salon 4, Bahçe 2 vb.) */}
                 {isGeceDonercisiMode && (

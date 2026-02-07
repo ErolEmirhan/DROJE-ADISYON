@@ -17,6 +17,22 @@
   }
 }
 
+/* Müşteri siparişi geldiğinde masanın altın sarısı yanıp sönmesi (customer.html → order.mp3), tıklanınca durur */
+@keyframes customer-order-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.4), 0 0 12px 2px rgba(234, 179, 8, 0.25);
+    filter: brightness(1.08);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(250, 204, 21, 0.8), 0 0 28px 12px rgba(234, 179, 8, 0.5);
+    filter: brightness(1.3);
+  }
+}
+.customer-order-pulse {
+  animation: customer-order-pulse 1.1s ease-in-out infinite;
+  border-color: rgb(234, 179, 8) !important;
+}
+
 @layer components {
   .btn-gradient {
     @apply px-6 py-3 rounded-xl font-semibold text-white transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-lg;

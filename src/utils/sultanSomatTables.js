@@ -137,6 +137,35 @@ export function isLacromisa(tenantId) {
   return tenantId === LACROMISA_TENANT_ID;
 }
 
+// Lacromisa (TENANT-1769956051654): masa kategorileri "Salon" / "Bahçe" (içeri/dışarı değil)
+export const LACROMISA_INSIDE_LABEL = 'Salon';
+export const LACROMISA_OUTSIDE_LABEL = 'Bahçe';
+
+/**
+ * Lacromisa için masa tipi etiketini döndürür (inside → Salon, outside → Bahçe)
+ */
+export function getLacromisaTableTypeLabel(tableType) {
+  if (tableType === 'inside') return LACROMISA_INSIDE_LABEL;
+  if (tableType === 'outside') return LACROMISA_OUTSIDE_LABEL;
+  return tableType;
+}
+
+/**
+ * Lacromisa için masa adını döndürür (inside-1 → "Salon 1", outside-1 → "Bahçe 1")
+ */
+export function getLacromisaTableName(tableId) {
+  if (!tableId) return '';
+  if (tableId.startsWith('inside-')) {
+    const num = tableId.replace('inside-', '');
+    return `${LACROMISA_INSIDE_LABEL} ${num}`;
+  }
+  if (tableId.startsWith('outside-')) {
+    const num = tableId.replace('outside-', '');
+    return `${LACROMISA_OUTSIDE_LABEL} ${num}`;
+  }
+  return tableId;
+}
+
 /**
  * Gece Dönercisi için 6 kategoride 30'ar masa oluşturur (mobil personel ile senkron)
  * ID formatı: salon-1, bahce-1, paket-1, trendyolgo-1, yemeksepeti-1, migros-yemek-1

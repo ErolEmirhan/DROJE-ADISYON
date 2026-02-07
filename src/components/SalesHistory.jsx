@@ -2,8 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import PrintToast from './PrintToast';
 import DatePickerDropdown from './DatePickerDropdown';
 import { getThemeColors } from '../utils/themeUtils';
+import { isLacromisa } from '../utils/sultanSomatTables';
 
-const SalesHistory = ({ themeColor = '#f97316' }) => {
+const SalesHistory = ({ themeColor = '#f97316', tenantId = null }) => {
+  const isLacromisaMode = isLacromisa(tenantId);
   // Tema renklerini hesapla
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   const [sales, setSales] = useState([]);
@@ -1180,7 +1182,7 @@ const SalesHistory = ({ themeColor = '#f97316' }) => {
                             </div>
                             <div className="flex-1">
                               <p className="font-bold text-gray-800">
-                                {sale.table_name ? `${sale.table_type === 'inside' ? 'İç' : 'Dış'} Masa ${sale.table_name}` : 'Hızlı Satış'}
+                                {sale.table_name ? (isLacromisaMode ? sale.table_name : `${sale.table_type === 'inside' ? 'İç' : 'Dış'} Masa ${sale.table_name}`) : 'Hızlı Satış'}
                               </p>
                               <p className="text-sm text-gray-600">
                                 {sale.sale_date} {sale.sale_time}

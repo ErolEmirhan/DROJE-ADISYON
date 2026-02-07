@@ -2804,12 +2804,16 @@ ipcMain.handle('transfer-table-order', async (event, sourceTableId, targetTableI
   let targetTableName = '';
   let targetTableType = sourceOrder.table_type; // Varsayılan olarak kaynak masanın tipi
 
-  // Masa ID'sinden masa bilgilerini çıkar (Gece Dönercisi: salon-1, bahce-1, paket-1, trendyolgo-1, yemeksepeti-1, migros-yemek-1)
+  // Masa ID'sinden masa bilgilerini çıkar (Gece Dönercisi: salon-1, bahce-1, ...; Lacromisa: Salon/Bahçe)
+  const tenantInfoTransfer = tenantManager.getCurrentTenantInfo();
+  const isLacromisaTransfer = tenantInfoTransfer?.tenantId === LACRIMOSA_TENANT_ID;
   if (targetTableId.startsWith('inside-')) {
-    targetTableName = `İçeri ${targetTableId.replace('inside-', '')}`;
+    const num = targetTableId.replace('inside-', '');
+    targetTableName = isLacromisaTransfer ? `Salon ${num}` : `İçeri ${num}`;
     targetTableType = 'inside';
   } else if (targetTableId.startsWith('outside-')) {
-    targetTableName = `Dışarı ${targetTableId.replace('outside-', '')}`;
+    const num = targetTableId.replace('outside-', '');
+    targetTableName = isLacromisaTransfer ? `Bahçe ${num}` : `Dışarı ${num}`;
     targetTableType = 'outside';
   } else if (targetTableId.startsWith('package-')) {
     const parts = targetTableId.split('-');
@@ -6960,7 +6964,13 @@ function generateAdisyonHTML(items, adisyonData) {
 // Mobil HTML oluştur
 // İptal fişi HTML formatı
 function generateCancelReceiptHTML(cancelData) {
-  const tableTypeText = cancelData.tableType === 'inside' ? 'İç Masa' : 'Dış Masa';
+  const tenantInfoCancel = tenantManager.getCurrentTenantInfo();
+  const isLacromisaCancel = tenantInfoCancel?.tenantId === LACRIMOSA_TENANT_ID;
+  const tableTypeText = cancelData.tableTypeDisplay != null
+    ? cancelData.tableTypeDisplay
+    : (isLacromisaCancel
+      ? (cancelData.tableType === 'inside' ? 'Salon Masa' : 'Bahçe Masa')
+      : (cancelData.tableType === 'inside' ? 'İç Masa' : 'Dış Masa'));
   
   return `
     <!DOCTYPE html>
@@ -7244,6 +7254,12 @@ function generateMobileHTML(serverURL) {
     : (tenantInfo?.packageTables !== undefined && tenantInfo?.packageTables !== null
       ? tenantInfo.packageTables
       : 5);
+
+  // Lacromisa: masa kategorileri Salon/Bahçe (içeri/dışarı değil)
+  const insideLabelBig = isLacromisa ? 'SALON' : 'İÇERİ';
+  const outsideLabelBig = isLacromisa ? 'BAHÇE' : 'DIŞARI';
+  const insideLabelShort = isLacromisa ? 'Salon' : 'İç';
+  const outsideLabelShort = isLacromisa ? 'Bahçe' : 'Dış';
   
   // Tema renklerini hesapla (basit versiyon)
   const hexToRgb = (hex) => {
@@ -8606,8 +8622,8 @@ function generateMobileHTML(serverURL) {
         <span>Çıkış Yap</span>
       </button>
       
-      <!-- Masa Tipi Seçim Ekranı (İç/Dış) - Sadece Normal Mod için; Gece Dönercisi'nde gösterilmez -->
-      ${!isSultanSomati && !isYakasGrill && !isGeceDonercisi ? `
+      <!-- Masa Tipi Seçim Ekranı (İç/Dış) - Sadece Normal Mod için; Lacrimosa ve Gece Dönercisi'nde gösterilmez -->
+      ${!isSultanSomati && !isYakasGrill && !isGeceDonercisi && !isLacromisa ? `
       <div id="tableTypeSelection" style="display: block; position: fixed; inset: 0; background: white; z-index: 1000; overflow-y: auto; display: flex; flex-direction: column; padding: 20px;">
         <!-- Çıkış Yap Butonu - Sadece bu ekranda görünsün -->
         <div style="position: fixed; top: 20px; right: 20px; z-index: 1001;">
@@ -8626,21 +8642,21 @@ function generateMobileHTML(serverURL) {
             <svg width="80" height="80" fill="none" stroke="${primaryLight}" viewBox="0 0 24 24" stroke-width="1.5" style="transition: all 0.2s;">
               <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"/>
             </svg>
-            <div style="font-size: 32px; font-weight: 800; color: #111827; letter-spacing: 1px;">İÇERİ</div>
+            <div style="font-size: 32px; font-weight: 800; color: #111827; letter-spacing: 1px;">${insideLabelBig}</div>
           </button>
           
-          <!-- Dışarı Butonu -->
+          <!-- Dışarı/Bahçe Butonu -->
           <button onclick="selectTableTypeScreen('outside')" style="width: 100%; min-height: 280px; background: ${primaryLight}15; border: 3px solid ${primaryLight}80; border-radius: 20px; color: #111827; font-size: 24px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; position: relative; box-shadow: 0 4px 16px ${primary}40;" onmouseover="this.style.borderColor='${primary}'; this.style.boxShadow='0 12px 32px ${primary}60'; this.style.transform='translateY(-6px)'" onmouseout="this.style.borderColor='${primaryLight}80'; this.style.boxShadow='0 4px 16px ${primary}40'; this.style.transform='translateY(0)'">
             <svg width="80" height="80" fill="none" stroke="${primary}" viewBox="0 0 24 24" stroke-width="1.5" style="transition: all 0.2s;">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.944 11.944 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418"/>
             </svg>
-            <div style="font-size: 32px; font-weight: 800; color: #111827; letter-spacing: 1px;">DIŞARI</div>
+            <div style="font-size: 32px; font-weight: 800; color: #111827; letter-spacing: 1px;">${outsideLabelBig}</div>
           </button>
         </div>
       </div>
       ` : ''}
       
-      <div id="tableSelection" style="display: ${isSultanSomati || isYakasGrill || isGeceDonercisi ? 'block' : 'none'};">
+      <div id="tableSelection" style="display: ${isSultanSomati || isYakasGrill || isGeceDonercisi || isLacromisa ? 'block' : 'none'};">
         ${isSultanSomati || isYakasGrill || isGeceDonercisi ? `
         <!-- Sultan Somatı / Yaka's Grill / Gece Dönercisi - Üst Header (Koyu Gri) -->
         <div style="position: fixed; top: 0; left: 0; right: 0; height: 50px; background: #2d2d2d; z-index: 1000; display: flex; align-items: center; justify-content: space-between; padding: 0 15px;">
@@ -8752,16 +8768,8 @@ function generateMobileHTML(serverURL) {
         </div>
         ` : ''}
         ` : `
-        <!-- Normal Mod - Geri Dönüş Butonu -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-          <button onclick="goBackToTypeSelection()" style="display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); color: white; border: none; border-radius: 12px; font-size: 14px; font-weight: 700; box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3); transition: all 0.3s; cursor: pointer;" onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 6px 16px rgba(107, 114, 128, 0.4)'" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(107, 114, 128, 0.3)'">
-            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-            </svg>
-            Geri Dön
-          </button>
-          
-          <!-- Masa Aktar Butonu -->
+        <!-- Normal Mod / Lacrimosa - Sadece Masa Aktar (Geri Dön kaldırıldı) -->
+        <div style="display: flex; justify-content: flex-end; align-items: center; margin-bottom: 12px;">
           <button onclick="showTransferModal()" class="transfer-table-btn" style="display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: linear-gradient(135deg, #4f46e5 0%, #2563eb 100%); color: white; border: none; border-radius: 12px; font-size: 14px; font-weight: 700; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3); transition: all 0.3s; cursor: pointer;" onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 6px 16px rgba(79, 70, 229, 0.4)'" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 4px 12px rgba(79, 70, 229, 0.3)'">
             <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
@@ -8770,10 +8778,10 @@ function generateMobileHTML(serverURL) {
           </button>
         </div>
         
-        <!-- İç/Dış Tab'leri (Normal Mod için) -->
+        <!-- İç/Dış veya Salon/Bahçe Tab'leri (Normal Mod / Lacromisa) -->
         <div class="table-type-tabs" style="display: flex;">
-          <button class="table-type-tab active" data-type="inside" onclick="selectTableType('inside')">🏠 İç</button>
-          <button class="table-type-tab" data-type="outside" onclick="selectTableType('outside')">🌳 Dış</button>
+          <button class="table-type-tab active" data-type="inside" onclick="selectTableType('inside')">🏠 ${insideLabelShort}</button>
+          <button class="table-type-tab" data-type="outside" onclick="selectTableType('outside')">🌳 ${outsideLabelShort}</button>
         </div>
         `}
         
@@ -9513,6 +9521,15 @@ function generateMobileHTML(serverURL) {
               firstTab.style.boxShadow = '0 4px 14px rgba(51,65,85,0.35)';
             }
           }
+        } else if (isLacromisaMode) {
+          const tableSelection = document.getElementById('tableSelection');
+          if (tableSelection) tableSelection.style.display = 'block';
+          const cart = document.getElementById('cart');
+          if (cart) cart.style.display = 'block';
+          currentTableType = 'inside';
+          document.querySelectorAll('.table-type-tab').forEach(t => { t.classList.remove('active'); });
+          const insideTab = document.querySelector('.table-type-tab[data-type="inside"]');
+          if (insideTab) { insideTab.classList.add('active'); }
         } else {
           const tableTypeSelection = document.getElementById('tableTypeSelection');
           if (tableTypeSelection) tableTypeSelection.style.display = 'flex';
@@ -9610,6 +9627,15 @@ function generateMobileHTML(serverURL) {
                   firstTab.style.boxShadow = '0 4px 14px rgba(51,65,85,0.35)';
                 }
               }
+            } else if (isLacromisaMode) {
+              const tableSelection = document.getElementById('tableSelection');
+              if (tableSelection) tableSelection.style.display = 'block';
+              const cart = document.getElementById('cart');
+              if (cart) cart.style.display = 'block';
+              currentTableType = 'inside';
+              document.querySelectorAll('.table-type-tab').forEach(t => { t.classList.remove('active'); });
+              const insideTab = document.querySelector('.table-type-tab[data-type="inside"]');
+              if (insideTab) { insideTab.classList.add('active'); }
             } else {
               const tableTypeSelection = document.getElementById('tableTypeSelection');
               if (tableTypeSelection) tableTypeSelection.style.display = 'flex';
@@ -9768,9 +9794,9 @@ function generateMobileHTML(serverURL) {
       renderTables();
     }
     
-    // Geri dönüş butonu (Normal Mod için)
+    // Geri dönüş butonu (Normal Mod için - Lacrimosa'da bu ekran yok, buton da kaldırıldı)
     function goBackToTypeSelection() {
-      if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) return; // Özel tenant modları için geri dönüş yok
+      if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode || isLacromisaMode) return; // Özel tenant modları için geri dönüş yok
       const tableSelection = document.getElementById('tableSelection');
       if (tableSelection) tableSelection.style.display = 'none';
       const tableTypeSelection = document.getElementById('tableTypeSelection');
@@ -9961,7 +9987,7 @@ function generateMobileHTML(serverURL) {
           
           // Normal mod için eski tasarım
           // Masa numaralandırması: İç Masa 1, Dış Masa 1 gibi
-          const tableTypeLabel = table.type === 'inside' ? 'İç Masa' : 'Dış Masa';
+          const tableTypeLabel = table.type === 'inside' ? (isLacromisaMode ? 'Salon' : 'İç Masa') : (isLacromisaMode ? 'Bahçe' : 'Dış Masa');
           const tableDisplayName = tableTypeLabel + ' ' + table.number;
           
           // Durum etiketi: Dolu veya Boş
@@ -10243,14 +10269,14 @@ function generateMobileHTML(serverURL) {
       // Alt navigasyon bar'ı göster (masa görünümüne dönüldüğünde)
       const bottomNavBar = document.getElementById('bottomNavBar');
       if (bottomNavBar) bottomNavBar.style.display = 'flex';
-      // Sultan Somatı, Yaka's Grill ve Gece Dönercisi için direkt masa ekranını göster (6 kategori + 30 masa); normal mod için iç/dış seçim ekranı
-      if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode) {
+      // Sultan Somatı, Yaka's Grill, Gece Dönercisi ve Lacrimosa için direkt masa ekranını göster; normal mod için iç/dış seçim ekranı
+      if (isSultanSomatiMode || isYakasGrillMode || isGeceDonercisiMode || isLacromisaMode) {
         const tableSelection = document.getElementById('tableSelection');
         if (tableSelection) tableSelection.style.display = 'block';
         if (isSultanSomatiMode) {
           updateBottomNavActive('tables');
         }
-        if (isYakasGrillMode || isGeceDonercisiMode) {
+        if (isYakasGrillMode || isGeceDonercisiMode || isLacromisaMode) {
           renderTables();
         }
       } else {
@@ -12538,7 +12564,7 @@ function startAPIServer() {
         });
       }
     } else if (isLacromisa) {
-      // Lacromisa: 15 içeri / 15 dışarı, paket yok (websocket/mobil ile aynı ID şeması)
+      // Lacromisa: 15 salon / 15 bahçe, paket yok (websocket/mobil ile aynı ID şeması)
       const insideTablesCount = 15;
       const outsideTablesCount = 15;
 
@@ -12551,7 +12577,7 @@ function startAPIServer() {
           id: tableId,
           number: i,
           type: 'inside',
-          name: `İçeri ${i}`,
+          name: `Salon ${i}`,
           hasOrder: hasPendingOrder
         });
       }
@@ -12564,7 +12590,7 @@ function startAPIServer() {
           id: tableId,
           number: i,
           type: 'outside',
-          name: `Dışarı ${i}`,
+          name: `Bahçe ${i}`,
           hasOrder: hasPendingOrder
         });
       }
@@ -12644,6 +12670,8 @@ function startAPIServer() {
   appExpress.post('/api/transfer-table-order', async (req, res) => {
     try {
       const { sourceTableId, targetTableId } = req.body;
+      const tenantInfoApi = tenantManager.getCurrentTenantInfo();
+      const isLacromisaApi = tenantInfoApi?.tenantId === LACRIMOSA_TENANT_ID;
       
       if (!sourceTableId || !targetTableId) {
         return res.status(400).json({ success: false, error: 'Kaynak ve hedef masa ID\'leri gerekli' });
@@ -12674,16 +12702,18 @@ function startAPIServer() {
         return res.status(400).json({ success: false, error: 'Aktarılacak ürün bulunamadı' });
       }
 
-      // Hedef masa bilgilerini al (masa adı ve tipi)
+      // Hedef masa bilgilerini al (masa adı ve tipi) — Lacromisa: Salon/Bahçe
       let targetTableName = '';
       let targetTableType = sourceOrder.table_type; // Varsayılan olarak kaynak masanın tipi
 
       // Masa ID'sinden masa bilgilerini çıkar
       if (targetTableId.startsWith('inside-')) {
-        targetTableName = `İçeri ${targetTableId.replace('inside-', '')}`;
+        const num = targetTableId.replace('inside-', '');
+        targetTableName = isLacromisaApi ? `Salon ${num}` : `İçeri ${num}`;
         targetTableType = 'inside';
       } else if (targetTableId.startsWith('outside-')) {
-        targetTableName = `Dışarı ${targetTableId.replace('outside-', '')}`;
+        const num = targetTableId.replace('outside-', '');
+        targetTableName = isLacromisaApi ? `Bahçe ${num}` : `Dışarı ${num}`;
         targetTableType = 'outside';
       } else if (targetTableId.startsWith('package-')) {
         const parts = targetTableId.split('-');
@@ -12975,6 +13005,7 @@ function startAPIServer() {
     const tenantInfo = tenantManager.getCurrentTenantInfo();
     const tenantId = tenantInfo?.tenantId || null;
     const isSultanSomati = tenantId === 'TENANT-1766611377865';
+    const isLacromisaAllOrders = tenantId === 'TENANT-1769956051654';
     
     const orders = (db.tableOrders || []).filter(
       o => o.status === 'pending'
@@ -13017,13 +13048,13 @@ function startAPIServer() {
             tableName = `Masa ${order.table_id}`;
           }
         } else {
-          // Normal mod için masa ID'sinden masa adını oluştur
+          // Normal mod / Lacromisa için masa ID'sinden masa adını oluştur
           if (order.table_id.startsWith('inside-')) {
             const number = order.table_id.replace('inside-', '');
-            tableName = `İçeri ${number}`;
+            tableName = isLacromisaAllOrders ? `Salon ${number}` : `İçeri ${number}`;
           } else if (order.table_id.startsWith('outside-')) {
             const number = order.table_id.replace('outside-', '');
-            tableName = `Dışarı ${number}`;
+            tableName = isLacromisaAllOrders ? `Bahçe ${number}` : `Dışarı ${number}`;
           } else if (order.table_id.startsWith('package-')) {
             const number = order.table_id.replace(/^package-(inside|outside)-/, '');
             tableName = `Paket ${number}`;
@@ -14060,13 +14091,14 @@ async function syncSingleTableToFirebase(tableId) {
     let tableName = '';
     let tableType = 'inside';
     
+    const isLacromisaActiveOrder = tenantManager.getCurrentTenantInfo()?.tenantId === LACRIMOSA_TENANT_ID;
     if (tableId.startsWith('inside-')) {
       tableNumber = parseInt(tableId.replace('inside-', '')) || 0;
-      tableName = `İçeri ${tableNumber}`;
+      tableName = isLacromisaActiveOrder ? `Salon ${tableNumber}` : `İçeri ${tableNumber}`;
       tableType = 'inside';
     } else if (tableId.startsWith('outside-')) {
       tableNumber = parseInt(tableId.replace('outside-', '')) || 0;
-      tableName = `Dışarı ${tableNumber}`;
+      tableName = isLacromisaActiveOrder ? `Bahçe ${tableNumber}` : `Dışarı ${tableNumber}`;
       tableType = 'outside';
     } else if (tableId.startsWith('package-inside-')) {
       tableNumber = parseInt(tableId.replace('package-inside-', '')) || 0;
