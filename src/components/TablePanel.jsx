@@ -40,6 +40,7 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [errorToast, setErrorToast] = useState(null);
+  const [productsForModal, setProductsForModal] = useState([]); // Gece Dönercisi: Su Ekle için ürün listesi
 
   // Debug: Masa sayılarını logla
   useEffect(() => {
@@ -247,6 +248,10 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
           setSelectedOrder(order);
           setOrderItems(items || []);
           setShowModal(true);
+          if (isGeceDonercisiMode && window.electronAPI.getProducts) {
+            const all = await window.electronAPI.getProducts(null);
+            if (!cancelled) setProductsForModal(Array.isArray(all) ? all : []);
+          }
         }
       } catch (err) {
         console.error('Masa detayı açılırken hata:', err);
@@ -282,9 +287,39 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
         setSelectedOrder(order);
         setOrderItems(items || []);
         setShowModal(true);
+        if (isGeceDonercisiMode && window.electronAPI.getProducts) {
+          const all = await window.electronAPI.getProducts(null);
+          setProductsForModal(Array.isArray(all) ? all : []);
+        }
       } catch (error) {
         console.error('Sipariş detayları yüklenemedi:', error);
       }
+    }
+  };
+
+  // Gece Dönercisi: siparişe su ekle (Su Ekle butonu)
+  const handleAddWater = async () => {
+    if (!selectedOrder || !window.electronAPI?.addItemToTableOrder) return;
+    const isWaterProduct = (p) => {
+      const n = (p?.name || '').toLowerCase().trim();
+      return n === 'su' || n.startsWith('su ') || n.includes(' su ') || n.endsWith(' su');
+    };
+    const su = productsForModal.find(isWaterProduct);
+    if (!su) {
+      alert('Ürün listesinde su bulunamadı. Lütfen ürünlerde Su veya adında "su" geçen bir ürün ekleyin.');
+      return;
+    }
+    try {
+      await window.electronAPI.addItemToTableOrder(selectedOrder.id, { id: su.id, name: su.name, price: su.price ?? 0 }, 1);
+      const updatedItems = await window.electronAPI.getTableOrderItems(selectedOrder.id);
+      setOrderItems(updatedItems || []);
+      const orders = await window.electronAPI.getTableOrders();
+      const updated = orders.find(o => o.id === selectedOrder.id);
+      if (updated) setSelectedOrder(updated);
+      loadTableOrders();
+    } catch (e) {
+      console.error('Su eklenemedi:', e);
+      alert(e?.message || 'Su eklenemedi');
     }
   };
 
@@ -1235,6 +1270,8 @@ const TablePanel = ({ onSelectTable, refreshTrigger, onShowReceipt, tenantId, in
           order={selectedOrder}
           items={orderItems}
           tenantId={tenantId}
+          products={productsForModal}
+          onAddWater={isGeceDonercisiMode ? handleAddWater : null}
           onClose={() => {
             setShowModal(false);
             setSelectedOrder(null);

@@ -2351,6 +2351,51 @@ ipcMain.handle('get-table-order-items', (event, orderId) => {
   return db.tableOrderItems.filter(oi => oi.order_id === orderId);
 });
 
+// Mevcut masa siparişine ürün ekle (örn. Su Ekle)
+ipcMain.handle('add-item-to-table-order', async (event, orderId, product, quantity = 1) => {
+  const order = db.tableOrders.find(o => o.id === orderId);
+  if (!order) return { success: false, error: 'Sipariş bulunamadı' };
+  if (order.status !== 'pending') return { success: false, error: 'Sadece bekleyen siparişe ürün eklenebilir' };
+  const productId = product?.id != null ? product.id : null;
+  const productName = product?.name || 'Ürün';
+  const price = Number(product?.price ?? 0);
+  const qty = Math.max(1, parseInt(quantity, 10) || 1);
+
+  const orderDate = order.order_date || getBusinessDayDateString(new Date());
+  const orderTime = order.order_time || getFormattedTime(new Date());
+  const newId = db.tableOrderItems.length > 0 ? Math.max(...db.tableOrderItems.map(oi => oi.id)) + 1 : 1;
+  if (!db.tableOrderItems) db.tableOrderItems = [];
+  db.tableOrderItems.push({
+    id: newId,
+    order_id: orderId,
+    product_id: productId,
+    product_name: productName,
+    quantity: qty,
+    price,
+    portion: null,
+    onionOption: null,
+    extraNote: null,
+    donerOptionsText: null,
+    donerKey: null,
+    isGift: false,
+    staff_id: null,
+    staff_name: null,
+    added_date: orderDate,
+    added_time: orderTime,
+  });
+  const orderIndex = db.tableOrders.findIndex(o => o.id === orderId);
+  if (orderIndex !== -1) {
+    db.tableOrders[orderIndex].total_amount = Number(db.tableOrders[orderIndex].total_amount || 0) + price * qty;
+  }
+  saveDatabase();
+  const tableId = order.table_id;
+  syncSingleTableToFirebase(tableId).catch(err => console.error('Masa Firebase sync:', err));
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('table-order-updated', { tableId });
+  }
+  return { success: true, itemId: newId };
+});
+
 // Masa siparişinden ürün iptal etme
 ipcMain.handle('cancel-table-order-item', async (event, itemId, cancelQuantity, cancelReason = null, staffId = null) => {
   const item = db.tableOrderItems.find(oi => oi.id === itemId);

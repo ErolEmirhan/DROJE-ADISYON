@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createTableOrder: (orderData) => ipcRenderer.invoke('create-table-order', orderData),
   getTableOrders: (tableId) => ipcRenderer.invoke('get-table-orders', tableId),
   getTableOrderItems: (orderId) => ipcRenderer.invoke('get-table-order-items', orderId),
+  addItemToTableOrder: (orderId, product, quantity) => ipcRenderer.invoke('add-item-to-table-order', orderId, product, quantity),
   cancelTableOrderItem: (itemId, cancelQuantity, cancelReason) => ipcRenderer.invoke('cancel-table-order-item', itemId, cancelQuantity, cancelReason),
   cancelTableOrderItemsBulk: (itemsToCancel, cancelReason) => ipcRenderer.invoke('cancel-table-order-items-bulk', itemsToCancel, cancelReason),
   previewCancelReceipt: (itemId, cancelQuantity) => ipcRenderer.invoke('preview-cancel-receipt', itemId, cancelQuantity),

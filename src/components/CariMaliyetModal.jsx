@@ -42,24 +42,54 @@ const CariMaliyetModal = ({ tenantId, themeColor = '#f97316', products = [], onC
   const handleSelectProduct = (product) => {
     if (!selectedStaff) return;
     const price = Number(product?.price || 0);
-    setRows((prev) => [
-      ...prev,
-      {
-        _localId: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        tenantId,
-        staffId: selectedStaff.id,
-        staffName: selectedStaff.name || selectedStaff.full_name || selectedStaff.username || 'Personel',
-        productId: product.id,
-        productName: product.name,
-        price,
-        source: 'pos',
-        type: 'cari-maliyet',
-      },
-    ]);
+    const staffId = selectedStaff.id;
+    const productId = product?.id != null ? product.id : null;
+    setRows((prev) => {
+      const existing = prev.find(
+        (r) => String(r.productId) === String(productId) && r.staffId === staffId
+      );
+      if (existing) {
+        return prev.map((r) =>
+          r._localId === existing._localId
+            ? { ...r, quantity: (r.quantity || 1) + 1 }
+            : r
+        );
+      }
+      return [
+        ...prev,
+        {
+          _localId: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          tenantId,
+          staffId,
+          staffName: selectedStaff.name || selectedStaff.full_name || selectedStaff.username || 'Personel',
+          productId,
+          productName: product.name,
+          price,
+          quantity: 1,
+          source: 'pos',
+          type: 'cari-maliyet',
+        },
+      ];
+    });
     setShowProductModal(false);
   };
 
   const removeRow = (localId) => setRows((prev) => prev.filter((r) => r._localId !== localId));
+
+  const totalUnits = useMemo(
+    () => rows.reduce((sum, r) => sum + (r.quantity || 1), 0),
+    [rows]
+  );
+
+  const changeRowQuantity = (localId, delta) => {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r._localId !== localId) return r;
+        const next = Math.max(1, (r.quantity || 1) + delta);
+        return { ...r, quantity: next };
+      })
+    );
+  };
 
   const handleSave = async () => {
     if (rows.length === 0) return;
@@ -73,10 +103,13 @@ const CariMaliyetModal = ({ tenantId, themeColor = '#f97316', products = [], onC
         throw new Error('Şube seçimi zorunludur. Ayarlar bölümünden SANCAK/ŞEKER seçiniz.');
       }
 
-      const toWrite = rows.map(({ _localId, ...rest }) => ({
-        ...rest,
-        ...(isGeceMode ? { branch, deviceId } : {}),
-      }));
+      // Her satırı quantity kadar tek kayıt olarak gönder (zahiyat API birim bazlı bekliyor olabilir)
+      const toWrite = rows.flatMap(({ _localId, quantity = 1, ...rest }) =>
+        Array.from({ length: Math.max(1, quantity) }, () => ({
+          ...rest,
+          ...(isGeceMode ? { branch, deviceId } : {}),
+        }))
+      );
 
       // CARİ MAALİYET: seçilen ürünler stoktan düşsün (Gece Dönercisi - şube stokları)
       // Önce stoktan düş, sonra zahiyat kaydet. Zahiyat kaydı başarısız olursa geri eklemeyi dene.
@@ -85,7 +118,7 @@ const CariMaliyetModal = ({ tenantId, themeColor = '#f97316', products = [], onC
         rows.forEach((r) => {
           const pid = r?.productId != null ? String(r.productId) : '';
           if (!pid) return;
-          counts.set(pid, (counts.get(pid) || 0) + 1);
+          counts.set(pid, (counts.get(pid) || 0) + (r.quantity || 1));
         });
 
         const items = Array.from(counts.entries()).map(([productId, qty]) => ({
@@ -249,41 +282,63 @@ const CariMaliyetModal = ({ tenantId, themeColor = '#f97316', products = [], onC
                 className="px-5 py-3 rounded-xl font-extrabold text-sm text-white shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ backgroundImage: theme.gradient.main }}
               >
-                {saving ? 'Kaydediliyor...' : `Kaydet (${rows.length})`}
+                {saving ? 'Kaydediliyor...' : `Kaydet (${totalUnits})`}
               </button>
             </div>
 
             <div className="border border-gray-200 rounded-2xl overflow-hidden">
               <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                 <div className="text-sm font-extrabold text-gray-800">Zahiyat</div>
-                <div className="text-xs text-gray-500">{rows.length} kayıt</div>
+                <div className="text-xs text-gray-500">{totalUnits} adet</div>
               </div>
 
               {rows.length === 0 ? (
                 <div className="p-6 text-sm text-gray-500">Henüz ürün eklenmedi.</div>
               ) : (
                 <div className="max-h-[40vh] overflow-y-auto">
-                  {rows.map((r) => (
-                    <div key={r._localId} className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-bold text-gray-900 truncate">{r.productName}</div>
-                        <div className="text-xs text-gray-500 mt-0.5">
-                          Personel: <span className="font-semibold text-gray-700">{r.staffName}</span>
+                  {rows.map((r) => {
+                    const qty = r.quantity || 1;
+                    return (
+                      <div key={r._localId} className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-bold text-gray-900 truncate">{r.productName}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            Personel: <span className="font-semibold text-gray-700">{r.staffName}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center rounded-xl border border-gray-200 bg-gray-50 overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => changeRowQuantity(r._localId, -1)}
+                              className="w-9 h-9 flex items-center justify-center text-gray-600 hover:bg-gray-100 font-black text-lg leading-none"
+                              title="Azalt"
+                            >
+                              −
+                            </button>
+                            <span className="min-w-[2rem] text-center text-sm font-extrabold text-gray-900 py-1">{qty}</span>
+                            <button
+                              type="button"
+                              onClick={() => changeRowQuantity(r._localId, 1)}
+                              className="w-9 h-9 flex items-center justify-center text-gray-600 hover:bg-gray-100 font-black text-lg leading-none"
+                              title="Artır"
+                            >
+                              +
+                            </button>
+                          </div>
+                          <div className="text-sm font-extrabold text-gray-900 whitespace-nowrap">₺{(Number(r.price || 0) * qty).toFixed(2)}</div>
+                          <button
+                            type="button"
+                            onClick={() => removeRow(r._localId)}
+                            className="w-9 h-9 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 flex items-center justify-center font-black"
+                            title="Sil"
+                          >
+                            ×
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <div className="text-sm font-extrabold text-gray-900 whitespace-nowrap">₺{Number(r.price || 0).toFixed(2)}</div>
-                        <button
-                          type="button"
-                          onClick={() => removeRow(r._localId)}
-                          className="w-9 h-9 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 flex items-center justify-center font-black"
-                          title="Sil"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

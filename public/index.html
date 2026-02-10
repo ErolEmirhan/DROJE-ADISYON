@@ -111,6 +111,7 @@
   <!-- Firebase SDK (Compat Version) -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   
   <script>
     // Tenant Config Firebase (tüm tenant'ların bilgilerini tutar)
@@ -144,16 +145,24 @@
     let activeTab = 'sales'; // 'sales', 'reports', 'staff', 'tables', 'cancels'
     let staffSelectedProducts = []; // (kullanılmıyor - personel detayı sadece isim listesi + modal)
     let reportBranchFilter = 'all'; // 'all' | 'SANCAK' | 'SEKER' - Detaylı raporlama şube filtresi
+    let analysisBranchFilter = null; // Analiz akışında seçilen şube: 'all' | 'SEKER' | 'SANCAK'
+    let selectedAnalysisType = null; // 'personel' | 'urun' | 'ciro'
+    let selectedStaffName = null;
+    let selectedProductName = null;
+    let analysisDateRange = { start: null, end: null }; // Date objeleri
     let salesDataLoaded = false; // Lazy load: satışlar sadece ilgili sekmeye girildiğinde yüklensin
     let deleteSalePendingId = null; // Silme onayı bekleyen satış doc id
     let reportDateFilter = 'all'; // 'all', 'yesterday', 'week', 'month', 'custom'
     let salesDateFilter = 'all'; // Satış geçmişi için tarih filtresi
+    let salesBranchFilter = 'all'; // Satış geçmişi şube filtresi: 'all' | 'SEKER' | 'SANCAK' (raporlama filtresinden bağımsız)
     let customDateRange = { start: null, end: null }; // Özel tarih aralığı
     let salesCustomDateRange = { start: null, end: null }; // Satış geçmişi için özel tarih aralığı
     let tablesUnsubscribe = null; // Masalar için real-time listener
     let activeTablesUnsubscribe = null; // Aktif masa sayısı için real-time listener
     let allStaticTables = {}; // Tüm masaları sakla (iç, dış, paket)
     let selectedStaffForMerge = new Set(); // Birleştirilecek personeller
+    let staffMerges = {};   // Personel birleştirme: { "Eski Ad": "Yeni Ad" } - kalıcı (settings/staff)
+    let staffDeleted = [];  // Silinen personel adları - kalıcı (settings/staff)
     let allStaticTablesByBranch = { SEKER: {}, SANCAK: {} }; // Gece Dönercisi: şube bazlı masalar (doc id: SEKER_salon-4, SANCAK_salon-4)
     let isGeceDonercisi = false; // Gece Dönercisi tenant'ında salon/bahçe masaları gösterilir
     let tenantDbRef = null; // Tenant config Firestore (PIN güncelleme için)
@@ -736,13 +745,14 @@
       }
     }
 
-    // Gece 03:00'a göre günlük tarih hesaplama fonksiyonları
-    // Gece 03:00'tan önceki saatler bir önceki güne ait sayılır
+    // İş günü bitiş saati: bu saatte (dahil) ve sonrası yeni gün sayılır. 04:00 = gece 00:00–03:59 önceki güne ait
+    const BUSINESS_DAY_CUTOFF_HOUR = 4;
+    // Gece 04:00'a göre günlük tarih hesaplama fonksiyonları
+    // Gece 04:00'tan önceki saatler (00:00–03:59) bir önceki güne ait sayılır
     function getBusinessDayDate() {
       const now = new Date();
       const hour = now.getHours();
-      // Eğer saat 03:00'tan önceyse, bir önceki günü döndür
-      if (hour < 3) {
+      if (hour < BUSINESS_DAY_CUTOFF_HOUR) {
         const yesterday = new Date(now);
         yesterday.setDate(yesterday.getDate() - 1);
         return yesterday;
@@ -758,29 +768,58 @@
       return `${day}.${month}.${year}`;
     }
 
-    // Bir satışın hangi iş gününe ait olduğunu hesapla (00:00-03:00 arası satışlar önceki güne ait)
+    // Firebase'den gelen sale_date'i her zaman DD.MM.YYYY string'e çevir (TR, ISO, Timestamp destekler)
+    function normalizeSaleDateInput(val) {
+      if (val == null || val === '') return null;
+      if (typeof val === 'string' && /^\d{1,2}\.\d{1,2}\.\d{4}$/.test(val.trim())) {
+        const parts = val.trim().split('.');
+        return `${parts[0].padStart(2, '0')}.${parts[1].padStart(2, '0')}.${parts[2]}`;
+      }
+      if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) {
+        const [y, m, d] = val.split('T')[0].split('-');
+        return `${d}.${m}.${y}`;
+      }
+      try {
+        const date = val && typeof val.toDate === 'function' ? val.toDate() : new Date(val);
+        if (!isNaN(date.getTime())) return normalizeDateString(date);
+      } catch (e) {}
+      return null;
+    }
+
+    // Bir satışın hangi iş gününe ait olduğunu hesapla (00:00–03:59 arası satışlar önceki güne ait, gece 04:00 kuralı)
+    // sale_date: takvim tarihi (Electron yeni) veya eski Electron iş günü tarihi olabilir - ikisi de doğru yansır
     function getSaleBusinessDay(saleDate, saleTime) {
-      if (!saleDate || saleDate === 'Bilinmeyen') return saleDate;
-      if (!saleTime) return saleDate; // Saat yoksa tarihi olduğu gibi kullan
+      const normalized = normalizeSaleDateInput(saleDate);
+      const dateStr = normalized || (typeof saleDate === 'string' && saleDate !== 'Bilinmeyen' ? saleDate : null);
+      if (!dateStr) return saleDate || 'Bilinmeyen';
+      if (!saleTime) return dateStr;
       
       try {
-        const [day, month, year] = saleDate.split('.');
-        if (!day || !month || !year) return saleDate;
+        const [day, month, year] = dateStr.split('.');
+        if (!day || !month || !year) return dateStr;
         
-        const [hourStr] = saleTime.split(':');
+        const [hourStr] = String(saleTime).split(':');
         const hour = parseInt(hourStr, 10);
+        if (isNaN(hour)) return dateStr;
         
-        // Eğer saat 03:00'dan önceyse, bir önceki günün iş günü
-        if (hour >= 0 && hour < 3) {
+        // 00:00–03:59 arası: iş günü önceki takvim günü (gece 04:00 kuralı)
+        if (hour >= 0 && hour < BUSINESS_DAY_CUTOFF_HOUR) {
+          const now = new Date();
+          const todayBusiness = getTodayDateString();
+          const yesterdayBusiness = getYesterdayDateString();
+          // Electron bazen takvim günü (11.02), bazen iş günü (10.02) yazıyor. Çift geri almamak için:
+          // - Şu an 04:00'dan önceyse: satış tarihi bugünün iş günüyse geri alma.
+          // - Şu an 04:00 sonrasıysa: satış tarihi zaten dünün iş günüyse geri alma; 00:00 sonrası satışlar Dün'de kalsın.
+          if (now.getHours() < BUSINESS_DAY_CUTOFF_HOUR && dateStr === todayBusiness) return dateStr;
+          if (now.getHours() >= BUSINESS_DAY_CUTOFF_HOUR && dateStr === yesterdayBusiness) return dateStr;
           const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
           date.setDate(date.getDate() - 1);
           return normalizeDateString(date);
         }
-        
-        return saleDate;
+        return dateStr;
       } catch (e) {
         console.warn('İş günü hesaplanamadı:', saleDate, saleTime, e);
-        return saleDate;
+        return dateStr;
       }
     }
 
@@ -798,27 +837,25 @@
       return normalizeDateString(yesterday);
     }
 
-    // Tarih karşılaştırması için - gece 03:00'a göre
+    // Tarih karşılaştırması için - gece 04:00'a göre (iş günü 04:00'da başlar, ertesi gün 03:59:59'da biter)
     function getBusinessDayStart(date) {
       const d = new Date(date);
-      // Eğer tarih bugünse ve saat 03:00'tan önceyse, bir önceki günün başlangıcını döndür
       const now = new Date();
-      if (d.toDateString() === now.toDateString() && now.getHours() < 3) {
+      if (d.toDateString() === now.toDateString() && now.getHours() < BUSINESS_DAY_CUTOFF_HOUR) {
         d.setDate(d.getDate() - 1);
       }
-      d.setHours(3, 0, 0, 0);
+      d.setHours(BUSINESS_DAY_CUTOFF_HOUR, 0, 0, 0);
       return d;
     }
 
     function getBusinessDayEnd(date) {
       const d = new Date(date);
-      // Eğer tarih bugünse ve saat 03:00'tan önceyse, bir önceki günün sonunu döndür
       const now = new Date();
-      if (d.toDateString() === now.toDateString() && now.getHours() < 3) {
+      if (d.toDateString() === now.toDateString() && now.getHours() < BUSINESS_DAY_CUTOFF_HOUR) {
         d.setDate(d.getDate() - 1);
       }
-      d.setHours(2, 59, 59, 999);
-      d.setDate(d.getDate() + 1); // Bir sonraki günün 02:59:59'u
+      d.setHours(BUSINESS_DAY_CUTOFF_HOUR - 1, 59, 59, 999);
+      d.setDate(d.getDate() + 1); // Bir sonraki günün 03:59:59'u
       return d;
     }
 
@@ -997,10 +1034,34 @@
         mgmtBtn.style.display = isGeceDonercisi ? 'inline-flex' : 'none';
       }
 
-      // İlk açılışta aktif sekmeyi render et; Satış Geçmişi seçiliyse veriyi yükle
+      // İlk açılışta aktif sekmeyi render et
       setActiveTab(activeTab);
-      // Dashboard açılır açılmaz masa verilerini çek (aktif masa sayısı için)
+      // Dashboard açılır açılmaz satışları canlı dinle (00:00 sonrası satışlar anında ciroyu ve geçmişi günceller)
+      if (!realtimeUnsubscribe) startRealtimeListener();
+      // Masa verilerini çek (aktif masa sayısı için)
       loadTablesDataForStats();
+      // Personel birleştirme/silme kurallarını yükle (kalıcı; başka cihaz veya sonraki girişte de geçerli)
+      loadStaffSettings();
+    }
+
+    // Personel birleştirme ve silme kurallarını Firestore settings/staff'tan yükle
+    async function loadStaffSettings() {
+      if (!db) return;
+      try {
+        const doc = await db.collection('settings').doc('staff').get();
+        if (doc.exists) {
+          const data = doc.data();
+          staffMerges = data.merges && typeof data.merges === 'object' ? data.merges : {};
+          staffDeleted = Array.isArray(data.deleted) ? data.deleted : [];
+        } else {
+          staffMerges = {};
+          staffDeleted = [];
+        }
+      } catch (e) {
+        console.warn('Personel ayarları yüklenemedi:', e);
+        staffMerges = {};
+        staffDeleted = [];
+      }
     }
 
     const REMEMBER_PIN_KEY = 'admin_remember_pin';
@@ -1254,7 +1315,7 @@
       }, 2500);
     });
 
-    // Satışları yükle - SON 3 GÜNÜ YÜKLE (00:00-03:00 arası satışları kaçırmamak için)
+    // Satışları yükle - SON 60 İŞ GÜNÜ (00:00–03:59 arası satışları kaçırmamak için, gece 04:00 kuralı)
     async function loadSales() {
       if (!db) {
         console.error('Firebase başlatılamadı');
@@ -1265,26 +1326,25 @@
         showLoading(true);
         const salesRef = db.collection('sales');
         
-        // Son 3 günü hesapla (gece 03:00'a göre iş günü; 00:00-03:00 arası satışlar için +1 gün güvenlik)
+        // Son 60 iş gününü hesapla (gece 04:00'a göre) - Satış Geçmişi'nde tüm satışlar görünsün
         const businessDay = getBusinessDayDate();
-        const threeDaysAgo = new Date(businessDay);
-        threeDaysAgo.setDate(threeDaysAgo.getDate() - 2);
-        threeDaysAgo.setHours(0, 0, 0, 0);
+        const businessDayStart = new Date(businessDay.getFullYear(), businessDay.getMonth(), businessDay.getDate());
+        businessDayStart.setHours(0, 0, 0, 0);
+        const sixtyDaysAgo = new Date(businessDay);
+        sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 59);
+        sixtyDaysAgo.setHours(0, 0, 0, 0);
+        // created_at fallback için geniş takvim aralığı (90 gün)
+        const ninetyDaysAgoCalendar = new Date();
+        ninetyDaysAgoCalendar.setDate(ninetyDaysAgoCalendar.getDate() - 90);
+        ninetyDaysAgoCalendar.setHours(0, 0, 0, 0);
         
-        // Tarih string formatına çevir (DD.MM.YYYY)
-        const threeDaysAgoStr = normalizeDateString(threeDaysAgo);
-        const businessDayStr = normalizeDateString(businessDay);
-        
-        // Son 3 günün satışlarını yükle (00:00-03:00 arası satışları kaçırmamak için)
         let allDocs = [];
         let lastDoc = null;
         let hasMore = true;
-        let daysLoaded = new Set();
         
         while (hasMore) {
           let query = salesRef;
           
-          // İlk sorgu için orderBy dene
           if (!lastDoc) {
             try {
               query = salesRef.orderBy('sale_date', 'desc');
@@ -1296,7 +1356,6 @@
               }
             }
           } else {
-            // Sonraki sayfalar için
             try {
               query = salesRef.orderBy('sale_date', 'desc').startAfter(lastDoc);
             } catch (e) {
@@ -1308,7 +1367,6 @@
             }
           }
           
-          // Her seferinde 500 kayıt al
           const querySnapshot = await query.limit(500).get();
           
           if (querySnapshot.empty) {
@@ -1317,42 +1375,45 @@
             let foundOldDate = false;
             querySnapshot.forEach((doc) => {
               const data = doc.data();
-              const saleDate = data.sale_date || '';
+              const saleDateRaw = data.sale_date || '';
+              const saleDate = normalizeSaleDateInput(saleDateRaw) || (saleDateRaw && saleDateRaw !== 'Bilinmeyen' ? saleDateRaw : '');
+              const saleTime = data.sale_time || '';
               
-              // Son 3 gün içindeki satışları al (00:00-03:00 arası satışlar için)
               if (saleDate && saleDate !== 'Bilinmeyen') {
-                const [day, month, year] = saleDate.split('.');
-                if (day && month && year) {
-                  const saleDateObj = new Date(year, month - 1, day);
-                  saleDateObj.setHours(0, 0, 0, 0);
-                  
-                  // Son 3 gün içindeyse ekle
-                  if (saleDateObj >= threeDaysAgo && saleDateObj <= businessDay) {
+                try {
+                  const saleBusinessDayStr = getSaleBusinessDay(saleDate, saleTime);
+                  const [d, m, y] = saleBusinessDayStr.split('.');
+                  if (d && m && y) {
+                    const saleBusinessDate = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+                    saleBusinessDate.setHours(0, 0, 0, 0);
+                    if (saleBusinessDate >= sixtyDaysAgo && saleBusinessDate <= businessDayStart) {
+                      allDocs.push(doc);
+                    } else if (saleBusinessDate < sixtyDaysAgo) {
+                      foundOldDate = true;
+                    }
+                  } else {
+                    // Tarih parse edilemezse son 90 gün içindeyse yine de ekle (Firebase'deki tüm satışlar görünsün)
                     allDocs.push(doc);
-                    daysLoaded.add(saleDate);
-                  } else if (saleDateObj < threeDaysAgo) {
-                    // 3 günden eski tarih bulundu, dur
-                    foundOldDate = true;
                   }
+                } catch (e) {
+                  allDocs.push(doc); // Hata olsa bile dokümanı ekle
                 }
               } else {
-                // Tarih bilinmeyen satışları da ekle (son 3 gün içinde oluşturulmuş olabilir)
                 if (data.created_at) {
                   const timestamp = data.created_at;
                   const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
-                  if (date >= threeDaysAgo) {
+                  if (date >= ninetyDaysAgoCalendar) {
                     allDocs.push(doc);
                   } else {
                     foundOldDate = true;
                   }
+                } else {
+                  allDocs.push(doc); // Tarih yoksa da ekle (sonradan gösterimde Bilinmeyen olur)
                 }
               }
             });
             
-            // Son dokümanı kaydet
             lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1];
-            
-            // Eğer 3 günden eski tarih bulunduysa veya 500'den az kayıt geldiyse, dur
             if (foundOldDate || querySnapshot.docs.length < 500) {
               hasMore = false;
             }
@@ -1369,35 +1430,22 @@
         querySnapshot.forEach((doc) => {
           const data = doc.data();
           
-          // Timestamp'i dönüştür
-          let saleDate = data.sale_date;
-          let saleTime = data.sale_time;
-          
-          // Eğer sale_date yoksa, created_at veya timestamp'ten oluştur
+          // Timestamp'i dönüştür; sale_date her zaman DD.MM.YYYY olsun
+          let saleDate = normalizeSaleDateInput(data.sale_date);
+          let saleTime = data.sale_time || '';
           if (!saleDate && data.created_at) {
             const timestamp = data.created_at;
             const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
             saleDate = normalizeDateString(date);
-            saleTime = date.toLocaleTimeString('tr-TR');
+            saleTime = saleTime || date.toLocaleTimeString('tr-TR');
           } else if (!saleDate && data.timestamp) {
             const timestamp = data.timestamp;
             const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
             saleDate = normalizeDateString(date);
-            saleTime = date.toLocaleTimeString('tr-TR');
-          } else if (saleDate) {
-            // sale_date varsa ama format farklıysa normalize et
-            // Eğer format zaten DD.MM.YYYY değilse düzelt
-            if (typeof saleDate === 'string' && !/^\d{2}\.\d{2}\.\d{4}$/.test(saleDate)) {
-              try {
-                const parsedDate = new Date(saleDate);
-                if (!isNaN(parsedDate.getTime())) {
-                  saleDate = normalizeDateString(parsedDate);
-                }
-              } catch (e) {
-                console.warn('Tarih parse edilemedi:', saleDate, e);
-              }
-            }
+            saleTime = saleTime || date.toLocaleTimeString('tr-TR');
           }
+          if (!saleDate && data.sale_date) saleDate = normalizeSaleDateInput(data.sale_date) || 'Bilinmeyen';
+          if (!saleDate) saleDate = 'Bilinmeyen';
           
           // Items'ı parse et
           let items = [];
@@ -1519,37 +1567,30 @@
       // Real-time listener için limit kaldırıldı
       // Not: Firebase real-time listener'da çok fazla veri olabilir
       // Bu durumda performans sorunları olabilir, ama tüm verileri görmek için gerekli
-      realtimeUnsubscribe = query.onSnapshot((snapshot) => {
+      salesDataLoaded = true;
+      let hasReceivedServerSnapshot = false;
+      // Yeni satışlar sadece sunucu snapshot'ında gelir; cache ile güncelleme yapma (01:45 satışı 01:43'te takılı kalıyordu)
+      realtimeUnsubscribe = query.onSnapshot({ includeMetadataChanges: true }, (snapshot) => {
+        const fromServer = !snapshot.metadata.fromCache;
+        if (!fromServer && hasReceivedServerSnapshot) return; // İlk yüklemeden sonra sadece sunucu verisiyle güncelle
+        if (fromServer) hasReceivedServerSnapshot = true;
         const sales = [];
         snapshot.forEach((doc) => {
           const data = doc.data();
-          
-          let saleDate = data.sale_date;
-          let saleTime = data.sale_time;
-          
+          let saleDate = normalizeSaleDateInput(data.sale_date);
+          let saleTime = data.sale_time || '';
           if (!saleDate && data.created_at) {
             const timestamp = data.created_at;
             const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
             saleDate = normalizeDateString(date);
-            saleTime = date.toLocaleTimeString('tr-TR');
+            saleTime = saleTime || date.toLocaleTimeString('tr-TR');
           } else if (!saleDate && data.timestamp) {
             const timestamp = data.timestamp;
             const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
             saleDate = normalizeDateString(date);
-            saleTime = date.toLocaleTimeString('tr-TR');
-          } else if (saleDate) {
-            // sale_date varsa ama format farklıysa normalize et
-            if (typeof saleDate === 'string' && !/^\d{2}\.\d{2}\.\d{4}$/.test(saleDate)) {
-              try {
-                const parsedDate = new Date(saleDate);
-                if (!isNaN(parsedDate.getTime())) {
-                  saleDate = normalizeDateString(parsedDate);
-                }
-              } catch (e) {
-                console.warn('Tarih parse edilemedi:', saleDate, e);
-              }
-            }
+            saleTime = saleTime || date.toLocaleTimeString('tr-TR');
           }
+          if (!saleDate) saleDate = 'Bilinmeyen';
           
           let items = [];
           let itemsArray = data.items_array || [];
@@ -1598,14 +1639,27 @@
           if (!dayA || !dayB) return 0;
           const dateA = new Date(yearA, monthA - 1, dayA);
           const dateB = new Date(yearB, monthB - 1, dayB);
-          return dateB - dateA;
+          if (a.sale_time) {
+            const [hA, mA, sA] = a.sale_time.split(':');
+            dateA.setHours(parseInt(hA) || 0, parseInt(mA) || 0, parseInt(sA) || 0, 0);
+          }
+          if (b.sale_time) {
+            const [hB, mB, sB] = b.sale_time.split(':');
+            dateB.setHours(parseInt(hB) || 0, parseInt(mB) || 0, parseInt(sB) || 0, 0);
+          }
+          const diff = dateB - dateA;
+          if (diff !== 0) return diff;
+          const idA = parseInt(a.sale_id || a.id) || 0;
+          const idB = parseInt(b.sale_id || b.id) || 0;
+          return idB - idA;
         });
 
-        allSales = sales; // Tüm satışları sakla
-        renderCurrentView();
+        allSales = sales;
         updateStats(sales);
-        
-        // Yeni satış geldiğinde günlük ciroları otomatik kaydet
+        // Satış Geçmişi listesini her snapshot'ta mutlaka güncelle (yeni satış anında görünsün; sekme kontrolüne bırakmıyoruz)
+        renderSales(allSales);
+        updateSalesDateFilterButton();
+        renderCurrentView();
         autoSaveDailyRevenue();
       }, (error) => {
         console.error('Real-time listener hatası:', error);
@@ -1712,13 +1766,25 @@
       return sales; // 'all' için tüm satışlar
     }
 
+    // Satış geçmişinde şube eşleştir (SEKER / #Şeker / Şeker ve SANCAK / #Sancak / Sancak)
+    function saleMatchesBranch(sale, branch) {
+      if (!branch || branch === 'all') return true;
+      if (branch === 'SEKER') return sale.branch === 'SEKER' || sale.branch === '#Şeker' || sale.branch === 'Şeker';
+      if (branch === 'SANCAK') return sale.branch === 'SANCAK' || sale.branch === '#Sancak' || sale.branch === 'Sancak';
+      return true;
+    }
+
     // Satışları render et
     function renderSales(sales) {
       const container = document.getElementById('salesContainer');
       if (!container) return;
 
       // Tarih filtresine göre filtrele
-      const filteredSales = filterSalesByDateForHistory(sales);
+      let filteredSales = filterSalesByDateForHistory(sales);
+      // Satış geçmişi şube filtresi (Gece Dönercisi; varsayılan Tümü - hem Şeker hem Sancak görünsün)
+      if (isGeceDonercisi && salesBranchFilter !== 'all') {
+        filteredSales = filteredSales.filter(s => saleMatchesBranch(s, salesBranchFilter));
+      }
 
       // Header ve tarih filtresi butonu
       const filterLabels = {
@@ -1731,9 +1797,20 @@
           : 'Özel Tarih'
       };
 
+      const salesBranchFilterHtml = isGeceDonercisi ? `
+          <div class="sales-branch-filter" style="display: flex; align-items: center; gap: 6px; margin-left: 12px;">
+            <span style="font-size: 13px; color: #64748b;">Şube:</span>
+            <button type="button" class="sales-branch-opt ${salesBranchFilter === 'all' ? 'active' : ''}" data-sales-branch="all" onclick="setSalesBranchFilter('all')">Tümü</button>
+            <button type="button" class="sales-branch-opt ${salesBranchFilter === 'SEKER' ? 'active' : ''}" data-sales-branch="SEKER" onclick="setSalesBranchFilter('SEKER')">🍬 Şeker</button>
+            <button type="button" class="sales-branch-opt ${salesBranchFilter === 'SANCAK' ? 'active' : ''}" data-sales-branch="SANCAK" onclick="setSalesBranchFilter('SANCAK')">🚩 Sancak</button>
+          </div>
+      ` : '';
       let html = `
-        <div id="salesHeader" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding: 0 4px;">
-          <h2 style="font-size: 18px; font-weight: 700; color: #1f2937; margin: 0;">Satış Geçmişi</h2>
+        <div id="salesHeader" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding: 0 4px; flex-wrap: wrap; gap: 8px;">
+          <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <h2 style="font-size: 18px; font-weight: 700; color: #1f2937; margin: 0;">Satış Geçmişi</h2>
+            ${salesBranchFilterHtml}
+          </div>
           <div class="date-filter-wrapper">
             <button class="date-filter-trigger" onclick="toggleSalesDateFilterModal(event)">
               <span>📅</span>
@@ -1794,10 +1871,10 @@
         return;
       }
 
-      // Tarihe göre grupla (filtrelenmiş satışlar üzerinde) - İŞ GÜNÜNE GÖRE GRUPLA (00:00-03:00 arası satışlar önceki güne ait)
+      // Tarihe göre grupla (filtrelenmiş satışlar üzerinde) - İŞ GÜNÜNE GÖRE GRUPLA (00:00–03:59 arası satışlar önceki güne ait, gece 04:00)
       const salesByDate = {};
       filteredSales.forEach(sale => {
-        // 00:00-03:00 arası satışlar için iş günü hesapla
+        // 00:00–03:59 arası satışlar için iş günü hesapla (gece 04:00 kuralı)
         const businessDate = getSaleBusinessDay(sale.sale_date, sale.sale_time);
         const date = businessDate || 'Bilinmeyen';
         if (!salesByDate[date]) {
@@ -2022,6 +2099,14 @@
       updateSalesDateFilterButton();
     }
 
+    function setSalesBranchFilter(branch) {
+      salesBranchFilter = branch;
+      document.querySelectorAll('.sales-branch-opt').forEach(btn => {
+        btn.classList.toggle('active', (btn.getAttribute('data-sales-branch') || '') === branch);
+      });
+      renderSales(allSales);
+    }
+
     // Satış geçmişi özel tarih aralığı seç
     function setSalesCustomDateRange() {
       const startInput = document.getElementById('salesCustomDateStart');
@@ -2080,29 +2165,32 @@
       }
     }
 
-    // Aktif masa sayısını hesapla (sadece iç ve dış masalar; Gece Dönercisi: salon + bahçe)
+    // Aktif masa sayısını hesapla (sadece iç ve dış masalar; Gece Dönercisi: salon + bahçe, şube şube toplam)
     function calculateActiveTablesCount() {
+      const isOccupiedCheck = (table) =>
+        table.is_occupied === true || table.is_occupied === 'true' || table.is_occupied === 1 ||
+        (table.status && (table.status === 'occupied' || table.status === 'dolu')) ||
+        (table.items && Array.isArray(table.items) && table.items.length > 0);
+
+      if (isGeceDonercisi && allStaticTablesByBranch.SEKER && allStaticTablesByBranch.SANCAK) {
+        let count = 0;
+        ['SEKER', 'SANCAK'].forEach(branch => {
+          Object.values(allStaticTablesByBranch[branch]).forEach(table => {
+            const tableId = table.table_id || '';
+            const isTable = tableId.startsWith('salon-') || tableId.startsWith('bahce-');
+            if (isTable && isOccupiedCheck(table)) count++;
+          });
+        });
+        return count;
+      }
+
       let activeCount = 0;
-      
       Object.values(allStaticTables).forEach(table => {
         const tableId = table.table_id || '';
         const isTable = tableId.startsWith('masa-') || (isGeceDonercisi && (tableId.startsWith('salon-') || tableId.startsWith('bahce-')));
         const isPackage = tableId.startsWith('paket-');
-        
-        if (isTable && !isPackage) {
-          // Masa dolu mu kontrol et
-          const isOccupied = table.is_occupied === true || 
-                            table.is_occupied === 'true' || 
-                            table.is_occupied === 1 ||
-                            (table.status && (table.status === 'occupied' || table.status === 'dolu')) ||
-                            (table.items && Array.isArray(table.items) && table.items.length > 0);
-          
-          if (isOccupied) {
-            activeCount++;
-          }
-        }
+        if (isTable && !isPackage && isOccupiedCheck(table)) activeCount++;
       });
-      
       return activeCount;
     }
 
@@ -2127,7 +2215,7 @@
     function updateStats(sales) {
       const today = getTodayDateString();
       
-      // Gece Dönercisi için Sancak ve Şeker ayrı hesapla - 00:00-03:00 arası satışlar için iş günü hesapla
+      // Gece Dönercisi için Sancak ve Şeker ayrı hesapla - 00:00–03:59 arası iş günü hesapla (gece 04:00)
       if (isGeceDonercisi) {
         const todayAllSales = sales.filter(s => {
           const businessDate = getSaleBusinessDay(s.sale_date, s.sale_time);
@@ -2150,7 +2238,7 @@
         const sancakCard = sancakSales.filter(s => s.payment_method && s.payment_method !== 'Nakit' && s.payment_method !== 'Online' && s.payment_method !== 'Masraf').reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
         const sancakOnline = sancakSales.filter(s => s.payment_method === 'Online' || s.order_source === 'Trendyol' || s.order_source === 'Yemeksepeti' || s.order_source === 'Migros Yemek').reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
         
-        // Masraflar (şubeye göre ayrılabilir ama şimdilik toplam) - 00:00-03:00 arası için iş günü hesapla
+        // Masraflar (şubeye göre ayrılabilir ama şimdilik toplam) - 00:00–03:59 arası iş günü (gece 04:00)
         const todayExpenses = sales.filter(s => {
           const businessDate = getSaleBusinessDay(s.sale_date, s.sale_time);
           return businessDate === today && (s.isExpense || s.payment_method === 'Masraf');
@@ -2218,7 +2306,10 @@
             <div class="stat-icon">📊</div>
             <div class="stat-content">
               <h3>Bugünkü Satış</h3>
-              <div class="stat-value">${todayAllSales.length}</div>
+              <div class="stat-value stat-value-branches">
+                <span class="stat-branch-item stat-branch-seker">🍬 Şeker: ${sekerSales.length}</span>
+                <span class="stat-branch-item stat-branch-sancak">🚩 Sancak: ${sancakSales.length}</span>
+              </div>
             </div>
           </div>
           <div class="stat-card stat-card-pink">
@@ -2236,7 +2327,7 @@
       if (reportBranchFilter !== 'all') {
         sales = sales.filter(s => s.branch === reportBranchFilter);
       }
-      // Masrafları hariç tut - 00:00-03:00 arası satışlar için iş günü hesapla
+      // Masrafları hariç tut - 00:00–03:59 arası iş günü hesapla (gece 04:00)
       const todaySales = sales.filter(s => {
         const businessDate = getSaleBusinessDay(s.sale_date, s.sale_time);
         const matches = businessDate === today;
@@ -2291,7 +2382,7 @@
       const cardTotal = cardSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
       const onlineTotal = onlineSales.reduce((sum, s) => sum + calculateSaleRevenue(s), 0);
       
-      // Günlük masrafları hesapla - 00:00-03:00 arası için iş günü hesapla
+      // Günlük masrafları hesapla - 00:00–03:59 arası iş günü (gece 04:00)
       const todayExpenses = sales.filter(s => {
         const businessDate = getSaleBusinessDay(s.sale_date, s.sale_time);
         return businessDate === today && (s.isExpense || s.payment_method === 'Masraf');
@@ -2415,7 +2506,7 @@
       } else if (activeTab === 'reports') {
         renderReports();
       } else if (activeTab === 'staff') {
-        renderStaffDetails();
+        loadStaffSettings().then(() => renderStaffDetails());
       } else if (activeTab === 'tables') {
         renderTables();
       } else if (activeTab === 'cancels') {
@@ -2423,7 +2514,7 @@
       }
     }
 
-    // Tarih filtresine göre satışları filtrele - 00:00-03:00 arası satışlar için iş günü hesapla
+    // Tarih filtresine göre satışları filtrele - 00:00–03:59 arası iş günü hesapla (gece 04:00)
     function filterSalesByDate(sales) {
       const businessDay = getBusinessDayDate();
       const now = new Date();
@@ -2969,7 +3060,7 @@
       reportSales.forEach(sale => {
         const saleRevenue = calculateSaleRevenue(sale);
         modalTotal += saleRevenue; // Tüm satışları topla
-        // İŞ GÜNÜ hesapla (00:00-03:00 arası satışlar önceki güne ait)
+        // İŞ GÜNÜ hesapla (00:00–03:59 arası satışlar önceki güne ait, gece 04:00)
         const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
         const saleDate = saleBusinessDay || sale.sale_date;
         
@@ -3654,7 +3745,7 @@
           : 'Özel Tarih Aralığı'
       };
 
-      // Seçilen zaman dilimi bilgisi (gece 03:00'a göre)
+      // Seçilen zaman dilimi bilgisi (gece 04:00'a göre)
       let periodInfo = '';
       const businessDay = getBusinessDayDate();
       if (reportDateFilter === 'yesterday') {
@@ -5991,6 +6082,16 @@
       document.body.style.overflow = '';
     }
 
+    // Ham personel adını birleştirme/silme kurallarına göre canonical isme çevir (liste ve istatistik için)
+    function resolveStaffName(rawName) {
+      if (!rawName || typeof rawName !== 'string') return null;
+      const trimmed = rawName.trim();
+      if (!trimmed) return null;
+      const canonical = staffMerges[trimmed] !== undefined ? staffMerges[trimmed] : trimmed;
+      if (staffDeleted.indexOf(canonical) !== -1) return null;
+      return canonical;
+    }
+
     function renderStaffDetails() {
       const container = document.getElementById('staffContainer');
       if (!container) return;
@@ -6030,16 +6131,18 @@
             const names = parseStaffNames(itemStaffRaw);
             if (names.length === 0) return;
             
-            names.forEach(n => staffInThisSale.add(n));
+            const canonicalNames = names.map(n => resolveStaffName(n)).filter(Boolean);
+            canonicalNames.forEach(n => staffInThisSale.add(n));
             const productName = item.product_name;
             const quantity = item.quantity || 0;
             const price = parseFloat(item.price || 0);
             const isGift = item.isGift || false;
             const revenue = !isGift ? price * quantity : 0;
-            const q = quantity / names.length;
-            const r = revenue / names.length;
+            const div = canonicalNames.length || 1;
+            const q = quantity / div;
+            const r = revenue / div;
             
-            names.forEach(staffName => {
+            canonicalNames.forEach(staffName => {
               ensureStaff(staffName);
               staffStats[staffName].totalRevenue += r;
               if (!staffStats[staffName].products[productName]) {
@@ -6056,7 +6159,7 @@
             if (staffStats[staffName]) staffStats[staffName].totalSales += 1;
           });
         } else if (sale.staff_name) {
-          const names = parseStaffNames(sale.staff_name);
+          const names = parseStaffNames(sale.staff_name).map(n => resolveStaffName(n)).filter(Boolean);
           if (names.length === 0) return;
           const amount = parseFloat(sale.total_amount) / names.length;
           names.forEach(staffName => {
@@ -6198,21 +6301,20 @@
       try {
         const salesRef = db.collection('sales');
         const snapshot = await salesRef.get();
-        let updatedCount = 0;
-        const batch = db.batch();
+        const updates = [];
+
+        function removeStaffFromNames(str) {
+          if (!str || typeof str !== 'string') return { result: str, changed: false };
+          const names = str.split(',').map(n => n.trim()).filter(Boolean);
+          const filtered = names.filter(n => n !== staffName);
+          if (filtered.length === names.length) return { result: str, changed: false };
+          return { result: filtered.join(', '), changed: true };
+        }
 
         snapshot.forEach(doc => {
           const data = doc.data();
           let needsUpdate = false;
           let newData = { ...data };
-
-          function removeStaffFromNames(str) {
-            if (!str || typeof str !== 'string') return { result: str, changed: false };
-            const names = str.split(',').map(n => n.trim()).filter(Boolean);
-            const filtered = names.filter(n => n !== staffName);
-            if (filtered.length === names.length) return { result: str, changed: false };
-            return { result: filtered.join(', '), changed: true };
-          }
 
           if (data.staff_name) {
             const { result, changed } = removeStaffFromNames(data.staff_name);
@@ -6237,20 +6339,34 @@
             if (itemsUpdated) needsUpdate = true;
           }
 
-          if (needsUpdate) {
-            batch.update(doc.ref, newData);
-            updatedCount++;
-          }
+          if (needsUpdate) updates.push({ ref: doc.ref, newData: newData });
         });
 
-        if (updatedCount > 0) await batch.commit();
+        for (let i = 0; i < updates.length; i += FIRESTORE_BATCH_LIMIT) {
+          const chunk = updates.slice(i, i + FIRESTORE_BATCH_LIMIT);
+          const batch = db.batch();
+          chunk.forEach(({ ref, newData }) => batch.update(ref, newData));
+          await batch.commit();
+        }
+        const updatedCount = updates.length;
+
+        // Kalıcı kural: settings/staff - silinen listesine ekle (sonraki girişte de silinmiş görünsün)
+        const staffRef = db.collection('settings').doc('staff');
+        const staffDoc = await staffRef.get();
+        const existingMerges = staffDoc.exists && staffDoc.data().merges ? staffDoc.data().merges : {};
+        const existingDeleted = staffDoc.exists && Array.isArray(staffDoc.data().deleted) ? staffDoc.data().deleted : [];
+        const newDeleted = existingDeleted.indexOf(staffName) === -1 ? [...existingDeleted, staffName] : existingDeleted;
+        await staffRef.set({ merges: existingMerges, deleted: newDeleted }, { merge: true });
+        staffMerges = existingMerges;
+        staffDeleted = newDeleted;
+
         selectedStaffForMerge.delete(staffName);
         await loadSales();
-        renderStaffDetails();
+        if (activeTab === 'staff') renderStaffDetails();
         showLoading(false);
         showToast(updatedCount > 0 ? 'success' : 'error',
           updatedCount > 0 ? 'Personel kaldırıldı' : 'Kayıt bulunamadı',
-          updatedCount > 0 ? 'Personel satış kayıtlarından kalıcı olarak kaldırıldı.' : 'Bu personel adına ait satış kaydı bulunamadı.');
+          updatedCount > 0 ? 'Personel satış kayıtlarından kalıcı olarak kaldırıldı. Kalıcı olarak kaydedildi.' : 'Bu personel adına ait satış kaydı bulunamadı.');
       } catch (err) {
         console.error('Personel silme hatası:', err);
         showLoading(false);
@@ -6339,6 +6455,8 @@
       });
     }
 
+    const FIRESTORE_BATCH_LIMIT = 500;
+
     async function doMergeStaff(newName, oldNames) {
       try {
         showLoading(true);
@@ -6347,46 +6465,36 @@
           throw new Error('Firebase bağlantısı yok');
         }
 
-        // Tüm satışları al ve eski personel isimlerini yeni isimle değiştir
         const salesRef = db.collection('sales');
         const snapshot = await salesRef.get();
-        
-        let updatedCount = 0;
-        const batch = db.batch();
         const oldNamesSet = new Set(oldNames);
+        const updates = []; // { ref, newData }[]
 
         snapshot.forEach(doc => {
           const data = doc.data();
           let needsUpdate = false;
           let newData = { ...data };
 
-          // staff_name kontrolü (virgülle ayrılmış personel isimleri)
           if (data.staff_name) {
             const names = data.staff_name.split(',').map(n => n.trim());
             const hasOldName = names.some(n => oldNamesSet.has(n));
-            
             if (hasOldName) {
-              // Eski isimleri yeni isimle değiştir, tekrarları önle
               const updatedNames = names.map(n => oldNamesSet.has(n) ? newName : n);
-              const uniqueNames = [...new Set(updatedNames)];
-              newData.staff_name = uniqueNames.join(', ');
+              newData.staff_name = [...new Set(updatedNames)].join(', ');
               needsUpdate = true;
             }
           }
 
-          // items_array içindeki her item'ın staff_name'ini kontrol et
           if (data.items_array && Array.isArray(data.items_array)) {
             let itemsUpdated = false;
             newData.items_array = data.items_array.map(item => {
               if (item.staff_name) {
                 const itemNames = item.staff_name.split(',').map(n => n.trim());
                 const hasOldName = itemNames.some(n => oldNamesSet.has(n));
-                
                 if (hasOldName) {
-                  const updatedNames = itemNames.map(n => oldNamesSet.has(n) ? newName : n);
-                  const uniqueNames = [...new Set(updatedNames)];
                   itemsUpdated = true;
-                  return { ...item, staff_name: uniqueNames.join(', ') };
+                  const updatedNames = itemNames.map(n => oldNamesSet.has(n) ? newName : n);
+                  return { ...item, staff_name: [...new Set(updatedNames)].join(', ') };
                 }
               }
               return item;
@@ -6394,23 +6502,36 @@
             if (itemsUpdated) needsUpdate = true;
           }
 
-          if (needsUpdate) {
-            batch.update(doc.ref, newData);
-            updatedCount++;
-          }
+          if (needsUpdate) updates.push({ ref: doc.ref, newData: newData });
         });
 
-        if (updatedCount > 0) {
+        // Firestore batch limit 500; parça parça commit et
+        for (let i = 0; i < updates.length; i += FIRESTORE_BATCH_LIMIT) {
+          const chunk = updates.slice(i, i + FIRESTORE_BATCH_LIMIT);
+          const batch = db.batch();
+          chunk.forEach(({ ref, newData }) => batch.update(ref, newData));
           await batch.commit();
-          console.log(`✅ ${updatedCount} satış kaydı güncellendi`);
         }
+        const updatedCount = updates.length;
+        if (updatedCount > 0) console.log(`✅ ${updatedCount} satış kaydı güncellendi`);
 
-        // Seçimi temizle ve listeyi yenile
+        // Kalıcı kural: settings/staff - birleştirme kurallarını yaz (sonraki girişte ve diğer cihazlarda da geçerli)
+        const staffRef = db.collection('settings').doc('staff');
+        const staffDoc = await staffRef.get();
+        const existingMerges = staffDoc.exists && staffDoc.data().merges ? staffDoc.data().merges : {};
+        const existingDeleted = staffDoc.exists && Array.isArray(staffDoc.data().deleted) ? staffDoc.data().deleted : [];
+        const newMerges = { ...existingMerges };
+        oldNames.forEach(oldName => { newMerges[oldName.trim()] = newName; });
+        await staffRef.set({ merges: newMerges, deleted: existingDeleted }, { merge: true });
+        staffMerges = newMerges;
+        staffDeleted = existingDeleted;
+
         selectedStaffForMerge.clear();
-        await loadSales(); // Satışları yeniden yükle
+        await loadSales();
+        if (activeTab === 'staff') renderStaffDetails();
 
         showLoading(false);
-        showToast('success', 'Birleştirme tamamlandı', `${oldNames.length} personel "${newName}" olarak birleştirildi. ${updatedCount} satış kaydı güncellendi.`);
+        showToast('success', 'Birleştirme tamamlandı', `${oldNames.length} personel "${newName}" olarak birleştirildi. ${updatedCount} satış kaydı güncellendi. Kalıcı olarak kaydedildi.`);
       } catch (error) {
         console.error('Personel birleştirme hatası:', error);
         showLoading(false);
@@ -6431,17 +6552,590 @@
       });
     }
 
-    // Analiz Modal Fonksiyonları
+    // Analiz akışı: önce şube seçimi -> tür seçimi -> tarih aralığı -> loading -> sonuç
     function showAnalysisModal() {
-      const modal = document.getElementById('analysisModal');
-      if (!modal) return;
-      
-      modal.style.display = 'flex';
-      document.body.style.overflow = 'hidden';
-      
-      // Analizi başlat
-      startAnalysis();
+      selectedAnalysisType = null;
+      selectedStaffName = null;
+      selectedProductName = null;
+      analysisDateRange = { start: null, end: null };
+      analysisBranchFilter = null;
+      var branchModal = document.getElementById('analysisBranchModal');
+      if (branchModal) {
+        branchModal.querySelectorAll('.analysis-branch-option').forEach(function(el) { el.classList.remove('selected'); });
+        var branchContinue = document.getElementById('analysisBranchContinueBtn');
+        if (branchContinue) branchContinue.disabled = true;
+        branchModal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+        return;
+      }
+      openAnalysisTypeModal();
     }
+
+    function openAnalysisTypeModal() {
+      var typeModal = document.getElementById('analysisTypeModal');
+      var typeOptions = typeModal ? typeModal.querySelectorAll('.analysis-type-option') : [];
+      typeOptions.forEach(function(el) { el.classList.remove('selected'); });
+      var continueBtn = document.getElementById('analysisTypeContinueBtn');
+      if (continueBtn) continueBtn.disabled = true;
+      if (typeModal) {
+        typeModal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+      }
+    }
+
+    function selectAnalysisBranch(branch) {
+      analysisBranchFilter = branch;
+      var branchModal = document.getElementById('analysisBranchModal');
+      if (!branchModal) return;
+      branchModal.querySelectorAll('.analysis-branch-option').forEach(function(el) {
+        el.classList.toggle('selected', el.getAttribute('data-branch') === branch);
+      });
+      var btn = document.getElementById('analysisBranchContinueBtn');
+      if (btn) btn.disabled = false;
+    }
+
+    function closeAnalysisBranchModal() {
+      var m = document.getElementById('analysisBranchModal');
+      if (m) m.style.display = 'none';
+    }
+
+    function continueFromAnalysisBranch() {
+      if (analysisBranchFilter === null) return;
+      closeAnalysisBranchModal();
+      openAnalysisTypeModal();
+    }
+
+    function selectAnalysisType(type) {
+      selectedAnalysisType = type;
+      const typeModal = document.getElementById('analysisTypeModal');
+      if (!typeModal) return;
+      typeModal.querySelectorAll('.analysis-type-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-type') === type);
+      });
+      const continueBtn = document.getElementById('analysisTypeContinueBtn');
+      if (continueBtn) continueBtn.disabled = false;
+    }
+
+    function closeAnalysisTypeModal() {
+      const m = document.getElementById('analysisTypeModal');
+      if (m) m.style.display = 'none';
+    }
+
+    function continueFromAnalysisType() {
+      if (!selectedAnalysisType) return;
+      closeAnalysisTypeModal();
+      if (selectedAnalysisType === 'personel') {
+        openAnalysisPersonelSelectModal();
+      } else if (selectedAnalysisType === 'urun') {
+        openAnalysisUrunSelectModal();
+      } else {
+        openAnalysisDateRangeModal();
+      }
+    }
+
+    function parseStaffNamesForAnalysis(str) {
+      if (!str || typeof str !== 'string') return [];
+      return str.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+    }
+
+    function getStaffListFromSales() {
+      var base = allSales.filter(function(s) { return !s.isExpense && s.payment_method !== 'Masraf'; });
+      if (analysisBranchFilter && analysisBranchFilter !== 'all') base = base.filter(function(s) { return s.branch === analysisBranchFilter; });
+      else if (isGeceDonercisi && reportBranchFilter !== 'all') base = base.filter(function(s) { return s.branch === reportBranchFilter; });
+      var set = {};
+      base.forEach(function(sale) {
+        if (sale.items_array && sale.items_array.length > 0) {
+          sale.items_array.forEach(function(item) {
+            var raw = (item && item.staff_name) || sale.staff_name || sale.personel || sale.staffName;
+            if (!raw) return;
+            parseStaffNamesForAnalysis(raw).forEach(function(n) { set[n] = true; });
+          });
+        } else {
+          var raw = sale.staff_name || sale.personel || extractZahiyatPerson(sale);
+          if (raw && raw !== 'Personel: Bilinmiyor') parseStaffNamesForAnalysis(raw).forEach(function(n) { set[n] = true; });
+        }
+      });
+      return Object.keys(set).sort();
+    }
+
+    function buildStaffStatsForAnalysis(selectedName, sales) {
+      var stats = { totalRevenue: 0, totalSales: 0, totalItemsSold: 0, products: {} };
+      function ensureProduct(name) {
+        if (!stats.products[name]) stats.products[name] = { count: 0, revenue: 0 };
+      }
+      sales.forEach(function(sale) {
+        if (sale.items_array && sale.items_array.length > 0) {
+          sale.items_array.forEach(function(item) {
+            if (!item || !item.product_name || item.isExpense) return;
+            var raw = (item.staff_name) || sale.staff_name || sale.personel;
+            if (!raw) return;
+            var names = parseStaffNamesForAnalysis(raw);
+            if (names.indexOf(selectedName) === -1) return;
+            var q = (item.quantity || 0) / names.length;
+            var rev = (parseFloat(item.price) || 0) * (item.quantity || 1) / names.length;
+            ensureProduct(item.product_name);
+            stats.products[item.product_name].count += q;
+            stats.products[item.product_name].revenue += rev;
+            stats.totalItemsSold += q;
+            stats.totalRevenue += rev;
+          });
+          var anyStaff = false;
+          sale.items_array.forEach(function(item) {
+            var raw = (item && item.staff_name) || sale.staff_name || sale.personel;
+            if (raw && parseStaffNamesForAnalysis(raw).indexOf(selectedName) !== -1) anyStaff = true;
+          });
+          if (anyStaff) stats.totalSales += 1;
+        } else {
+          var raw = sale.staff_name || sale.personel;
+          if (!raw) return;
+          var names = parseStaffNamesForAnalysis(raw);
+          if (names.indexOf(selectedName) === -1) return;
+          var amount = parseFloat(sale.total_amount || 0) / names.length;
+          stats.totalRevenue += amount;
+          stats.totalSales += 1;
+        }
+      });
+      return stats;
+    }
+
+    function getProductListFromSales() {
+      var base = allSales.filter(function(s) { return !s.isExpense && s.payment_method !== 'Masraf'; });
+      if (analysisBranchFilter && analysisBranchFilter !== 'all') base = base.filter(function(s) { return s.branch === analysisBranchFilter; });
+      else if (isGeceDonercisi && reportBranchFilter !== 'all') base = base.filter(function(s) { return s.branch === reportBranchFilter; });
+      var set = {};
+      base.forEach(function(s) {
+        var items = s.items_array || s.items || [];
+        items.forEach(function(it) {
+          if (it && it.product_name && !it.isExpense) set[it.product_name] = true;
+        });
+      });
+      return Object.keys(set).sort();
+    }
+
+    function openAnalysisPersonelSelectModal() {
+      var list = getStaffListFromSales();
+      var container = document.getElementById('analysisPersonelList');
+      if (!container) return;
+      container.innerHTML = list.length ? list.map(function(name) {
+        var safeVal = (name || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        return '<div class="analysis-select-option" data-value="' + safeVal + '" onclick="selectAnalysisPersonel(this)"><span class="option-text">' + (name || '—').replace(/</g, '&lt;') + '</span></div>';
+      }).join('') : '<p class="analysis-select-empty">Henüz personel verisi yok</p>';
+      selectedStaffName = null;
+      document.getElementById('analysisPersonelContinueBtn').disabled = true;
+      document.getElementById('analysisPersonelSelectModal').style.display = 'flex';
+    }
+
+    function selectAnalysisPersonel(el) {
+      var name = el.getAttribute('data-value');
+      if (!name) return;
+      selectedStaffName = name;
+      var opts = document.querySelectorAll('#analysisPersonelList .analysis-select-option');
+      opts.forEach(function(o) { o.classList.toggle('selected', o.getAttribute('data-value') === name); });
+      document.getElementById('analysisPersonelContinueBtn').disabled = false;
+    }
+
+    function closeAnalysisPersonelSelectModal() {
+      document.getElementById('analysisPersonelSelectModal').style.display = 'none';
+    }
+
+    function continueFromAnalysisPersonelSelect() {
+      if (!selectedStaffName) return;
+      closeAnalysisPersonelSelectModal();
+      openAnalysisDateRangeModal();
+    }
+
+    function openAnalysisUrunSelectModal() {
+      var list = getProductListFromSales();
+      var container = document.getElementById('analysisUrunList');
+      if (!container) return;
+      container.innerHTML = list.length ? list.map(function(name) {
+        var safeVal = (name || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        return '<div class="analysis-select-option" data-value="' + safeVal + '" onclick="selectAnalysisUrun(this)"><span class="option-text">' + (name || '—').replace(/</g, '&lt;') + '</span></div>';
+      }).join('') : '<p class="analysis-select-empty">Henüz ürün verisi yok</p>';
+      selectedProductName = null;
+      document.getElementById('analysisUrunContinueBtn').disabled = true;
+      document.getElementById('analysisUrunSelectModal').style.display = 'flex';
+    }
+
+    function selectAnalysisUrun(el) {
+      var name = el.getAttribute('data-value');
+      if (!name) return;
+      selectedProductName = name;
+      var opts = document.querySelectorAll('#analysisUrunList .analysis-select-option');
+      opts.forEach(function(o) { o.classList.toggle('selected', o.getAttribute('data-value') === name); });
+      document.getElementById('analysisUrunContinueBtn').disabled = false;
+    }
+
+    function closeAnalysisUrunSelectModal() {
+      document.getElementById('analysisUrunSelectModal').style.display = 'none';
+    }
+
+    function continueFromAnalysisUrunSelect() {
+      if (!selectedProductName) return;
+      closeAnalysisUrunSelectModal();
+      openAnalysisDateRangeModal();
+    }
+
+    function openAnalysisDateRangeModal() {
+      var end = getBusinessDayDate();
+      var start = new Date(end);
+      start.setDate(start.getDate() - 6);
+      document.getElementById('analysisDateStart').value = formatDateForInput(start);
+      document.getElementById('analysisDateEnd').value = formatDateForInput(end);
+      document.getElementById('analysisDateRangeModal').style.display = 'flex';
+    }
+
+    function closeAnalysisDateRangeModal() {
+      document.getElementById('analysisDateRangeModal').style.display = 'none';
+    }
+
+    function continueFromAnalysisDateRange() {
+      var startInput = document.getElementById('analysisDateStart');
+      var endInput = document.getElementById('analysisDateEnd');
+      if (!startInput || !endInput || !startInput.value || !endInput.value) {
+        alert('Lütfen başlangıç ve bitiş tarihlerini seçin.');
+        return;
+      }
+      var start = new Date(startInput.value);
+      var end = new Date(endInput.value);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        alert('Geçerli tarih girin.');
+        return;
+      }
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      if (start > end) {
+        alert('Başlangıç tarihi bitişten sonra olamaz.');
+        return;
+      }
+      analysisDateRange = { start: start, end: end };
+      closeAnalysisDateRangeModal();
+      showAnalysisLoadingAndRun();
+    }
+
+    var analysisLoadingInterval = null;
+    var RING_CIRCUMFERENCE = 339.292;
+    function showAnalysisLoadingAndRun() {
+      var loadingModal = document.getElementById('analysisLoadingModal');
+      var ring = document.getElementById('analysisLoadingRing');
+      var pctEl = document.getElementById('analysisLoadingPct');
+      var msgEl = document.getElementById('analysisLoadingMsg');
+      var subEl = document.getElementById('analysisLoadingSub');
+      if (!loadingModal) return;
+      loadingModal.style.display = 'flex';
+      var messages = [
+        { msg: 'Analiz başlatılıyor', sub: 'Veriler yükleniyor' },
+        { msg: 'Veriler işleniyor', sub: 'Satış kayıtları analiz ediliyor' },
+        { msg: 'Taslaklar oluşturuluyor', sub: 'Gerçek veriler baz alınıyor' },
+        { msg: 'Rapor derleniyor', sub: 'Kurumsal rapor hazırlanıyor' },
+        { msg: 'Son kontroller', sub: 'Raporunuz neredeyse hazır' },
+        { msg: 'Tamamlandı', sub: 'Rapor açılıyor' }
+      ];
+      if (ring) ring.style.strokeDashoffset = RING_CIRCUMFERENCE;
+      if (pctEl) pctEl.textContent = '%0';
+      if (msgEl) msgEl.textContent = messages[0].msg;
+      if (subEl) subEl.textContent = messages[0].sub;
+      var duration = 5000;
+      var startTime = Date.now();
+      var lastIdx = -1;
+      function tick() {
+        var elapsed = Date.now() - startTime;
+        var progress = Math.min(1, elapsed / duration);
+        var offset = RING_CIRCUMFERENCE - (RING_CIRCUMFERENCE * progress);
+        if (ring) ring.style.strokeDashoffset = offset;
+        var pctNum = Math.round(progress * 100);
+        if (pctEl) pctEl.textContent = '%' + pctNum;
+        var idx = Math.min(5, Math.floor(progress * 6));
+        if (idx !== lastIdx && messages[idx]) {
+          lastIdx = idx;
+          if (msgEl) { msgEl.textContent = messages[idx].msg; msgEl.classList.remove('analysis-msg-fade-in'); msgEl.offsetHeight; msgEl.classList.add('analysis-msg-fade-in'); }
+          if (subEl) { subEl.textContent = messages[idx].sub; subEl.classList.remove('analysis-msg-fade-in'); subEl.offsetHeight; subEl.classList.add('analysis-msg-fade-in'); }
+        }
+        if (progress >= 1) {
+          if (analysisLoadingInterval) clearInterval(analysisLoadingInterval);
+          analysisLoadingInterval = null;
+          if (ring) ring.style.strokeDashoffset = '0';
+          if (pctEl) pctEl.textContent = '%100';
+          setTimeout(function() {
+            runAnalysisByType(selectedAnalysisType, analysisDateRange.start, analysisDateRange.end);
+            var lm = document.getElementById('analysisLoadingModal');
+            if (lm) lm.style.display = 'none';
+            var am = document.getElementById('analysisModal');
+            if (am) { am.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+          }, 450);
+          return;
+        }
+      }
+      if (analysisLoadingInterval) clearInterval(analysisLoadingInterval);
+      analysisLoadingInterval = setInterval(tick, 40);
+    }
+
+    function filterSalesByDateRange(sales, startDate, endDate) {
+      if (!startDate || !endDate) return sales;
+      return sales.filter(function(sale) {
+        if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
+        var saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+        var parts = saleBusinessDay.split('.');
+        if (!parts[0] || !parts[1] || !parts[2]) return false;
+        var saleDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+        saleDate.setHours(0, 0, 0, 0);
+        return saleDate >= startDate && saleDate <= endDate;
+      });
+    }
+
+    function runAnalysisByType(type, startDate, endDate) {
+      var baseSales = allSales.filter(function(s) { return !s.isExpense && s.payment_method !== 'Masraf'; });
+      if (analysisBranchFilter && analysisBranchFilter !== 'all') {
+        baseSales = baseSales.filter(function(s) { return s.branch === analysisBranchFilter; });
+      } else if (isGeceDonercisi && reportBranchFilter !== 'all') {
+        baseSales = baseSales.filter(function(s) { return s.branch === reportBranchFilter; });
+      }
+      var reportSales = filterSalesByDateRange(baseSales, startDate, endDate);
+      var startStr = startDate ? (String(startDate.getDate()).padStart(2,'0') + '.' + String(startDate.getMonth() + 1).padStart(2,'0') + '.' + startDate.getFullYear()) : '';
+      var endStr = endDate ? (String(endDate.getDate()).padStart(2,'0') + '.' + String(endDate.getMonth() + 1).padStart(2,'0') + '.' + endDate.getFullYear()) : '';
+      var content = document.getElementById('analysisContent');
+      if (!content) return;
+      content.innerHTML = '';
+      var titleEl = document.querySelector('.analysis-modal-title');
+      if (titleEl) titleEl.textContent = type === 'personel' ? '👤 Personel Analizi' : type === 'urun' ? '📦 Ürün Bazlı Analiz' : '💰 Ciro Analizi';
+      if (type === 'personel') {
+        renderPersonelAnalysis(content, reportSales, startStr, endStr);
+      } else if (type === 'urun') {
+        renderUrunAnalysis(content, reportSales, startStr, endStr);
+      } else {
+        renderCiroAnalysis(content, reportSales, startStr, endStr);
+      }
+    }
+
+    function renderPersonelAnalysis(container, allSalesInRange, startStr, endStr) {
+      var staffName = selectedStaffName || 'Seçilen personel';
+      var esc = function(s) { return (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+      var fmt = function(n) { return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
+      var stats = buildStaffStatsForAnalysis(staffName, allSalesInRange);
+      var productEntries = Object.entries(stats.products || {})
+        .map(function(e) { return { name: e[0], count: e[1].count, revenue: e[1].revenue }; })
+        .sort(function(a, b) { return b.revenue - a.revenue; });
+      if (productEntries.length === 0 && stats.totalSales === 0) {
+        container.innerHTML = '<div class="analysis-report-inner ar-doc"><p class="ar-text">Seçilen tarih aralığında bu personel için satış kaydı bulunamadı.</p></div>';
+        return;
+      }
+      var totalPeriodRevenue = allSalesInRange.reduce(function(s, sale) { return s + calculateSaleRevenue(sale); }, 0);
+      var staffSet = {};
+      allSalesInRange.forEach(function(s) {
+        if (s.items_array && s.items_array.length) {
+          s.items_array.forEach(function(it) {
+            var raw = (it && it.staff_name) || s.staff_name || s.personel;
+            if (raw) parseStaffNamesForAnalysis(raw).forEach(function(n) { staffSet[n] = true; });
+          });
+        } else {
+          var raw = s.staff_name || s.personel;
+          if (raw) parseStaffNamesForAnalysis(raw).forEach(function(n) { staffSet[n] = true; });
+        }
+      });
+      var staffCount = Object.keys(staffSet).length || 1;
+      var potential = totalPeriodRevenue / staffCount;
+      var performancePct = potential > 0 ? (stats.totalRevenue / potential) * 100 : 0;
+      var perfLabel = performancePct >= 110 ? 'Beklenenin üstünde' : performancePct >= 90 ? 'Yeterli' : 'Beklenenin altında';
+      var perfClass = performancePct >= 110 ? 'green' : performancePct >= 90 ? 'amber' : 'red';
+      var maxRev = productEntries.length ? Math.max.apply(null, productEntries.map(function(p) { return p.revenue; })) : 1;
+      var html = '<div class="analysis-report-inner ar-doc">';
+      html += '<div class="ar-doc-meta">' + startStr + ' – ' + endStr + '</div>';
+      html += '<h3 class="ar-doc-title">' + esc(staffName) + '</h3>';
+      html += '<div class="ar-doc-summary">';
+      html += '<div class="ar-doc-sum-item"><span class="ar-doc-sum-label">Ciro</span><span class="ar-doc-sum-val">₺' + fmt(stats.totalRevenue) + '</span></div>';
+      html += '<div class="ar-doc-sum-item"><span class="ar-doc-sum-label">Satış</span><span class="ar-doc-sum-val">' + Math.round(stats.totalSales) + '</span></div>';
+      html += '<div class="ar-doc-sum-item"><span class="ar-doc-sum-label">Ürün adedi</span><span class="ar-doc-sum-val">' + Math.round(stats.totalItemsSold) + '</span></div>';
+      html += '</div>';
+      html += '<div class="ar-doc-section"><div class="ar-doc-section-title">Ürün bazlı satışlar</div>';
+      html += '<table class="ar-doc-table"><thead><tr><th>Ürün</th><th>Adet</th><th>Ciro</th></tr></thead><tbody>';
+      productEntries.forEach(function(p) {
+        html += '<tr><td class="ar-doc-product">' + esc(p.name) + '</td><td class="ar-doc-num">' + Math.round(p.count) + '</td><td class="ar-doc-num">₺' + fmt(p.revenue) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+      if (productEntries.length > 0) {
+        html += '<div class="ar-doc-section"><div class="ar-doc-section-title">Ürün ciro dağılımı</div><div class="ar-chart-bars">';
+        productEntries.slice(0, 8).forEach(function(p) {
+          var w = maxRev > 0 ? (p.revenue / maxRev) * 100 : 0;
+          html += '<div class="ar-chart-row"><span class="ar-chart-label">' + esc(p.name) + '</span><div class="ar-chart-bar-wrap"><div class="ar-chart-bar" style="width:' + w + '%"></div></div><span class="ar-chart-val">₺' + fmt(p.revenue) + '</span></div>';
+        });
+        html += '</div></div>';
+      }
+      html += '<div class="ar-doc-section"><div class="ar-doc-section-title">Performans</div>';
+      html += '<div class="ar-bar-wrap"><div class="ar-bar-fill ' + perfClass + '" style="width:' + Math.min(100, performancePct) + '%"></div></div>';
+      html += '<p class="ar-doc-perf"><span class="ar-badge ' + (performancePct >= 110 ? 'good' : performancePct >= 90 ? 'warn' : 'bad') + '">' + perfLabel + '</span> Potansiyel: ₺' + fmt(potential) + ' · Gerçekleşen: ₺' + fmt(stats.totalRevenue) + '</p></div>';
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    function renderUrunAnalysis(container, sales, startStr, endStr) {
+      var productName = selectedProductName || 'Seçilen ürün';
+      var esc = function(s) { return (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+      var fmt = function(n) { return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
+      var productStats = {};
+      var byStaff = {};
+      var productPrices = {};
+      sales.forEach(function(sale) {
+        var items = sale.items_array || sale.items || [];
+        items.forEach(function(item) {
+          if (!item || !item.product_name || item.isExpense) return;
+          var name = item.product_name;
+          if (!productStats[name]) productStats[name] = { count: 0, revenue: 0 };
+          var qty = item.quantity || 1;
+          var price = parseFloat(item.price) || 0;
+          productStats[name].count += qty;
+          productStats[name].revenue += price * qty;
+          if (price > 0) productPrices[name] = price;
+          if (name === productName) {
+            var raw = (item.staff_name) || sale.staff_name || sale.personel;
+            if (raw) {
+              var names = parseStaffNamesForAnalysis(raw);
+              var n = names.length || 1;
+              names.forEach(function(staffName) {
+                if (!byStaff[staffName]) byStaff[staffName] = { count: 0, revenue: 0 };
+                byStaff[staffName].count += qty / n;
+                byStaff[staffName].revenue += (price * qty) / n;
+              });
+            }
+          }
+        });
+      });
+      var periodTotalRevenue = sales.reduce(function(s, sale) { return s + calculateSaleRevenue(sale); }, 0);
+      var selected = productStats[productName];
+      if (!selected) selected = { count: 0, revenue: 0 };
+      var sharePct = periodTotalRevenue > 0 ? (selected.revenue / periodTotalRevenue) * 100 : 0;
+      var staffRows = Object.entries(byStaff).sort(function(a, b) { return b[1].count - a[1].count; });
+      var top3Staff = staffRows.slice(0, 3);
+      var currentPrice = productPrices[productName] || 0;
+      var suggestUp = currentPrice > 0 && selected.count >= 10 ? { pct: 10, newPrice: currentPrice * 1.1 } : null;
+      var suggestDown = currentPrice > 0 && selected.count <= 2 && currentPrice > 30 ? { pct: 15, newPrice: currentPrice * 0.85 } : null;
+      var html = '<div class="analysis-report-inner ar-doc">';
+      html += '<div class="ar-doc-meta">' + startStr + ' – ' + endStr + '</div>';
+      html += '<h3 class="ar-doc-title">' + esc(productName) + '</h3>';
+      html += '<div class="ar-doc-summary">';
+      html += '<div class="ar-doc-sum-item"><span class="ar-doc-sum-label">Satılan adet</span><span class="ar-doc-sum-val">' + Math.round(selected.count) + '</span></div>';
+      html += '<div class="ar-doc-sum-item"><span class="ar-doc-sum-label">Ciro</span><span class="ar-doc-sum-val">₺' + fmt(selected.revenue) + '</span></div>';
+      html += '<div class="ar-doc-sum-item"><span class="ar-doc-sum-label">Toplam içinde pay</span><span class="ar-doc-sum-val">%' + sharePct.toFixed(1) + '</span></div>';
+      html += '</div>';
+      html += '<div class="ar-doc-section"><div class="ar-doc-section-title">Dönem içindeki pay</div>';
+      html += '<div class="ar-bar-wrap"><div class="ar-chart-bar single" style="width:' + Math.min(100, sharePct) + '%"></div></div></div>';
+      html += '<div class="ar-doc-section"><div class="ar-doc-section-title">Bu ürünü en çok satan 3 personel</div>';
+      html += '<table class="ar-doc-table"><thead><tr><th>#</th><th>Personel</th><th>Adet</th><th>Ciro</th></tr></thead><tbody>';
+      top3Staff.forEach(function(r, i) {
+        html += '<tr><td class="ar-doc-num">' + (i + 1) + '</td><td class="ar-doc-product">' + esc(r[0]) + '</td><td class="ar-doc-num">' + Math.round(r[1].count) + '</td><td class="ar-doc-num">₺' + fmt(r[1].revenue) + '</td></tr>';
+      });
+      if (top3Staff.length === 0) html += '<tr><td colspan="4" class="ar-doc-empty">Kayıt yok</td></tr>';
+      html += '</tbody></table></div>';
+      if (currentPrice > 0) {
+        html += '<div class="ar-doc-section"><div class="ar-doc-section-title">Fiyat</div>';
+        html += '<p class="ar-text">Birim fiyat: <strong>₺' + fmt(currentPrice) + '</strong>';
+        if (suggestUp) html += ' · Artırım önerisi: %' + suggestUp.pct + ' → ₺' + fmt(suggestUp.newPrice);
+        if (suggestDown) html += ' · İndirim önerisi: %' + suggestDown.pct + ' → ₺' + fmt(suggestDown.newPrice);
+        html += '</p></div>';
+      }
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    function renderCiroAnalysis(container, sales, startStr, endStr) {
+      var esc = function(s) { return (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+      var fmt = function(n) { return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
+      var productStats = {};
+      var byStaff = {};
+      var daily = {};
+      sales.forEach(function(sale) {
+        var rev = calculateSaleRevenue(sale);
+        if (sale.items_array && sale.items_array.length) {
+          sale.items_array.forEach(function(it) {
+            if (it && it.isExpense) return;
+            var rawIt = (it && it.staff_name) || sale.staff_name || sale.personel;
+            if (rawIt) {
+              var names = parseStaffNamesForAnalysis(rawIt);
+              var n = names.length || 1;
+              var itemRev = (parseFloat(it.price) || 0) * (it.quantity || 1);
+              names.forEach(function(staffName) {
+                if (!byStaff[staffName]) byStaff[staffName] = 0;
+                byStaff[staffName] += itemRev / n;
+              });
+            }
+          });
+        } else {
+          var raw = sale.staff_name || sale.personel;
+          if (raw) {
+            var names = parseStaffNamesForAnalysis(raw);
+            var n = names.length || 1;
+            names.forEach(function(staffName) {
+              if (!byStaff[staffName]) byStaff[staffName] = 0;
+              byStaff[staffName] += rev / n;
+            });
+          }
+        }
+        var saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+        if (saleBusinessDay && saleBusinessDay !== 'Bilinmeyen') {
+          if (!daily[saleBusinessDay]) daily[saleBusinessDay] = { revenue: 0, count: 0 };
+          daily[saleBusinessDay].revenue += rev;
+          daily[saleBusinessDay].count += 1;
+        }
+        var items = sale.items_array || sale.items || [];
+        items.forEach(function(it) {
+          if (!it || !it.product_name || it.isExpense) return;
+          var name = it.product_name;
+          if (!productStats[name]) productStats[name] = { count: 0, revenue: 0 };
+          var q = it.quantity || 1;
+          var p = parseFloat(it.price) || 0;
+          productStats[name].count += q;
+          productStats[name].revenue += p * q;
+        });
+      });
+      var totalRevenue = sales.reduce(function(s, sale) { return s + calculateSaleRevenue(sale); }, 0);
+      var productRows = Object.entries(productStats).sort(function(a, b) { return b[1].revenue - a[1].revenue; });
+      var topProducts = productRows.slice(0, 5);
+      var bottomProducts = productRows.slice(-5).reverse();
+      var staffRows = Object.entries(byStaff).sort(function(a, b) { return b[1] - a[1]; });
+      var bestStaff = staffRows[0];
+      var worstStaff = staffRows[staffRows.length - 1];
+      var sortedDates = Object.keys(daily).sort(function(a, b) {
+        var pa = a.split('.'), pb = b.split('.');
+        return new Date(pa[2], pa[1] - 1, pa[0]) - new Date(pb[2], pb[1] - 1, pb[0]);
+      });
+      var bestDay = sortedDates.length ? sortedDates.reduce(function(best, d) { return daily[d].revenue > daily[best].revenue ? d : best; }, sortedDates[0]) : null;
+      var maxProdRev = topProducts.length ? topProducts[0][1].revenue : 1;
+      var html = '<div class="analysis-report-inner ar-doc">';
+      html += '<div class="ar-doc-meta">' + startStr + ' – ' + endStr + '</div>';
+      html += '<h3 class="ar-doc-title">Ciro analizi</h3>';
+      html += '<div class="ar-doc-summary">';
+      html += '<div class="ar-doc-sum-item"><span class="ar-doc-sum-label">Toplam ciro</span><span class="ar-doc-sum-val">₺' + fmt(totalRevenue) + '</span></div>';
+      html += '<div class="ar-doc-sum-item"><span class="ar-doc-sum-label">Satış adedi</span><span class="ar-doc-sum-val">' + sales.length + '</span></div>';
+      html += '</div>';
+      html += '<div class="ar-doc-section"><div class="ar-doc-section-title">En çok ciro yaptıran ürünler</div><div class="ar-chart-bars">';
+      topProducts.forEach(function(r) {
+        var w = (r[1].revenue / maxProdRev) * 100;
+        html += '<div class="ar-chart-row"><span class="ar-chart-label">' + esc(r[0]) + '</span><div class="ar-chart-bar-wrap"><div class="ar-chart-bar" style="width:' + w + '%"></div></div><span class="ar-chart-val">₺' + fmt(r[1].revenue) + '</span></div>';
+      });
+      html += '</div></div>';
+      html += '<div class="ar-doc-section"><div class="ar-doc-section-title">En az ciro yaptıran ürünler</div>';
+      html += '<table class="ar-doc-table"><thead><tr><th>Ürün</th><th>Adet</th><th>Ciro</th></tr></thead><tbody>';
+      bottomProducts.forEach(function(r) {
+        html += '<tr><td class="ar-doc-product">' + esc(r[0]) + '</td><td class="ar-doc-num">' + r[1].count + '</td><td class="ar-doc-num">₺' + fmt(r[1].revenue) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+      html += '<div class="ar-doc-section"><div class="ar-doc-section-title">Personel (ciro)</div>';
+      html += '<table class="ar-doc-table"><thead><tr><th>Personel</th><th>Ciro</th></tr></thead><tbody>';
+      staffRows.slice(0, 8).forEach(function(r) {
+        html += '<tr><td class="ar-doc-product">' + esc(r[0]) + '</td><td class="ar-doc-num">₺' + fmt(r[1]) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      if (bestStaff) html += '<p class="ar-doc-perf"><span class="ar-badge good">En iyi</span> ' + esc(bestStaff[0]) + ' ₺' + fmt(bestStaff[1]) + '</p>';
+      if (worstStaff && worstStaff[0] !== bestStaff[0]) html += '<p class="ar-doc-perf"><span class="ar-badge neutral">En düşük</span> ' + esc(worstStaff[0]) + ' ₺' + fmt(worstStaff[1]) + '</p>';
+      html += '</div>';
+      if (bestDay) {
+        html += '<div class="ar-doc-section"><div class="ar-doc-section-title">En yüksek gün</div>';
+        html += '<p class="ar-text"><strong>' + bestDay + '</strong> — ₺' + fmt(daily[bestDay].revenue) + ' (' + daily[bestDay].count + ' satış)</p></div>';
+      }
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    // Analiz Modal Fonksiyonları (sonuç ekranı)
 
     function closeAnalysisModal() {
       const modal = document.getElementById('analysisModal');
@@ -6450,11 +7144,71 @@
       modal.style.display = 'none';
       document.body.style.overflow = '';
       
-      // Typing'i durdur
       if (typingInterval) {
         clearInterval(typingInterval);
         typingInterval = null;
       }
+    }
+
+    function downloadAnalysisPdf() {
+      var content = document.getElementById('analysisContent');
+      if (!content || !content.querySelector('.analysis-report-inner')) {
+        alert('İndirilecek rapor bulunamadı.');
+        return;
+      }
+      if (typeof html2pdf === 'undefined') {
+        alert('PDF kütüphanesi yüklenmedi. Sayfayı yenileyip tekrar deneyin.');
+        return;
+      }
+      var overlay = document.getElementById('analysisPdfOverlay');
+      var btn = document.getElementById('analysisPdfBtn');
+      var barEl = document.getElementById('analysisPdfBar');
+      var pctEl = document.getElementById('analysisPdfPct');
+      overlay.style.display = 'flex';
+      if (btn) { btn.disabled = true; btn.classList.add('loading'); }
+      if (barEl) barEl.style.width = '0%';
+      if (pctEl) pctEl.textContent = '%0';
+      setTimeout(function() {
+        var progress = 0;
+        var progressInterval = setInterval(function() {
+          if (progress >= 90) return;
+          progress += Math.random() * 8 + 4;
+          if (progress > 90) progress = 90;
+          if (barEl) barEl.style.width = progress + '%';
+          if (pctEl) pctEl.textContent = '%' + Math.round(progress);
+        }, 120);
+        var titleEl = document.querySelector('.analysis-modal-title');
+        var fileName = (titleEl && titleEl.textContent) ? titleEl.textContent.replace(/\s+/g, '-').replace(/[^\w\u00C0-\u024F\-]/g, '') + '.pdf' : 'Analiz-Raporu.pdf';
+        var modalBody = content.closest('.analysis-modal-body');
+        if (modalBody) modalBody.scrollTop = 0;
+        content.scrollTop = 0;
+        var opt = {
+          margin: [10, 10, 10, 10],
+          filename: fileName,
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true, logging: false, scrollY: 0, scrollX: 0 },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: 'css', avoid: ['tr', 'table'] }
+        };
+        function hideOverlay() {
+          clearInterval(progressInterval);
+          if (barEl) barEl.style.width = '100%'; if (pctEl) pctEl.textContent = '%100';
+          if (overlay) overlay.style.display = 'none';
+          if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
+        }
+        html2pdf().set(opt).from(content).save()
+          .then(function() {
+            if (barEl) barEl.style.width = '100%'; if (pctEl) pctEl.textContent = '%100';
+            clearInterval(progressInterval);
+            setTimeout(hideOverlay, 350);
+          })
+          .catch(function(err) {
+            clearInterval(progressInterval);
+            console.error('PDF hatası:', err);
+            alert('PDF oluşturulurken hata oluştu.');
+            hideOverlay();
+          });
+      }, 0);
     }
 
     // Günlük Ciro Modal Fonksiyonları
@@ -6476,7 +7230,7 @@
       reportSales.forEach(sale => {
         if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return;
         
-        // İŞ GÜNÜ hesapla (00:00-03:00 arası satışlar önceki güne ait)
+        // İŞ GÜNÜ hesapla (00:00–03:59 arası satışlar önceki güne ait, gece 04:00)
         const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
         const dateKey = saleBusinessDay || sale.sale_date; // DD.MM.YYYY formatı
         
@@ -6617,11 +7371,11 @@
       
       content.innerHTML = '';
       
-      // Dün ve bugün verilerini hesapla (gece 03:00'a göre)
+      // Dün ve bugün verilerini hesapla (gece 04:00'a göre)
       const today = getTodayDateString();
       const yesterdayStr = getYesterdayDateString();
       
-      // Masrafları hariç tut - 00:00-03:00 arası için iş günü hesapla
+      // Masrafları hariç tut - 00:00–03:59 arası iş günü (gece 04:00)
       const todaySales = allSales.filter(s => {
         const businessDate = getSaleBusinessDay(s.sale_date, s.sale_time);
         return businessDate === today && !s.isExpense && s.payment_method !== 'Masraf';
@@ -7298,7 +8052,28 @@
     }
 
     body.login-view {
+      padding: 0;
       align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      min-height: 100dvh;
+      background: linear-gradient(165deg, #0f172a 0%, #1e293b 45%, #0f172a 100%);
+      overflow-x: hidden;
+    }
+
+    body.login-view .container {
+      max-width: 100%;
+      width: 100%;
+      min-height: 100vh;
+      min-height: 100dvh;
+      padding: 0;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      border-radius: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .container {
@@ -7323,161 +8098,270 @@
 
     /* Header kaldırıldı - navbar kullanılıyor */
 
-    /* Login - Basit, profesyonel ve kurumsal */
+    /* Login — tam ekran, mobil uygulama tarzı, elit ve modern */
     .pin-section {
-      background: #ffffff;
-      padding: 40px 36px;
-      border-radius: 16px;
-      text-align: center;
-      border: 1px solid #e5e7eb;
-      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
-      max-width: 400px;
-      margin: 0 auto;
+      width: 100%;
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
       position: relative;
+      animation: loginFadeIn 0.5s ease-out;
+    }
+
+    @keyframes loginFadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .login-center-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      max-width: 420px;
+      gap: 0;
+    }
+
+    .login-brand-title {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: clamp(1.85rem, 6.5vw, 3.25rem);
+      font-weight: 800;
+      letter-spacing: 0.38em;
+      color: #f8fafc;
+      margin: 0 0 36px 0;
+      padding: 0 8px;
+      text-transform: uppercase;
+      text-align: center;
+      text-shadow: 0 0 48px rgba(251, 191, 36, 0.35), 0 0 24px rgba(251, 191, 36, 0.2), 0 2px 24px rgba(0, 0, 0, 0.4);
+      line-height: 1.1;
+      animation: loginBrandReveal 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+      opacity: 0;
+    }
+
+    @keyframes loginBrandReveal {
+      0% {
+        opacity: 0;
+        transform: translateY(-24px) scale(0.96);
+        letter-spacing: 0.6em;
+        filter: blur(6px);
+      }
+      40% {
+        opacity: 1;
+        filter: blur(0);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        letter-spacing: 0.38em;
+        filter: blur(0);
+      }
+    }
+
+    .login-card {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 380px;
+      background: rgba(255, 255, 255, 0.06);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 28px;
+      padding: 40px 32px;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.1) inset;
+      text-align: center;
+      animation: loginCardIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+
+    @keyframes loginCardIn {
+      from {
+        opacity: 0;
+        transform: scale(0.96) translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
+    }
+
+    .pin-section::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 60%;
+      background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(251, 191, 36, 0.06) 0%, transparent 60%);
+      pointer-events: none;
     }
 
     .login-header {
-      margin-bottom: 28px;
+      margin-bottom: 32px;
+    }
+
+    .login-logo-wrap {
+      width: 80px;
+      height: 80px;
+      margin: 0 auto 20px;
+      border-radius: 20px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
     }
 
     .login-logo {
-      width: 72px;
-      height: 72px;
-      margin: 0 auto 20px;
-      border-radius: 50%;
+      width: 100%;
+      height: 100%;
       object-fit: cover;
       display: block;
-      border: 1px solid #e5e7eb;
     }
 
-    .pin-section h2 {
-      font-size: 22px;
-      font-weight: 600;
-      margin-bottom: 6px;
-      color: #1f2937;
-      letter-spacing: -0.3px;
+    .login-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #f8fafc;
+      margin: 0 0 6px;
+      letter-spacing: -0.02em;
     }
 
-    .pin-section .login-subtitle {
-      font-size: 14px;
-      color: #6b7280;
+    .login-subtitle {
+      font-size: 0.9rem;
+      color: rgba(248, 250, 252, 0.6);
       font-weight: 500;
-      margin-bottom: 0;
+      margin: 0;
+      letter-spacing: 0.02em;
     }
 
     .pin-form {
       text-align: left;
     }
 
-    .input-group {
+    .pin-section .input-group {
       margin-bottom: 20px;
     }
 
-    .input-label {
+    .pin-section .input-label {
       display: block;
-      font-size: 13px;
-      font-weight: 500;
-      color: #374151;
-      margin-bottom: 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: rgba(248, 250, 252, 0.8);
+      margin-bottom: 10px;
+      letter-spacing: 0.04em;
     }
 
-    .pin-input {
-      padding: 12px 16px;
-      font-size: 18px;
-      border-radius: 10px;
+    .pin-section .pin-input {
+      padding: 16px 20px;
+      font-size: 1.25rem;
+      border-radius: 14px;
       width: 100%;
       box-sizing: border-box;
       text-align: center;
-      font-weight: 500;
-      letter-spacing: 6px;
-      border: 1px solid #d1d5db;
-      background: #f9fafb;
-      color: #111827;
-      transition: border-color 0.2s, box-shadow 0.2s;
+      font-weight: 600;
+      letter-spacing: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.06);
+      color: #f8fafc;
+      transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
     }
 
-    .pin-input:focus {
+    .pin-section .pin-input::placeholder {
+      color: rgba(248, 250, 252, 0.35);
+    }
+
+    .pin-section .pin-input:focus {
       outline: none;
-      border-color: #4b5563;
-      box-shadow: 0 0 0 3px rgba(75, 85, 99, 0.12);
+      border-color: rgba(251, 191, 36, 0.5);
+      box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.15);
+      background: rgba(255, 255, 255, 0.08);
     }
 
     .login-options {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 20px;
+      margin-bottom: 24px;
       flex-wrap: wrap;
-      gap: 8px;
+      gap: 10px;
     }
 
     .login-remember {
       display: flex;
       align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      color: #6b7280;
+      gap: 10px;
+      font-size: 0.85rem;
+      color: rgba(248, 250, 252, 0.7);
       cursor: pointer;
       user-select: none;
     }
 
     .login-remember input {
-      width: 16px;
-      height: 16px;
-      accent-color: #4b5563;
+      width: 18px;
+      height: 18px;
+      accent-color: #fbbf24;
       cursor: pointer;
+      flex-shrink: 0;
     }
 
     .login-change-pin {
-      font-size: 13px;
-      color: #4b5563;
-      text-decoration: none;
+      font-size: 0.8rem;
+      color: rgba(251, 191, 36, 0.95);
       font-weight: 500;
       cursor: pointer;
       background: none;
       border: none;
       padding: 0;
+      transition: color 0.2s, opacity 0.2s;
     }
 
     .login-change-pin:hover {
-      color: #1f2937;
-      text-decoration: underline;
+      color: #fcd34d;
+      opacity: 0.9;
     }
 
-    .pin-btn {
-      padding: 14px 24px;
-      border-radius: 10px;
+    .pin-section .pin-btn {
+      padding: 16px 24px;
+      border-radius: 14px;
       border: none;
-      background: #374151;
-      color: #ffffff;
-      font-size: 15px;
-      font-weight: 600;
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+      color: #0f172a;
+      font-size: 1rem;
+      font-weight: 700;
       cursor: pointer;
-      display: inline-flex;
+      display: flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
       width: 100%;
-      transition: background 0.2s;
+      transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+      box-shadow: 0 4px 20px rgba(251, 191, 36, 0.35);
     }
 
-    .pin-btn:hover {
-      background: #1f2937;
+    .pin-section .pin-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 28px rgba(251, 191, 36, 0.45);
     }
 
-    .pin-btn:active {
-      background: #111827;
+    .pin-section .pin-btn:active {
+      transform: translateY(0);
     }
 
     .login-footer {
-      margin-top: 24px;
+      margin-top: 28px;
       padding-top: 20px;
-      border-top: 1px solid #e5e7eb;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
     }
 
     .login-footer-text {
-      font-size: 12px;
-      color: #9ca3af;
+      font-size: 0.75rem;
+      color: rgba(248, 250, 252, 0.45);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -7487,19 +8371,21 @@
     .login-footer-text svg {
       width: 14px;
       height: 14px;
-      color: #9ca3af;
+      color: rgba(248, 250, 252, 0.45);
+      flex-shrink: 0;
     }
 
-    /* Şifre değiştir modal */
+    /* Şifre değiştir modal — login temasına uyumlu */
     .change-pin-overlay {
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.4);
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(8px);
       z-index: 9999;
       align-items: center;
       justify-content: center;
-      padding: 16px;
+      padding: 20px;
     }
 
     .change-pin-overlay.show {
@@ -7507,28 +8393,44 @@
     }
 
     .change-pin-modal {
-      background: #fff;
-      border-radius: 12px;
-      padding: 24px;
+      background: linear-gradient(165deg, #1e293b 0%, #0f172a 100%);
+      border-radius: 20px;
+      padding: 28px 24px;
       max-width: 360px;
       width: 100%;
-      border: 1px solid #e5e7eb;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
     }
 
     .change-pin-modal h3 {
-      margin: 0 0 20px 0;
-      font-size: 18px;
-      font-weight: 600;
-      color: #1f2937;
+      margin: 0 0 8px 0;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+
+    .change-pin-modal p {
+      color: rgba(248, 250, 252, 0.6);
     }
 
     .change-pin-modal .input-group {
       margin-bottom: 16px;
     }
 
+    .change-pin-modal .input-label {
+      color: rgba(248, 250, 252, 0.8);
+    }
+
     .change-pin-modal .pin-input {
       letter-spacing: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.12);
+      color: #f8fafc;
+    }
+
+    .change-pin-modal .pin-input:focus {
+      border-color: rgba(251, 191, 36, 0.5);
+      box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.15);
     }
 
     .change-pin-modal-actions {
@@ -7539,30 +8441,34 @@
 
     .change-pin-modal-actions button {
       flex: 1;
-      padding: 10px 16px;
-      border-radius: 8px;
+      padding: 12px 16px;
+      border-radius: 12px;
       font-size: 14px;
       font-weight: 600;
       cursor: pointer;
       border: none;
+      transition: opacity 0.2s, transform 0.2s;
     }
 
     .change-pin-cancel {
-      background: #f3f4f6;
-      color: #374151;
+      background: rgba(255, 255, 255, 0.08);
+      color: rgba(248, 250, 252, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.1);
     }
 
     .change-pin-cancel:hover {
-      background: #e5e7eb;
+      background: rgba(255, 255, 255, 0.12);
     }
 
     .change-pin-submit {
-      background: #374151;
-      color: #fff;
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+      color: #0f172a;
+      box-shadow: 0 4px 16px rgba(251, 191, 36, 0.3);
     }
 
     .change-pin-submit:hover {
-      background: #1f2937;
+      opacity: 0.95;
+      transform: translateY(-1px);
     }
 
     /* Başarı popup - modern ve profesyonel */
@@ -7644,12 +8550,18 @@
       background: #1f2937;
     }
 
-    @media (max-width: 600px) {
-      .pin-section {
-        padding: 32px 24px;
+    @media (max-width: 480px) {
+      .login-brand-title {
+        font-size: 1.45rem;
+        letter-spacing: 0.22em;
+        margin-bottom: 28px;
       }
-      .pin-section h2 {
-        font-size: 20px;
+      .login-card {
+        padding: 32px 24px;
+        border-radius: 24px;
+      }
+      .login-title {
+        font-size: 1.35rem;
       }
     }
 
@@ -8348,6 +9260,26 @@
       color: var(--primary, #f97316);
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
     }
+    .sales-branch-opt {
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #64748b;
+      cursor: pointer;
+    }
+    .sales-branch-opt:hover {
+      background: #f1f5f9;
+      color: var(--primary, #f97316);
+    }
+    .sales-branch-opt.active {
+      background: #fff;
+      color: var(--primary, #f97316);
+      border-color: var(--primary, #f97316);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    }
     @media (max-width: 480px) {
       .report-branch-wrap {
         width: 100%;
@@ -8564,6 +9496,20 @@
     .stat-card-purple .stat-value {
       color: var(--primary, #f97316);
     }
+
+    .stat-value-branches {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      white-space: normal;
+    }
+    .stat-branch-item {
+      display: block;
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .stat-branch-item.stat-branch-seker { color: #059669; }
+    .stat-branch-item.stat-branch-sancak { color: #0369a1; }
 
     .stat-card-pink .stat-value {
       color: var(--primary, #f97316);
@@ -9898,14 +10844,11 @@
       box-shadow: 0 8px 18px rgba(220, 38, 38, 0.25);
     }
 
-    /* Admin Splash Screen */
+    /* Admin Splash Screen — elit, modern, profesyonel */
     .admin-splash-screen {
       position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: #ffffff;
+      inset: 0;
+      background: linear-gradient(165deg, #0f172a 0%, #1e293b 45%, #0f172a 100%);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -9915,8 +10858,10 @@
 
     .splash-content {
       position: relative;
-      z-index: 1;
+      z-index: 2;
       width: 100%;
+      max-width: 96vw;
+      padding: 24px;
       text-align: center;
       display: flex;
       flex-direction: column;
@@ -9925,127 +10870,142 @@
     }
 
     .splash-logo {
-      width: 120px;
-      height: 120px;
+      width: 88px;
+      height: 88px;
       object-fit: cover;
-      border-radius: 50%;
-      margin-bottom: 32px;
-      animation: logoFadeIn 0.8s ease-out forwards;
+      border-radius: 20px;
+      margin-bottom: 28px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.06);
+      animation: splashLogoIn 1s cubic-bezier(0.22, 1, 0.36, 1) forwards;
       opacity: 0;
     }
 
     .splash-main-text {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      font-weight: 800;
-      font-size: clamp(4rem, 12vw, 8rem);
-      line-height: 0.9;
-      letter-spacing: 0.15em;
-      color: #0a0a0a;
+      font-weight: 700;
+      font-size: clamp(1.5rem, 5vw, 2.75rem);
+      line-height: 1.15;
+      letter-spacing: 0.12em;
+      color: #f8fafc;
       margin: 0;
-      padding: 0;
+      padding: 0 12px;
       text-align: center;
       text-transform: uppercase;
-      animation: mainTextReveal 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      max-width: 100%;
+      word-break: break-word;
+      text-shadow: 0 2px 24px rgba(0, 0, 0, 0.3);
+      animation: splashTitleIn 1.1s cubic-bezier(0.22, 1, 0.36, 1) 0.2s forwards;
       opacity: 0;
     }
 
     .splash-decorative-line {
       width: 0%;
-      height: 1px;
-      background: linear-gradient(90deg, transparent 0%, #d1d5db 50%, transparent 100%);
-      margin: 32px auto 40px;
-      max-width: 400px;
-      animation: lineExpand 1s ease-out forwards;
-      animation-delay: 0.5s;
+      height: 2px;
+      background: linear-gradient(90deg, transparent 0%, rgba(251, 191, 36, 0.4) 30%, rgba(251, 191, 36, 0.9) 50%, rgba(251, 191, 36, 0.4) 70%, transparent 100%);
+      margin: 24px auto 20px;
+      max-width: 280px;
+      border-radius: 2px;
+      animation: splashLineIn 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.5s forwards;
       opacity: 0;
     }
 
     .splash-subtitle-text {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      font-size: clamp(0.875rem, 1.5vw, 1.125rem);
-      font-weight: 400;
-      color: #6b7280;
+      font-size: clamp(0.7rem, 1.2vw, 0.85rem);
+      font-weight: 500;
+      color: rgba(248, 250, 252, 0.6);
       margin: 0;
       padding: 0;
-      letter-spacing: 0.2em;
+      letter-spacing: 0.28em;
       text-transform: uppercase;
       text-align: center;
-      opacity: 0.7;
-      animation: subtitleFadeIn 0.8s ease-out forwards;
-      animation-delay: 0.3s;
+      animation: splashSubtitleIn 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.65s forwards;
       opacity: 0;
     }
 
-    @keyframes logoFadeIn {
-      from {
-        opacity: 0;
-        transform: scale(0.8);
-      }
-      to {
-        opacity: 1;
-        transform: scale(1);
-      }
+    .splash-loading-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, rgba(251, 191, 36, 0.8), transparent);
+      border-radius: 0 3px 0 0;
+      animation: splashLoadingBar 2.2s ease-in-out 0.4s forwards;
+      transform-origin: left;
     }
 
-    @keyframes mainTextReveal {
+    @keyframes splashLogoIn {
       0% {
         opacity: 0;
-        transform: translateY(40px) scale(0.95);
-        letter-spacing: 0.3em;
+        transform: scale(0.85) translateY(-12px);
       }
       100% {
         opacity: 1;
-        transform: translateY(0) scale(1);
-        letter-spacing: 0.15em;
+        transform: scale(1) translateY(0);
       }
     }
 
-    @keyframes subtitleFadeIn {
-      from {
+    @keyframes splashTitleIn {
+      0% {
         opacity: 0;
-        transform: translateY(20px);
+        transform: translateY(24px);
       }
-      to {
+      100% {
         opacity: 1;
         transform: translateY(0);
       }
     }
 
-    @keyframes lineExpand {
-      from {
+    @keyframes splashSubtitleIn {
+      0% {
+        opacity: 0;
+        transform: translateY(12px);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes splashLineIn {
+      0% {
         width: 0%;
         opacity: 0;
       }
-      to {
+      100% {
         width: 100%;
         opacity: 1;
       }
     }
 
-    /* Dekoratif arka plan elementleri */
+    @keyframes splashLoadingBar {
+      0% { transform: scaleX(0); }
+      40% { transform: scaleX(0.6); }
+      70% { transform: scaleX(0.85); }
+      100% { transform: scaleX(1); }
+    }
+
+    /* Splash: dekoratif arka plan */
     .admin-splash-screen::before {
       content: '';
       position: absolute;
-      top: 20%;
-      left: 10%;
-      width: 200px;
-      height: 200px;
-      background: radial-gradient(circle, rgba(236, 72, 153, 0.03) 0%, transparent 70%);
-      border-radius: 50%;
-      filter: blur(40px);
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(251, 191, 36, 0.06) 0%, transparent 55%);
       pointer-events: none;
     }
 
     .admin-splash-screen::after {
       content: '';
       position: absolute;
-      bottom: 20%;
-      right: 10%;
-      width: 300px;
-      height: 300px;
-      background: radial-gradient(circle, rgba(236, 72, 153, 0.02) 0%, transparent 70%);
-      border-radius: 50%;
-      filter: blur(60px);
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 40%;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.2) 0%, transparent 100%);
       pointer-events: none;
     }
 
@@ -10902,6 +11862,429 @@
       filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
     }
 
+    /* Analiz akışı: tür seçimi + tarih aralığı + loading */
+    .analysis-flow-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 10050;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .analysis-flow-card {
+      width: 100%;
+      max-width: 480px;
+      background: linear-gradient(165deg, #0f0f14 0%, #1a1a24 50%, #12121a 100%);
+      border-radius: 24px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06), 0 0 80px rgba(0, 212, 255, 0.08);
+      overflow: hidden;
+      animation: analysisFlowIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    @keyframes analysisFlowIn {
+      from { opacity: 0; transform: scale(0.92) translateY(12px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .analysis-flow-header {
+      padding: 28px 28px 20px;
+      text-align: center;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .analysis-flow-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.02em;
+    }
+    .analysis-flow-subtitle {
+      margin: 8px 0 0;
+      font-size: 13px;
+      color: rgba(255,255,255,0.55);
+      font-weight: 500;
+    }
+    .analysis-type-options {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 24px 28px;
+    }
+    .analysis-type-option {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 18px 20px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .analysis-type-option:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(0, 212, 255, 0.35);
+      box-shadow: 0 0 24px rgba(0, 212, 255, 0.12);
+    }
+    .analysis-type-option.selected {
+      background: rgba(0, 212, 255, 0.12);
+      border-color: rgba(0, 212, 255, 0.5);
+      box-shadow: 0 0 32px rgba(0, 212, 255, 0.18);
+    }
+    .analysis-type-option .option-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      flex-shrink: 0;
+    }
+    .analysis-type-option .option-icon.personel { background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%); }
+    .analysis-type-option .option-icon.urun { background: linear-gradient(135deg, #06b6d4 0%, #0ea5e9 100%); }
+    .analysis-type-option .option-icon.ciro { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+    .analysis-type-option .option-label {
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .analysis-flow-footer {
+      padding: 20px 28px 28px;
+      display: flex;
+      justify-content: flex-end;
+    }
+    .analysis-flow-btn {
+      padding: 14px 28px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .analysis-flow-btn-primary {
+      background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+      color: #0f0f14;
+      box-shadow: 0 4px 20px rgba(0, 212, 255, 0.4);
+    }
+    .analysis-flow-btn-primary:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 28px rgba(0, 212, 255, 0.5);
+    }
+    .analysis-flow-btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .analysis-daterange-fields {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 24px 28px;
+    }
+    .analysis-daterange-field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.6);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .analysis-daterange-field input {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.06);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+      box-sizing: border-box;
+    }
+    .analysis-daterange-field input:focus {
+      outline: none;
+      border-color: rgba(0, 212, 255, 0.5);
+      box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.15);
+    }
+    .analysis-select-list-wrap {
+      padding: 0 28px 20px;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    .analysis-select-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .analysis-select-option {
+      padding: 14px 18px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .analysis-select-option:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(0, 212, 255, 0.3);
+    }
+    .analysis-select-option.selected {
+      background: rgba(0, 212, 255, 0.12);
+      border-color: rgba(0, 212, 255, 0.5);
+    }
+    .analysis-select-option .option-text {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .analysis-select-empty {
+      text-align: center;
+      color: rgba(255,255,255,0.5);
+      font-size: 14px;
+      padding: 24px;
+      margin: 0;
+    }
+    .analysis-loading-overlay .analysis-flow-card {
+      max-width: 440px;
+      overflow: visible;
+      box-shadow: 0 32px 80px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
+    }
+    .analysis-loading-wrap {
+      padding: 56px 44px 52px;
+      text-align: center;
+    }
+    .analysis-loading-ring {
+      width: 160px;
+      height: 160px;
+      margin: 0 auto 40px;
+      position: relative;
+    }
+    .analysis-loading-ring .analysis-loading-svg {
+      width: 100%;
+      height: 100%;
+      transform: rotate(-90deg);
+    }
+    .analysis-loading-ring .ring-bg {
+      fill: none;
+      stroke: rgba(255, 255, 255, 0.08);
+      stroke-width: 6;
+    }
+    .analysis-loading-ring .ring-fill {
+      fill: none;
+      stroke: url(#analysisLoadingGradient);
+      stroke-width: 6;
+      stroke-linecap: round;
+      stroke-dasharray: 339.292;
+      stroke-dashoffset: 339.292;
+      transition: stroke-dashoffset 0.35s cubic-bezier(0.32, 0.72, 0.2, 1);
+      filter: drop-shadow(0 0 12px rgba(0, 212, 255, 0.4));
+    }
+    .analysis-loading-ring-inner {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 28px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.04em;
+      text-shadow: 0 0 24px rgba(255, 255, 255, 0.25);
+      font-variant-numeric: tabular-nums;
+    }
+    .analysis-loading-msg-wrap {
+      min-height: 52px;
+    }
+    .analysis-loading-msg {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 6px;
+      letter-spacing: -0.01em;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+    .analysis-loading-msg.analysis-msg-fade-in {
+      animation: analysis-msg-fade 0.45s ease-out;
+    }
+    .analysis-loading-sub {
+      font-size: 13px;
+      color: rgba(255,255,255,0.6);
+      font-weight: 500;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+    .analysis-loading-sub.analysis-msg-fade-in {
+      animation: analysis-msg-fade 0.45s ease-out 0.06s both;
+    }
+    @keyframes analysis-msg-fade {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .analysis-report-corporate {
+      padding: 8px 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .analysis-report-meta {
+      font-size: 12px;
+      color: #64748b;
+      font-weight: 600;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .analysis-report-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .analysis-report-table thead {
+      background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+      color: #fff;
+    }
+    .analysis-report-table th {
+      padding: 14px 16px;
+      text-align: left;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .analysis-report-table tbody tr {
+      border-bottom: 1px solid #f1f5f9;
+      transition: background 0.15s ease;
+    }
+    .analysis-report-table tbody tr:hover {
+      background: #f8fafc;
+    }
+    .analysis-report-table tbody tr:last-child {
+      border-bottom: none;
+    }
+    .analysis-report-table td {
+      padding: 14px 16px;
+      color: #334155;
+      font-weight: 500;
+    }
+    .analysis-report-table td:first-child {
+      font-weight: 600;
+      color: #1e293b;
+    }
+
+    .analysis-report-inner { padding: 4px 0; }
+    .ar-section { margin-bottom: 24px; }
+    .ar-section-title { font-size: 13px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+    .ar-text { font-size: 14px; line-height: 1.65; color: #334155; margin-bottom: 10px; }
+    .ar-metric-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+    .ar-metric { padding: 10px 16px; background: #f8fafc; border-radius: 10px; font-size: 13px; font-weight: 600; color: #1e293b; }
+    .ar-metric .val { color: #0ea5e9; font-weight: 800; }
+    .ar-bar-wrap { height: 12px; background: #e2e8f0; border-radius: 999px; overflow: hidden; margin: 12px 0; }
+    .ar-bar-fill { height: 100%; border-radius: 999px; transition: width 0.4s ease; }
+    .ar-bar-fill.green { background: linear-gradient(90deg, #10b981, #059669); }
+    .ar-bar-fill.amber { background: linear-gradient(90deg, #f59e0b, #d97706); }
+    .ar-bar-fill.red { background: linear-gradient(90deg, #ef4444, #dc2626); }
+    .ar-bar-fill.blue { background: linear-gradient(90deg, #0ea5e9, #0284c7); }
+    .ar-badge { display: inline-block; padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; }
+    .ar-badge.good { background: #d1fae5; color: #065f46; }
+    .ar-badge.warn { background: #fef3c7; color: #92400e; }
+    .ar-badge.bad { background: #fee2e2; color: #991b1b; }
+    .ar-badge.neutral { background: #e0f2fe; color: #0369a1; }
+    .ar-list { list-style: none; padding: 0; margin: 0; }
+    .ar-list li { padding: 10px 14px; border-bottom: 1px solid #f1f5f9; font-size: 14px; color: #334155; display: flex; justify-content: space-between; align-items: center; }
+    .ar-list li:last-child { border-bottom: none; }
+    .ar-tip { padding: 14px 18px; background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 4px solid #10b981; border-radius: 0 12px 12px 0; font-size: 13px; color: #166534; font-weight: 500; margin-top: 12px; }
+
+    .ar-doc { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1e293b; }
+    .ar-doc-meta { font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 0.05em; margin-bottom: 8px; }
+    .ar-doc-title { font-size: 18px; font-weight: 800; margin: 0 0 16px 0; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+    .ar-doc-summary { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    .ar-doc-sum-item { flex: 1; min-width: 100px; padding: 12px 16px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 4px; }
+    .ar-doc-sum-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
+    .ar-doc-sum-val { font-size: 16px; font-weight: 800; color: #0f172a; }
+    .ar-doc-section { margin-bottom: 22px; }
+    .ar-doc-section-title { font-size: 12px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+    .ar-doc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .ar-doc-table thead { background: #f1f5f9; }
+    .ar-doc-table th { text-align: left; padding: 10px 12px; font-weight: 700; color: #475569; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .ar-doc-table td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
+    .ar-doc-product { font-weight: 600; color: #334155; }
+    .ar-doc-num { text-align: right; font-weight: 600; color: #0f172a; }
+    .ar-doc-empty { color: #94a3b8; font-size: 12px; text-align: center; padding: 16px !important; }
+    .ar-chart-bars { display: flex; flex-direction: column; gap: 10px; }
+    .ar-chart-row { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+    .ar-chart-label { flex: 0 0 140px; font-weight: 500; color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ar-chart-bar-wrap { flex: 1; height: 10px; background: #e2e8f0; border-radius: 999px; overflow: hidden; min-width: 60px; }
+    .ar-chart-bar { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #0ea5e9, #06b6d4); transition: width 0.35s ease; }
+    .ar-chart-bar.single { background: linear-gradient(90deg, #10b981, #059669); }
+    .ar-chart-val { flex-shrink: 0; font-weight: 700; color: #0f172a; font-size: 12px; }
+    .ar-doc-perf { margin-top: 10px; font-size: 13px; color: #334155; }
+
+    /* A4 PDF export – rapor kopyası için */
+    .pdf-page-wrap .ar-doc-pdf {
+      width: 100%;
+      max-width: 178mm;
+      margin: 0 auto;
+      font-size: 11pt;
+      color: #1e293b;
+      line-height: 1.45;
+    }
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-meta {
+      font-size: 9pt;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-title {
+      font-size: 16pt;
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom-width: 2px;
+    }
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-summary {
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-sum-item {
+      padding: 10px 14px;
+    }
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-sum-label { font-size: 8pt; }
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-sum-val { font-size: 13pt; }
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-section {
+      margin-bottom: 16px;
+      page-break-inside: avoid;
+    }
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-section-title {
+      font-size: 9pt;
+      margin-bottom: 8px;
+    }
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-table {
+      font-size: 10pt;
+    }
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-table th,
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-table td {
+      padding: 8px 10px;
+    }
+    .pdf-page-wrap .ar-doc-pdf .ar-chart-row { font-size: 10pt; }
+    .pdf-page-wrap .ar-doc-pdf .ar-chart-label { flex: 0 0 120px; }
+    .pdf-page-wrap .ar-doc-pdf .ar-chart-bar-wrap { height: 8px; }
+    .pdf-page-wrap .ar-doc-pdf .ar-bar-wrap { height: 10px; margin: 10px 0; }
+    .pdf-page-wrap .ar-doc-pdf .ar-doc-perf,
+    .pdf-page-wrap .ar-doc-pdf .ar-text { font-size: 10pt; }
+    #pdf-export-temp { background: #fff !important; }
+    #pdf-export-temp .ar-doc-pdf { background: #fff !important; color: #1e293b !important; }
+    #pdf-export-temp .ar-doc-sum-item,
+    #pdf-export-temp .ar-doc-table thead { background: #f1f5f9 !important; }
+    #pdf-export-temp .ar-doc-sum-val,
+    #pdf-export-temp .ar-doc-title { color: #0f172a !important; }
+    #pdf-export-temp .ar-doc-meta,
+    #pdf-export-temp .ar-doc-sum-label,
+    #pdf-export-temp .ar-doc-section-title { color: #475569 !important; }
+    #pdf-export-temp .ar-chart-bar { background: linear-gradient(90deg, #0ea5e9, #06b6d4) !important; }
+    #pdf-export-temp .ar-chart-bar.single { background: linear-gradient(90deg, #10b981, #059669) !important; }
+    #pdf-export-temp .ar-bar-fill.green { background: linear-gradient(90deg, #10b981, #059669) !important; }
+    #pdf-export-temp .ar-bar-fill.amber { background: linear-gradient(90deg, #f59e0b, #d97706) !important; }
+    #pdf-export-temp .ar-bar-fill.red { background: linear-gradient(90deg, #ef4444, #dc2626) !important; }
+
     /* Analiz Modal */
     .analysis-modal {
       position: fixed;
@@ -10958,6 +12341,122 @@
       padding: 24px 28px;
       border-bottom: 2px solid #ec4899;
       background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
+    }
+
+    .analysis-modal-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .analysis-pdf-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 22px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15), 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+    }
+    .analysis-pdf-btn:hover:not(:disabled) {
+      background: linear-gradient(145deg, #1e293b 0%, #334155 100%);
+      border-color: rgba(255, 255, 255, 0.2);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2), 0 1px 0 rgba(255, 255, 255, 0.08) inset;
+      transform: translateY(-2px);
+    }
+    .analysis-pdf-btn:active:not(:disabled) {
+      transform: translateY(0);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    }
+    .analysis-pdf-btn:disabled { opacity: 0.75; cursor: not-allowed; transform: none; }
+    .analysis-pdf-btn .analysis-pdf-btn-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .analysis-pdf-btn .analysis-pdf-btn-icon svg {
+      width: 16px;
+      height: 16px;
+    }
+    .analysis-pdf-btn.loading .analysis-pdf-btn-icon { display: none; }
+    .analysis-pdf-btn.loading .analysis-pdf-btn-text::after {
+      content: '';
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      margin-left: 8px;
+      border: 2px solid rgba(255,255,255,0.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: analysis-pdf-spin 0.7s linear infinite;
+      vertical-align: -2px;
+    }
+    @keyframes analysis-pdf-spin { to { transform: rotate(360deg); } }
+
+    .analysis-pdf-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 10060;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10, 12, 18, 0.72);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .analysis-pdf-overlay-card {
+      text-align: center;
+      width: 90%;
+      max-width: 380px;
+      padding: 36px 40px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 24px;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.1) inset;
+    }
+    .analysis-pdf-overlay-title {
+      margin: 0;
+      font-size: 19px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.02em;
+    }
+    .analysis-pdf-overlay-sub {
+      margin: 10px 0 26px;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.6);
+      font-weight: 500;
+    }
+    .analysis-pdf-overlay-bar-wrap {
+      height: 6px;
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .analysis-pdf-overlay-bar {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #00d4ff, #0ea5e9);
+      transition: width 0.22s ease-out;
+    }
+    .analysis-pdf-overlay-pct {
+      margin-top: 12px;
+      font-size: 12px;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.85);
+      letter-spacing: 0.02em;
     }
 
     .analysis-modal-title {
@@ -13042,40 +14541,46 @@
       <div class="splash-decorative-line"></div>
       <p class="splash-subtitle-text">Admin Dashboard</p>
     </div>
+    <div class="splash-loading-bar" aria-hidden="true"></div>
   </div>
 
   <div class="container">
     <div id="loginSection" class="pin-section">
-      <div class="login-header">
-        <img src="tenant.png" alt="Logo" class="login-logo" onerror="this.style.display='none';">
-        <h2>Admin Girişi</h2>
-        <p class="login-subtitle" id="loginBusinessName">Gece Dönercisi</p>
-      </div>
-      
-      <div class="pin-form">
-        <div class="input-group">
-          <label class="input-label">Güvenlik PIN'i</label>
-          <input type="password" id="pinInput" class="pin-input" placeholder="••••" maxlength="10" autofocus>
+      <div class="login-center-wrap">
+        <h1 class="login-brand-title">DROJE SYSTEMS</h1>
+        <div class="login-card">
+        <div class="login-header">
+          <div class="login-logo-wrap">
+            <img src="tenant.png" alt="Logo" class="login-logo" onerror="this.style.display='none';">
+          </div>
+          <h2 class="login-title">Admin Girişi</h2>
+          <p class="login-subtitle" id="loginBusinessName">Gece Dönercisi</p>
         </div>
-        <div class="login-options">
-          <label class="login-remember">
-            <input type="checkbox" id="rememberMe" name="rememberMe">
-            Beni hatırla
-          </label>
-          <button type="button" class="login-change-pin" id="btnChangePin">Şifreyi değiştir</button>
+        <div class="pin-form">
+          <div class="input-group">
+            <label class="input-label">Güvenlik PIN'i</label>
+            <input type="password" id="pinInput" class="pin-input" placeholder="••••" maxlength="10" autofocus>
+          </div>
+          <div class="login-options">
+            <label class="login-remember">
+              <input type="checkbox" id="rememberMe" name="rememberMe">
+              <span>Beni hatırla</span>
+            </label>
+            <button type="button" class="login-change-pin" id="btnChangePin">Şifreyi değiştir</button>
+          </div>
+          <button onclick="verifyPin()" class="pin-btn">
+            <span>Giriş Yap</span>
+          </button>
         </div>
-        <button onclick="verifyPin()" class="pin-btn">
-          Giriş Yap
-        </button>
+        <div class="login-footer">
+          <p class="login-footer-text">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/>
+            </svg>
+            Güvenli Bağlantı
+          </p>
+        </div>
       </div>
-      
-      <div class="login-footer">
-        <p class="login-footer-text">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/>
-          </svg>
-          Güvenli Bağlantı
-        </p>
       </div>
     </div>
 
@@ -13322,13 +14827,170 @@
     </div>
   </div>
 
+  <!-- Analiz: önce şube seçimi -->
+  <div id="analysisBranchModal" class="analysis-flow-overlay" style="display: none;">
+    <div class="analysis-flow-card">
+      <div class="analysis-flow-header">
+        <h2 class="analysis-flow-title">Şube seçin</h2>
+        <p class="analysis-flow-subtitle">Analiz verileri seçtiğiniz şubeye göre oluşturulacak</p>
+      </div>
+      <div class="analysis-type-options">
+        <div class="analysis-branch-option analysis-type-option" data-branch="SEKER" onclick="selectAnalysisBranch('SEKER')">
+          <div class="option-icon personel">#</div>
+          <span class="option-label">Şeker</span>
+        </div>
+        <div class="analysis-branch-option analysis-type-option" data-branch="SANCAK" onclick="selectAnalysisBranch('SANCAK')">
+          <div class="option-icon urun">#</div>
+          <span class="option-label">Sancak</span>
+        </div>
+        <div class="analysis-branch-option analysis-type-option" data-branch="all" onclick="selectAnalysisBranch('all')">
+          <div class="option-icon ciro">📊</div>
+          <span class="option-label">Tüm şubeler</span>
+        </div>
+      </div>
+      <div class="analysis-flow-footer">
+        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisBranchContinueBtn" onclick="continueFromAnalysisBranch()" disabled>Devam et</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analiz türü seçimi -->
+  <div id="analysisTypeModal" class="analysis-flow-overlay" style="display: none;">
+    <div class="analysis-flow-card">
+      <div class="analysis-flow-header">
+        <h2 class="analysis-flow-title">Analiz türünü seçin</h2>
+        <p class="analysis-flow-subtitle">Gerçek satış verilerinize göre rapor oluşturulacak</p>
+      </div>
+      <div class="analysis-type-options">
+        <div class="analysis-type-option" data-type="personel" onclick="selectAnalysisType('personel')">
+          <div class="option-icon personel">👤</div>
+          <span class="option-label">Personel analizi</span>
+        </div>
+        <div class="analysis-type-option" data-type="urun" onclick="selectAnalysisType('urun')">
+          <div class="option-icon urun">📦</div>
+          <span class="option-label">Ürün bazlı analiz</span>
+        </div>
+        <div class="analysis-type-option" data-type="ciro" onclick="selectAnalysisType('ciro')">
+          <div class="option-icon ciro">💰</div>
+          <span class="option-label">Ciro analizi</span>
+        </div>
+      </div>
+      <div class="analysis-flow-footer">
+        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisTypeContinueBtn" onclick="continueFromAnalysisType()" disabled>Devam et</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Personel seçimi (analiz) -->
+  <div id="analysisPersonelSelectModal" class="analysis-flow-overlay" style="display: none;">
+    <div class="analysis-flow-card">
+      <div class="analysis-flow-header">
+        <h2 class="analysis-flow-title">Personel seçin</h2>
+        <p class="analysis-flow-subtitle">Analiz raporu bu personel için oluşturulacak</p>
+      </div>
+      <div class="analysis-select-list-wrap">
+        <div id="analysisPersonelList" class="analysis-select-list"></div>
+      </div>
+      <div class="analysis-flow-footer">
+        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisPersonelContinueBtn" onclick="continueFromAnalysisPersonelSelect()" disabled>Devam et</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ürün seçimi (analiz) -->
+  <div id="analysisUrunSelectModal" class="analysis-flow-overlay" style="display: none;">
+    <div class="analysis-flow-card">
+      <div class="analysis-flow-header">
+        <h2 class="analysis-flow-title">Ürün seçin</h2>
+        <p class="analysis-flow-subtitle">Analiz raporu bu ürün için oluşturulacak</p>
+      </div>
+      <div class="analysis-select-list-wrap">
+        <div id="analysisUrunList" class="analysis-select-list"></div>
+      </div>
+      <div class="analysis-flow-footer">
+        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisUrunContinueBtn" onclick="continueFromAnalysisUrunSelect()" disabled>Devam et</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analiz tarih aralığı -->
+  <div id="analysisDateRangeModal" class="analysis-flow-overlay" style="display: none;">
+    <div class="analysis-flow-card">
+      <div class="analysis-flow-header">
+        <h2 class="analysis-flow-title">Tarih aralığı</h2>
+        <p class="analysis-flow-subtitle">Lütfen tarih aralığı belirleyiniz</p>
+      </div>
+      <div class="analysis-daterange-fields">
+        <div class="analysis-daterange-field">
+          <label>Başlangıç</label>
+          <input type="date" id="analysisDateStart" />
+        </div>
+        <div class="analysis-daterange-field">
+          <label>Bitiş</label>
+          <input type="date" id="analysisDateEnd" />
+        </div>
+      </div>
+      <div class="analysis-flow-footer">
+        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisDateContinueBtn" onclick="continueFromAnalysisDateRange()">Analizi Başlat</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analiz loading -->
+  <div id="analysisLoadingModal" class="analysis-flow-overlay analysis-loading-overlay" style="display: none;">
+    <div class="analysis-flow-card analysis-loading-card">
+      <div class="analysis-loading-wrap">
+        <div class="analysis-loading-ring">
+          <div class="analysis-loading-ring-inner" id="analysisLoadingPct">%0</div>
+          <svg class="analysis-loading-svg" viewBox="0 0 120 120">
+            <defs>
+              <linearGradient id="analysisLoadingGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#00d4ff" />
+                <stop offset="50%" style="stop-color:#6366f1" />
+                <stop offset="100%" style="stop-color:#8b5cf6" />
+              </linearGradient>
+              <filter id="analysisLoadingGlow">
+                <feGaussianBlur stdDeviation="2" result="blur" />
+                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+              </filter>
+            </defs>
+            <circle class="ring-bg" cx="60" cy="60" r="54" />
+            <circle class="ring-fill" id="analysisLoadingRing" cx="60" cy="60" r="54" filter="url(#analysisLoadingGlow)" />
+          </svg>
+        </div>
+        <div class="analysis-loading-msg-wrap">
+          <div class="analysis-loading-msg" id="analysisLoadingMsg">Analiz başlatılıyor</div>
+          <div class="analysis-loading-sub" id="analysisLoadingSub">Veriler hazırlanıyor</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PDF hazırlanıyor overlay -->
+  <div id="analysisPdfOverlay" class="analysis-pdf-overlay" style="display: none;">
+    <div class="analysis-pdf-overlay-card">
+      <p class="analysis-pdf-overlay-title">PDF'iniz hazırlanıyor...</p>
+      <p class="analysis-pdf-overlay-sub">Raporunuz hazırlanıyor, lütfen bekleyin.</p>
+      <div class="analysis-pdf-overlay-bar-wrap">
+        <div class="analysis-pdf-overlay-bar" id="analysisPdfBar"></div>
+      </div>
+      <p class="analysis-pdf-overlay-pct" id="analysisPdfPct">%0</p>
+    </div>
+  </div>
+
   <!-- Analiz Modal -->
   <div id="analysisModal" class="analysis-modal" style="display: none;">
     <div class="analysis-modal-overlay" onclick="closeAnalysisModal()"></div>
     <div class="analysis-modal-content">
       <div class="analysis-modal-header">
         <h2 class="analysis-modal-title">🔍 Satış Analizi</h2>
-        <button class="analysis-modal-close" onclick="closeAnalysisModal()">×</button>
+        <div class="analysis-modal-header-actions">
+          <button type="button" class="analysis-pdf-btn" id="analysisPdfBtn" onclick="downloadAnalysisPdf()" title="PDF indir">
+            <span class="analysis-pdf-btn-icon"><svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.5a2 2 0 012 2v14a2 2 0 01-2 2z"/></svg></span>
+            <span class="analysis-pdf-btn-text">PDF İndir</span>
+          </button>
+          <button class="analysis-modal-close" onclick="closeAnalysisModal()">×</button>
+        </div>
       </div>
       <div class="analysis-modal-body">
         <div id="analysisContent" class="analysis-content"></div>

@@ -334,7 +334,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
         </div>
         <div>
           <h1 className="text-lg font-bold bg-clip-text text-transparent" style={{ backgroundImage: theme.gradient.main }}>{businessName} Satış Sistemi</h1>
-          <p className="text-xs text-gray-500 font-medium">v2.7.2 DROJE SYSTEMS</p>
+          <p className="text-xs text-gray-500 font-medium">v2.7.3 VIP MODEL</p>
         </div>
         <div className="ml-4 pl-4 border-l border-gray-300">
           <DateTimeDisplay />

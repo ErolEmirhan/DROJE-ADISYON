@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { isGeceDonercisi, isLacromisa, getLacromisaTableTypeLabel } from '../utils/sultanSomatTables';
 
-const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPayment, onRequestAdisyon, onAddItems, onItemCancelled, onCancelEntireTable, tenantId }) => {
+const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPayment, onRequestAdisyon, onAddItems, onItemCancelled, onCancelEntireTable, tenantId, products = [], onAddWater = null }) => {
   const [sessionDuration, setSessionDuration] = useState('');
   const [selectedItemDetail, setSelectedItemDetail] = useState(null);
   const [cancellingItemId, setCancellingItemId] = useState(null);
@@ -363,13 +363,33 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
 
           {/* Ürünler - Corporate Grid Layout */}
           <div>
-            <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-gray-200">
               <div className="flex items-center space-x-2">
                 <h3 className="text-lg font-bold text-gray-900">Sipariş Ürünleri</h3>
                 <span className="px-2.5 py-0.5 bg-gray-100 text-gray-600 text-xs font-semibold rounded-full">
                   {groupedItems.length}
                 </span>
               </div>
+              {onAddWater && order.status === 'pending' && (() => {
+                const isWaterProduct = (p) => {
+                  const n = (p?.name || '').toLowerCase().trim();
+                  return n === 'su' || n.startsWith('su ') || n.includes(' su ') || n.endsWith(' su');
+                };
+                const hasSu = Array.isArray(products) && products.some(isWaterProduct);
+                if (!hasSu) return null;
+                return (
+                  <button
+                    type="button"
+                    onClick={onAddWater}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm text-white shadow-md hover:shadow-lg transition-all duration-200 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 active:scale-[0.98]"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                    Su Ekle
+                  </button>
+                );
+              })()}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[450px] overflow-y-auto pr-2">
               {groupedItems.map((item) => {
