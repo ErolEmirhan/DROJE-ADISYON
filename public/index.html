@@ -6597,6 +6597,12 @@
     function closeAnalysisBranchModal() {
       var m = document.getElementById('analysisBranchModal');
       if (m) m.style.display = 'none';
+      document.body.style.overflow = '';
+    }
+    
+    function goBackFromAnalysisBranch() {
+      closeAnalysisBranchModal();
+      document.body.style.overflow = '';
     }
 
     function continueFromAnalysisBranch() {
@@ -6619,6 +6625,24 @@
     function closeAnalysisTypeModal() {
       const m = document.getElementById('analysisTypeModal');
       if (m) m.style.display = 'none';
+      document.body.style.overflow = '';
+    }
+    
+    function goBackFromAnalysisType() {
+      closeAnalysisTypeModal();
+      if (isGeceDonercisi) {
+        openAnalysisBranchModal();
+      } else {
+        document.body.style.overflow = '';
+      }
+    }
+    
+    function openAnalysisBranchModal() {
+      var branchModal = document.getElementById('analysisBranchModal');
+      if (branchModal) {
+        branchModal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+      }
     }
 
     function continueFromAnalysisType() {
@@ -6704,8 +6728,32 @@
       else if (isGeceDonercisi && reportBranchFilter !== 'all') base = base.filter(function(s) { return s.branch === reportBranchFilter; });
       var set = {};
       base.forEach(function(s) {
-        var items = s.items_array || s.items || [];
-        items.forEach(function(it) {
+        var itemsArray = [];
+        
+        // Önce items_array'i kontrol et (gerçek Firebase verileri)
+        if (s.items_array && Array.isArray(s.items_array) && s.items_array.length > 0) {
+          itemsArray = s.items_array.filter(function(item) { return item && !item.isExpense; });
+        } else if (s.items) {
+          // Eski format - items string'ini veya array'ini parse et
+          if (Array.isArray(s.items)) {
+            itemsArray = s.items.filter(function(item) { return item && !item.isExpense; });
+          } else if (typeof s.items === 'string') {
+            var items = s.items.split(', ');
+            itemsArray = items.map(function(item) {
+              var match = item.match(/(.+) x(\d+)/);
+              if (match) {
+                return {
+                  product_name: match[1].replace(' (İKRAM)', ''),
+                  quantity: parseInt(match[2]),
+                  isExpense: false
+                };
+              }
+              return null;
+            }).filter(function(item) { return item !== null; });
+          }
+        }
+        
+        itemsArray.forEach(function(it) {
           if (it && it.product_name && !it.isExpense) set[it.product_name] = true;
         });
       });
@@ -6736,6 +6784,12 @@
 
     function closeAnalysisPersonelSelectModal() {
       document.getElementById('analysisPersonelSelectModal').style.display = 'none';
+      document.body.style.overflow = '';
+    }
+    
+    function goBackFromAnalysisPersonelSelect() {
+      closeAnalysisPersonelSelectModal();
+      openAnalysisTypeModal();
     }
 
     function continueFromAnalysisPersonelSelect() {
@@ -6768,6 +6822,12 @@
 
     function closeAnalysisUrunSelectModal() {
       document.getElementById('analysisUrunSelectModal').style.display = 'none';
+      document.body.style.overflow = '';
+    }
+    
+    function goBackFromAnalysisUrunSelect() {
+      closeAnalysisUrunSelectModal();
+      openAnalysisTypeModal();
     }
 
     function continueFromAnalysisUrunSelect() {
@@ -6787,6 +6847,18 @@
 
     function closeAnalysisDateRangeModal() {
       document.getElementById('analysisDateRangeModal').style.display = 'none';
+      document.body.style.overflow = '';
+    }
+    
+    function goBackFromAnalysisDateRange() {
+      closeAnalysisDateRangeModal();
+      if (selectedAnalysisType === 'personel') {
+        openAnalysisPersonelSelectModal();
+      } else if (selectedAnalysisType === 'urun') {
+        openAnalysisUrunSelectModal();
+      } else {
+        openAnalysisTypeModal();
+      }
     }
 
     function continueFromAnalysisDateRange() {
@@ -6871,24 +6943,42 @@
     }
 
     function filterSalesByDateRange(sales, startDate, endDate) {
-      if (!startDate || !endDate) return sales;
+      if (!startDate || !endDate) return sales || [];
+      if (!sales || sales.length === 0) return [];
+      
+      // Tarihleri normalize et
+      var normalizedStart = new Date(startDate);
+      normalizedStart.setHours(0, 0, 0, 0);
+      var normalizedEnd = new Date(endDate);
+      normalizedEnd.setHours(23, 59, 59, 999);
+      
       return sales.filter(function(sale) {
         if (!sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-        var saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
-        var parts = saleBusinessDay.split('.');
-        if (!parts[0] || !parts[1] || !parts[2]) return false;
-        var saleDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
-        saleDate.setHours(0, 0, 0, 0);
-        return saleDate >= startDate && saleDate <= endDate;
+        try {
+          var saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
+          if (!saleBusinessDay || saleBusinessDay === 'Bilinmeyen') return false;
+          
+          var parts = saleBusinessDay.split('.');
+          if (!parts || parts.length < 3 || !parts[0] || !parts[1] || !parts[2]) return false;
+          
+          var saleDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+          if (isNaN(saleDate.getTime())) return false;
+          
+          saleDate.setHours(0, 0, 0, 0);
+          return saleDate >= normalizedStart && saleDate <= normalizedEnd;
+        } catch (e) {
+          console.log('Tarih filtreleme hatası:', e, sale);
+          return false;
+        }
       });
     }
 
     function runAnalysisByType(type, startDate, endDate) {
       var baseSales = allSales.filter(function(s) { return !s.isExpense && s.payment_method !== 'Masraf'; });
       if (analysisBranchFilter && analysisBranchFilter !== 'all') {
-        baseSales = baseSales.filter(function(s) { return s.branch === analysisBranchFilter; });
+        baseSales = baseSales.filter(function(s) { return saleMatchesBranch(s, analysisBranchFilter); });
       } else if (isGeceDonercisi && reportBranchFilter !== 'all') {
-        baseSales = baseSales.filter(function(s) { return s.branch === reportBranchFilter; });
+        baseSales = baseSales.filter(function(s) { return saleMatchesBranch(s, reportBranchFilter); });
       }
       var reportSales = filterSalesByDateRange(baseSales, startDate, endDate);
       var startStr = startDate ? (String(startDate.getDate()).padStart(2,'0') + '.' + String(startDate.getMonth() + 1).padStart(2,'0') + '.' + startDate.getFullYear()) : '';
@@ -6898,6 +6988,19 @@
       content.innerHTML = '';
       var titleEl = document.querySelector('.analysis-modal-title');
       if (titleEl) titleEl.textContent = type === 'personel' ? '👤 Personel Analizi' : type === 'urun' ? '📦 Ürün Bazlı Analiz' : '💰 Ciro Analizi';
+      
+      // Eğer filtrelenmiş satış yoksa uyarı göster
+      if (!reportSales || reportSales.length === 0) {
+        var branchText = '';
+        if (analysisBranchFilter && analysisBranchFilter !== 'all') {
+          branchText = ' ve seçilen şubede';
+        } else if (isGeceDonercisi && reportBranchFilter !== 'all') {
+          branchText = ' ve seçilen şubede';
+        }
+        content.innerHTML = '<div class="analysis-report-inner ar-doc"><p class="ar-text">Seçilen tarih aralığında' + branchText + ' satış kaydı bulunamadı.</p><p class="ar-text" style="margin-top: 12px; color: #64748b;">Lütfen farklı bir tarih aralığı veya şube seçin.</p></div>';
+        return;
+      }
+      
       if (type === 'personel') {
         renderPersonelAnalysis(content, reportSales, startStr, endStr);
       } else if (type === 'urun') {
@@ -6974,17 +7077,89 @@
       var productStats = {};
       var byStaff = {};
       var productPrices = {};
+      
+      // Eğer satış yoksa veya boşsa uyarı göster
+      if (!sales || sales.length === 0) {
+        container.innerHTML = '<div class="analysis-report-inner ar-doc"><p class="ar-text">Seçilen tarih aralığında ve şubede satış kaydı bulunamadı.</p></div>';
+        return;
+      }
+      
       sales.forEach(function(sale) {
-        var items = sale.items_array || sale.items || [];
-        items.forEach(function(item) {
+        // Masraf ise atla
+        if (sale.isExpense || sale.payment_method === 'Masraf') return;
+        
+        var itemsArray = [];
+        
+        // Önce items_array'i kontrol et (gerçek Firebase verileri)
+        if (sale.items_array && Array.isArray(sale.items_array) && sale.items_array.length > 0) {
+          itemsArray = sale.items_array.filter(function(item) { 
+            return item && item.product_name && !item.isExpense; 
+          });
+        } else if (sale.items) {
+          // Eski format - items string'ini veya array'ini parse et
+          if (Array.isArray(sale.items)) {
+            itemsArray = sale.items.filter(function(item) { 
+              return item && item.product_name && !item.isExpense; 
+            });
+          } else if (typeof sale.items === 'string' && sale.items.trim() !== '') {
+            var items = sale.items.split(', ');
+            itemsArray = items.map(function(item) {
+              if (!item || !item.trim()) return null;
+              var match = item.match(/(.+) x(\d+)/);
+              if (match) {
+                var productName = match[1].replace(' (İKRAM)', '').trim();
+                var quantity = parseInt(match[2]) || 1;
+                var isGift = item.includes('(İKRAM)');
+                // Eski verilerde fiyat yok, total_amount'u kullan
+                var saleTotal = parseFloat(sale.total_amount || 0);
+                var itemCount = items.filter(function(i) { return i && i.trim(); }).length;
+                var estimatedPrice = itemCount > 0 && !isGift ? saleTotal / itemCount : 0;
+                return {
+                  product_name: productName,
+                  quantity: quantity,
+                  price: estimatedPrice,
+                  isGift: isGift,
+                  isExpense: false
+                };
+              }
+              // Eğer format eşleşmezse, sadece ürün adı olarak ekle
+              var trimmedItem = item.trim();
+              if (trimmedItem) {
+                var saleTotal = parseFloat(sale.total_amount || 0);
+                var itemCount = items.filter(function(i) { return i && i.trim(); }).length;
+                var estimatedPrice = itemCount > 0 ? saleTotal / itemCount : 0;
+                return {
+                  product_name: trimmedItem,
+                  quantity: 1,
+                  price: estimatedPrice,
+                  isGift: false,
+                  isExpense: false
+                };
+              }
+              return null;
+            }).filter(function(item) { return item !== null && item.product_name; });
+          }
+        }
+        
+        // Eğer itemsArray hala boşsa ve total_amount varsa, satışı genel olarak ekle
+        if (itemsArray.length === 0 && sale.total_amount && parseFloat(sale.total_amount) > 0) {
+          // Bu durumda ürün bilgisi yok, atla
+          return;
+        }
+        
+        itemsArray.forEach(function(item) {
           if (!item || !item.product_name || item.isExpense) return;
-          var name = item.product_name;
+          var name = item.product_name.trim();
+          if (!name) return;
+          
           if (!productStats[name]) productStats[name] = { count: 0, revenue: 0 };
           var qty = item.quantity || 1;
           var price = parseFloat(item.price) || 0;
           productStats[name].count += qty;
           productStats[name].revenue += price * qty;
-          if (price > 0) productPrices[name] = price;
+          if (price > 0 && (!productPrices[name] || productPrices[name] === 0)) {
+            productPrices[name] = price;
+          }
           if (name === productName) {
             var raw = (item.staff_name) || sale.staff_name || sale.personel;
             if (raw) {
@@ -14831,8 +15006,13 @@
   <div id="analysisBranchModal" class="analysis-flow-overlay" style="display: none;">
     <div class="analysis-flow-card">
       <div class="analysis-flow-header">
-        <h2 class="analysis-flow-title">Şube seçin</h2>
-        <p class="analysis-flow-subtitle">Analiz verileri seçtiğiniz şubeye göre oluşturulacak</p>
+        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+          <div style="flex: 1;">
+            <h2 class="analysis-flow-title">Şube seçin</h2>
+            <p class="analysis-flow-subtitle">Analiz verileri seçtiğiniz şubeye göre oluşturulacak</p>
+          </div>
+          <button onclick="goBackFromAnalysisBranch()" style="background: transparent; border: none; color: #64748b; font-size: 28px; cursor: pointer; padding: 8px; line-height: 1; transition: color 0.2s;" onmouseover="this.style.color='#1e293b';" onmouseout="this.style.color='#64748b';" title="Kapat">×</button>
+        </div>
       </div>
       <div class="analysis-type-options">
         <div class="analysis-branch-option analysis-type-option" data-branch="SEKER" onclick="selectAnalysisBranch('SEKER')">
@@ -14848,8 +15028,9 @@
           <span class="option-label">Tüm şubeler</span>
         </div>
       </div>
-      <div class="analysis-flow-footer">
-        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisBranchContinueBtn" onclick="continueFromAnalysisBranch()" disabled>Devam et</button>
+      <div class="analysis-flow-footer" style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button type="button" class="analysis-flow-btn" onclick="goBackFromAnalysisBranch()" style="background: #f3f4f6; color: #374151; border: none; padding: 14px 24px; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.2s; flex: 0 0 auto;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">İptal</button>
+        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisBranchContinueBtn" onclick="continueFromAnalysisBranch()" disabled style="flex: 0 0 auto;">Devam et</button>
       </div>
     </div>
   </div>
@@ -14858,8 +15039,13 @@
   <div id="analysisTypeModal" class="analysis-flow-overlay" style="display: none;">
     <div class="analysis-flow-card">
       <div class="analysis-flow-header">
-        <h2 class="analysis-flow-title">Analiz türünü seçin</h2>
-        <p class="analysis-flow-subtitle">Gerçek satış verilerinize göre rapor oluşturulacak</p>
+        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+          <div style="flex: 1;">
+            <h2 class="analysis-flow-title">Analiz türünü seçin</h2>
+            <p class="analysis-flow-subtitle">Gerçek satış verilerinize göre rapor oluşturulacak</p>
+          </div>
+          <button onclick="goBackFromAnalysisType()" style="background: transparent; border: none; color: #64748b; font-size: 28px; cursor: pointer; padding: 8px; line-height: 1; transition: color 0.2s;" onmouseover="this.style.color='#1e293b';" onmouseout="this.style.color='#64748b';" title="Kapat">×</button>
+        </div>
       </div>
       <div class="analysis-type-options">
         <div class="analysis-type-option" data-type="personel" onclick="selectAnalysisType('personel')">
@@ -14875,8 +15061,9 @@
           <span class="option-label">Ciro analizi</span>
         </div>
       </div>
-      <div class="analysis-flow-footer">
-        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisTypeContinueBtn" onclick="continueFromAnalysisType()" disabled>Devam et</button>
+      <div class="analysis-flow-footer" style="display: flex; gap: 12px;">
+        <button type="button" class="analysis-flow-btn" onclick="goBackFromAnalysisType()" style="background: #f3f4f6; color: #374151; border: none; padding: 14px 24px; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.2s; flex: 0 0 auto;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">← Geri</button>
+        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisTypeContinueBtn" onclick="continueFromAnalysisType()" disabled style="flex: 1;">Devam et</button>
       </div>
     </div>
   </div>
@@ -14885,14 +15072,20 @@
   <div id="analysisPersonelSelectModal" class="analysis-flow-overlay" style="display: none;">
     <div class="analysis-flow-card">
       <div class="analysis-flow-header">
-        <h2 class="analysis-flow-title">Personel seçin</h2>
-        <p class="analysis-flow-subtitle">Analiz raporu bu personel için oluşturulacak</p>
+        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+          <div style="flex: 1;">
+            <h2 class="analysis-flow-title">Personel seçin</h2>
+            <p class="analysis-flow-subtitle">Analiz raporu bu personel için oluşturulacak</p>
+          </div>
+          <button onclick="goBackFromAnalysisPersonelSelect()" style="background: transparent; border: none; color: #64748b; font-size: 28px; cursor: pointer; padding: 8px; line-height: 1; transition: color 0.2s;" onmouseover="this.style.color='#1e293b';" onmouseout="this.style.color='#64748b';" title="Kapat">×</button>
+        </div>
       </div>
       <div class="analysis-select-list-wrap">
         <div id="analysisPersonelList" class="analysis-select-list"></div>
       </div>
-      <div class="analysis-flow-footer">
-        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisPersonelContinueBtn" onclick="continueFromAnalysisPersonelSelect()" disabled>Devam et</button>
+      <div class="analysis-flow-footer" style="display: flex; gap: 12px;">
+        <button type="button" class="analysis-flow-btn" onclick="goBackFromAnalysisPersonelSelect()" style="background: #f3f4f6; color: #374151; border: none; padding: 14px 24px; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.2s; flex: 0 0 auto;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">← Geri</button>
+        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisPersonelContinueBtn" onclick="continueFromAnalysisPersonelSelect()" disabled style="flex: 1;">Devam et</button>
       </div>
     </div>
   </div>
@@ -14901,14 +15094,20 @@
   <div id="analysisUrunSelectModal" class="analysis-flow-overlay" style="display: none;">
     <div class="analysis-flow-card">
       <div class="analysis-flow-header">
-        <h2 class="analysis-flow-title">Ürün seçin</h2>
-        <p class="analysis-flow-subtitle">Analiz raporu bu ürün için oluşturulacak</p>
+        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+          <div style="flex: 1;">
+            <h2 class="analysis-flow-title">Ürün seçin</h2>
+            <p class="analysis-flow-subtitle">Analiz raporu bu ürün için oluşturulacak</p>
+          </div>
+          <button onclick="goBackFromAnalysisUrunSelect()" style="background: transparent; border: none; color: #64748b; font-size: 28px; cursor: pointer; padding: 8px; line-height: 1; transition: color 0.2s;" onmouseover="this.style.color='#1e293b';" onmouseout="this.style.color='#64748b';" title="Kapat">×</button>
+        </div>
       </div>
       <div class="analysis-select-list-wrap">
         <div id="analysisUrunList" class="analysis-select-list"></div>
       </div>
-      <div class="analysis-flow-footer">
-        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisUrunContinueBtn" onclick="continueFromAnalysisUrunSelect()" disabled>Devam et</button>
+      <div class="analysis-flow-footer" style="display: flex; gap: 12px;">
+        <button type="button" class="analysis-flow-btn" onclick="goBackFromAnalysisUrunSelect()" style="background: #f3f4f6; color: #374151; border: none; padding: 14px 24px; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.2s; flex: 0 0 auto;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">← Geri</button>
+        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisUrunContinueBtn" onclick="continueFromAnalysisUrunSelect()" disabled style="flex: 1;">Devam et</button>
       </div>
     </div>
   </div>
@@ -14917,8 +15116,13 @@
   <div id="analysisDateRangeModal" class="analysis-flow-overlay" style="display: none;">
     <div class="analysis-flow-card">
       <div class="analysis-flow-header">
-        <h2 class="analysis-flow-title">Tarih aralığı</h2>
-        <p class="analysis-flow-subtitle">Lütfen tarih aralığı belirleyiniz</p>
+        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+          <div style="flex: 1;">
+            <h2 class="analysis-flow-title">Tarih aralığı</h2>
+            <p class="analysis-flow-subtitle">Lütfen tarih aralığı belirleyiniz</p>
+          </div>
+          <button onclick="goBackFromAnalysisDateRange()" style="background: transparent; border: none; color: #64748b; font-size: 28px; cursor: pointer; padding: 8px; line-height: 1; transition: color 0.2s;" onmouseover="this.style.color='#1e293b';" onmouseout="this.style.color='#64748b';" title="Kapat">×</button>
+        </div>
       </div>
       <div class="analysis-daterange-fields">
         <div class="analysis-daterange-field">
@@ -14930,8 +15134,9 @@
           <input type="date" id="analysisDateEnd" />
         </div>
       </div>
-      <div class="analysis-flow-footer">
-        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisDateContinueBtn" onclick="continueFromAnalysisDateRange()">Analizi Başlat</button>
+      <div class="analysis-flow-footer" style="display: flex; gap: 12px;">
+        <button type="button" class="analysis-flow-btn" onclick="goBackFromAnalysisDateRange()" style="background: #f3f4f6; color: #374151; border: none; padding: 14px 24px; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; transition: all 0.2s; flex: 0 0 auto;" onmouseover="this.style.background='#e5e7eb';" onmouseout="this.style.background='#f3f4f6';">← Geri</button>
+        <button type="button" class="analysis-flow-btn analysis-flow-btn-primary" id="analysisDateContinueBtn" onclick="continueFromAnalysisDateRange()" style="flex: 1;">Analizi Başlat</button>
       </div>
     </div>
   </div>
