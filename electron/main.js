@@ -515,8 +515,7 @@ async function decreaseGeceBranchStockItems({ branch, deviceId, items, source })
       const res = await firebaseRunTransaction(geceStocksFirestore, async (tx) => {
         const snap = await tx.get(ref);
         const before = snap.exists() ? Number((snap.data() || {}).stock || 0) : 0;
-        let after = before - it.qty;
-        if (after < 0) after = 0;
+        const after = before - it.qty;
         tx.set(
           ref,
           {

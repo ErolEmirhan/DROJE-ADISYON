@@ -104,8 +104,7 @@ export async function adjustBranchStock({
   const result = await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     const before = snap.exists() ? Number((snap.data() || {}).stock || 0) : 0;
-    let after = before + Number(delta);
-    if (after < 0) after = 0;
+    const after = before + Number(delta);
 
     tx.set(
       ref,
@@ -176,8 +175,7 @@ export async function adjustBranchStocksBulk({
       const ref = doc(db, 'branchStocks', docId);
       const snap = await tx.get(ref);
       const before = snap.exists() ? Number((snap.data() || {}).stock || 0) : 0;
-      let after = before + Number(it.delta);
-      if (after < 0) after = 0;
+      const after = before + Number(it.delta);
 
       tx.set(
         ref,
