@@ -78,9 +78,9 @@ const ProductGrid = ({ products, onAddToCart, tenantId, categories = [] }) => {
     if (!isGeceDonercisiMode) return '';
     const cat = normalizeTr(getCategoryNameForProduct(product));
     const name = normalizeTr(product?.name || '');
-    if (!name.includes('lavas')) return '';
-    if (cat === 'tavuk doner') return '/lavas.jpg';
-    if (cat === 'et doner') return '/etlav.jpg';
+    if (!name.includes('lavas') || name.includes('ekmek')) return '';
+    if (cat.includes('tavuk doner')) return '/davuklavas.png';
+    if (cat.includes('et doner')) return '/etdonerrr.png';
     return '';
   };
   
