@@ -102,6 +102,11 @@ async function cleanOldCache() {
 export async function getCachedImage(imageUrl) {
   if (!imageUrl) return null;
   
+  // Base64 (data URL) ise direkt dön - Firebase'den gelen inline görseller
+  if (imageUrl.startsWith('data:')) {
+    return imageUrl;
+  }
+  
   // Zaten memory cache'de varsa direkt dön
   if (imageCache[imageUrl]) {
     return imageCache[imageUrl];

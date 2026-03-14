@@ -48,42 +48,6 @@ const ProductGrid = ({ products, onAddToCart, tenantId, categories = [] }) => {
   const isGeceDonercisiMode = tenantId && isGeceDonercisi(tenantId);
   const isLacromisaMode = tenantId && isLacromisa(tenantId);
 
-  const normalizeTr = (input) => {
-    try {
-      return String(input || '')
-        .toLocaleLowerCase('tr-TR')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-    } catch {
-      return String(input || '').toLowerCase().trim();
-    }
-  };
-
-  const getCategoryNameForProduct = (product) => {
-    const direct =
-      product?.categoryName ||
-      product?.category_name ||
-      product?.category?.name ||
-      '';
-    if (direct) return direct;
-    const cid = product?.category_id;
-    if (cid == null) return '';
-    const found = (categories || []).find((c) => c && c.id === cid);
-    return found?.name || '';
-  };
-
-  const getGeceLavasOverrideImage = (product) => {
-    if (!isGeceDonercisiMode) return '';
-    const cat = normalizeTr(getCategoryNameForProduct(product));
-    const name = normalizeTr(product?.name || '');
-    if (!name.includes('lavas') || name.includes('ekmek')) return '';
-    if (cat.includes('tavuk doner')) return '/davuklavas.png';
-    if (cat.includes('et doner')) return '/etdonerrr.png';
-    return '';
-  };
-  
   // Yaka's Grill için daha büyük kartlar (daha az sütun)
   const gridCols = isGeceDonercisiMode
     ? '' // Gece Dönercisi: auto-fit ile her ekranda büyük kartlar
@@ -108,8 +72,7 @@ const ProductGrid = ({ products, onAddToCart, tenantId, categories = [] }) => {
       >
         {products.map((product) => {
           const cachedImageUrl = imageUrls[product.id] || product.image;
-          const overrideImageUrl = getGeceLavasOverrideImage(product);
-          const resolvedImageUrl = overrideImageUrl || cachedImageUrl;
+          const resolvedImageUrl = cachedImageUrl;
           const unitRaw = (product.unit || product.unitLabel || product.unit_name || '').toString().trim();
           const unitText = unitRaw ? unitRaw.toUpperCase() : '';
           // Sadece stok takibi yapılan ürünler için kontrol et

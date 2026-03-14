@@ -3723,11 +3723,13 @@ ipcMain.handle('update-product', async (event, productData) => {
   
   const oldProduct = db.products[productIndex];
   const oldImage = oldProduct.image;
-  
-  // Eğer görsel değiştiyse ve eski görsel Firebase Storage'da ise, eski görseli sil
-    if (oldImage && oldImage !== image && (oldImage.includes('firebasestorage.googleapis.com') || oldImage.includes('r2.cloudflarestorage.com') || oldImage.includes('r2.dev'))) {
-      await deleteImageFromR2(oldImage);
-    }
+  const isOldBase64 = oldImage && oldImage.startsWith('data:');
+  const isNewBase64 = image && image.startsWith('data:');
+
+  // Eğer görsel değiştiyse ve eski görsel URL (R2/Storage) ise, eski görseli sil (base64 silinmez)
+  if (oldImage && oldImage !== image && !isOldBase64 && (oldImage.includes('firebasestorage.googleapis.com') || oldImage.includes('r2.cloudflarestorage.com') || oldImage.includes('r2.dev'))) {
+    await deleteImageFromR2(oldImage);
+  }
   
   // Platform fiyatlarını güncelle (null, undefined veya sayı olabilir)
   let updatedYemeksepetiPrice = db.products[productIndex].yemeksepeti_price;
@@ -3762,18 +3764,14 @@ ipcMain.handle('update-product', async (event, productData) => {
     console.error('Firebase ürün güncelleme hatası:', err);
   });
   
-  // Eğer görsel varsa Firebase'e kaydet
-  if (image) {
-    // URL kontrolü (http veya https ile başlayan URL'ler)
+  // Base64 değilse (URL ise) images koleksiyonuna kayıt güncelle; base64 doğrudan ürün dokümanında
+  if (image && !isNewBase64) {
     const isUrl = image.startsWith('http://') || image.startsWith('https://');
-    
     if (isUrl && image.includes('temp_')) {
-      // Temp görsel ise
       updateTempImageRecordInFirebase(image, id, name, category_id, parseFloat(price)).catch(err => {
         console.error('Firebase temp görsel kaydı güncelleme hatası:', err);
       });
     } else if (isUrl || image.includes('r2.dev') || image.includes('r2.cloudflarestorage.com')) {
-      // Normal URL ise (R2 veya başka bir URL)
       updateImageRecordInFirebase(id, image, name, category_id, parseFloat(price)).catch(err => {
         console.error('Firebase görsel kaydı güncelleme hatası:', err);
       });
@@ -4562,66 +4560,33 @@ ipcMain.handle('select-image-file', async (event, productId = null) => {
       return { success: false, error: 'Dosya bulunamadı' };
     }
 
-    // Lacrimosa (internet müşteri menüsü) için 0 maliyet: görseli dataURL olarak Firestore'a göm (Storage/R2 yok)
-    const tenantInfo = tenantManager.getCurrentTenantInfo();
-    const isLacrimosa = tenantInfo?.tenantId === LACRIMOSA_TENANT_ID;
-    if (isLacrimosa) {
-      const converted = await convertImageFileToInlineDataUrl(filePath);
-      const dataUrl = converted.dataUrl;
+    // Görseli base64 (data URL) olarak döndür; Firestore'da image alanına kaydedilir, Firebase'den aynı formatta çekilir
+    const converted = await convertImageFileToInlineDataUrl(filePath);
+    const dataUrl = converted.dataUrl;
 
-      // Düzenleme modunda (productId verildiyse) anında kaydet -> customer.html anında görür
-      if (productId != null) {
-        const productIdNum = typeof productId === 'string' ? parseInt(productId, 10) : productId;
-        const idx = db.products.findIndex(p => p.id === productIdNum);
-        if (idx !== -1) {
-          db.products[idx] = { ...db.products[idx], image: dataUrl };
-          saveDatabase();
-          saveProductToFirebase(db.products[idx]).catch(err => {
-            console.error('Firebase ürün (inline image) güncelleme hatası:', err);
-          });
-        }
+    // Düzenleme modunda (productId verildiyse) anında kaydet
+    if (productId != null) {
+      const productIdNum = typeof productId === 'string' ? parseInt(productId, 10) : productId;
+      const idx = db.products.findIndex(p => p.id === productIdNum);
+      if (idx !== -1) {
+        db.products[idx] = { ...db.products[idx], image: dataUrl };
+        saveDatabase();
+        saveProductToFirebase(db.products[idx]).catch(err => {
+          console.error('Firebase ürün (base64 görsel) güncelleme hatası:', err);
+        });
       }
-
-      return {
-        success: true,
-        path: dataUrl,
-        isInlineDataUrl: true,
-        bytes: converted.bytes,
-        format: converted.format,
-        quality: converted.quality,
-        autoSaved: productId != null
-      };
     }
 
-    // Diğer tenantlar: mevcut yöntem (R2)
-    try {
-      const downloadURL = await uploadImageToR2(filePath, productId);
-      return { success: true, path: downloadURL, isFirebaseURL: true };
-    } catch (storageError) {
-      console.error('Firebase Storage yükleme hatası:', storageError);
-      // R2 başarısız olursa, eski yöntemle devam et (geriye dönük uyumluluk)
-      const publicDir = path.join(__dirname, '../public');
-      if (!fs.existsSync(publicDir)) {
-        fs.mkdirSync(publicDir, { recursive: true });
-      }
+    return {
+      success: true,
+      path: dataUrl,
+      isInlineDataUrl: true,
+      bytes: converted.bytes,
+      format: converted.format,
+      quality: converted.quality,
+      autoSaved: productId != null
+    };
 
-      const fileName = path.basename(filePath);
-      const destPath = path.join(publicDir, fileName);
-      
-      let finalDestPath = destPath;
-      let counter = 1;
-      while (fs.existsSync(finalDestPath)) {
-        const ext = path.extname(fileName);
-        const nameWithoutExt = path.basename(fileName, ext);
-        finalDestPath = path.join(publicDir, `${nameWithoutExt}_${counter}${ext}`);
-        counter++;
-      }
-
-      fs.copyFileSync(filePath, finalDestPath);
-      const relativePath = `/${path.basename(finalDestPath)}`;
-      
-      return { success: true, path: relativePath, isFirebaseURL: false };
-    }
   } catch (error) {
     console.error('Dosya seçme hatası:', error);
     return { success: false, error: error.message };
