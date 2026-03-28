@@ -10232,8 +10232,19 @@ function generateMobileHTML(serverURL) {
           const itemTotal = (item.price * item.quantity).toFixed(2);
           const giftClass = item.isGift ? ' gift' : '';
           const itemStaffName = item.staff_name || 'Bilinmiyor';
+          var donerOptsRaw = (item.donerOptionsText && String(item.donerOptionsText).trim()) ? String(item.donerOptionsText).trim() : '';
+          if (!donerOptsRaw && isGeceDonercisiMode && item.donerKey === 's|d|p|a') {
+            donerOptsRaw = 'Soğanlı';
+          }
+          var donerOptsEsc = donerOptsRaw
+            ? donerOptsRaw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+            : '';
+          var donerLineHtml = (isGeceDonercisiMode && donerOptsEsc)
+            ? '<div style="font-size: 12px; font-weight: 800; color: #ea580c; margin-top: 4px; line-height: 1.35;">' + donerOptsEsc + '</div>'
+            : '';
           return '<div class="order-item" style="position: relative;">' +
             '<div class="order-item-name' + giftClass + '">' + item.product_name + '</div>' +
+            donerLineHtml +
             '<div class="order-item-details" style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">' +
               '<div style="display: flex; align-items: center; gap: 8px;">' +
                 '<span class="order-item-qty">×' + item.quantity + '</span>' +
@@ -10363,8 +10374,19 @@ function generateMobileHTML(serverURL) {
           const itemsHtml = (order.items || []).map(item => {
             const itemTotal = (item.price * item.quantity).toFixed(2);
             const giftClass = item.isGift ? ' gift' : '';
+            var donerOptsRaw2 = (item.donerOptionsText && String(item.donerOptionsText).trim()) ? String(item.donerOptionsText).trim() : '';
+            if (!donerOptsRaw2 && isGeceDonercisiMode && item.donerKey === 's|d|p|a') {
+              donerOptsRaw2 = 'Soğanlı';
+            }
+            var donerOptsEsc2 = donerOptsRaw2
+              ? donerOptsRaw2.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+              : '';
+            var donerLineHtml2 = (isGeceDonercisiMode && donerOptsEsc2)
+              ? '<div style="font-size: 12px; font-weight: 800; color: #ea580c; margin-top: 4px; line-height: 1.35;">' + donerOptsEsc2 + '</div>'
+              : '';
             return '<div class="order-item" style="position: relative; padding: 12px; background: #f9fafb; border-radius: 8px; margin-bottom: 8px;">' +
               '<div class="order-item-name' + giftClass + '" style="font-size: 15px; font-weight: 600; color: #333; margin-bottom: 6px;">' + item.product_name + '</div>' +
+              donerLineHtml2 +
               '<div class="order-item-details" style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">' +
                 '<div style="display: flex; align-items: center; gap: 8px;">' +
                   '<span class="order-item-qty" style="font-size: 13px; color: #666;">×' + item.quantity + '</span>' +
@@ -14149,7 +14171,12 @@ async function syncSingleTableToFirebase(tableId) {
         paid_quantity: item.paid_quantity || 0,
         staff_name: item.staff_name || null,
         added_date: item.added_date || null,
-        added_time: item.added_time || null
+        added_time: item.added_time || null,
+        portion: item.portion != null ? item.portion : null,
+        onionOption: item.onionOption || null,
+        extraNote: item.extraNote || null,
+        donerOptionsText: item.donerOptionsText || null,
+        donerKey: item.donerKey || null
       }));
     }
 

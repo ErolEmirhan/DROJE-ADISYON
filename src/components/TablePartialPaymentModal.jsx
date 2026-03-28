@@ -13,6 +13,14 @@ const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComple
   const [confirmAmount, setConfirmAmount] = useState(0);
   const isGeceDonercisiMode = tenantId && isGeceDonercisi(tenantId);
 
+  const geceDonerLine = (item) => {
+    if (!item || !isGeceDonercisiMode) return null;
+    const t = (item.donerOptionsText && String(item.donerOptionsText).trim()) ? String(item.donerOptionsText).trim() : '';
+    if (t) return t;
+    if (item.donerKey != null && String(item.donerKey).length > 0 && item.donerKey === 's|d|p|a') return 'Soğanlı';
+    return null;
+  };
+
   if (!order) return null;
 
   const confirmPaymentMethodIfNeeded = (method) => {
@@ -787,6 +795,9 @@ const TablePartialPaymentModal = ({ order, items, totalAmount, onClose, onComple
                             {item.product_name}
                             {item.isGift && <span className="ml-2 text-xs">(İKRAM)</span>}
                           </p>
+                          {geceDonerLine(item) && (
+                            <p className="text-xs font-bold text-orange-600 mt-0.5">{geceDonerLine(item)}</p>
+                          )}
                           <div className="flex items-center space-x-4 mt-1">
                             <p className="text-sm text-gray-600">
                               {item.quantity} adet × ₺{item.price.toFixed(2)}

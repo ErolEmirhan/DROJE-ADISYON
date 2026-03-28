@@ -18,14 +18,33 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
 
   if (!order) return null;
 
+  const isGeceMode = tenantId && isGeceDonercisi(tenantId);
+
+  /** Gece Dönercisi: masa satırında gösterilecek döner seçenek metni */
+  const geceDonerDisplayLine = (item) => {
+    if (!item) return null;
+    const t = (item.donerOptionsText && String(item.donerOptionsText).trim()) ? String(item.donerOptionsText).trim() : '';
+    if (t) return t;
+    if (isGeceMode && item.donerKey != null && String(item.donerKey).length > 0) {
+      return item.donerKey === 's|d|p|a' ? 'Soğanlı' : null;
+    }
+    return null;
+  };
+
   // Aynı ürünleri grupla ve toplam miktarı göster
   const groupedItems = useMemo(() => {
     const grouped = new Map();
     
     items.forEach(item => {
-      // product_id, isGift ve portion'a göre grup key'i oluştur (porsiyon bilgisi de dahil)
+      // product_id, isGift, portion ve Gece Dönercisi döner seçeneklerine göre grup key'i
       const portionKey = item.portion !== null && item.portion !== undefined ? item.portion : 'no-portion';
-      const key = `${item.product_id}_${item.isGift || false}_${portionKey}`;
+      const donerPart =
+        item.donerKey != null && String(item.donerKey).length > 0
+          ? String(item.donerKey)
+          : item.donerOptionsText
+            ? `txt_${String(item.donerOptionsText)}`
+            : 'no-doner';
+      const key = `${item.product_id}_${item.isGift || false}_${portionKey}_${donerPart}`;
       
       if (!grouped.has(key)) {
         // İlk kez görülen ürün
@@ -401,10 +420,19 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                 const displayTotal = isGift ? 0 : (item.price * item.quantity);
                 const paidTotal = isGift ? 0 : (item.price * paidQuantity);
                 const originalTotal = item.price * item.quantity;
+                const portionKey = item.portion !== null && item.portion !== undefined ? item.portion : 'no-portion';
+                const donerPart =
+                  item.donerKey != null && String(item.donerKey).length > 0
+                    ? String(item.donerKey)
+                    : item.donerOptionsText
+                      ? `txt_${String(item.donerOptionsText)}`
+                      : 'no-doner';
+                const rowKey = `${item.product_id}_${isGift}_${portionKey}_${donerPart}_${(item.allItemIds && item.allItemIds[0]) || item.id}`;
+                const donerLine = geceDonerDisplayLine(item);
                 
                 return (
                 <div
-                  key={`${item.product_id}_${item.isGift || false}`}
+                  key={rowKey}
                   className={`bg-white rounded-lg border p-4 transition-all shadow-sm hover:shadow-md ${
                     isPaid
                       ? 'bg-green-50/50 border-green-200'
@@ -433,6 +461,9 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                         }`}>
                           {item.product_name}
                         </p>
+                        {isGeceMode && donerLine && (
+                          <p className="text-xs font-bold text-orange-600 mt-1 leading-snug">{donerLine}</p>
+                        )}
                         {isGift && (
                           <span className="text-[10px] font-bold text-white bg-amber-600 px-2 py-0.5 rounded uppercase tracking-wide">
                             İKRAM
@@ -634,6 +665,9 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
                 <div>
                   <p className="text-xs font-semibold text-gray-500 mb-1">Ürün Adı</p>
                   <p className="text-lg font-bold text-gray-900">{cancelConfirmItem.product_name}</p>
+                  {isGeceMode && geceDonerDisplayLine(cancelConfirmItem) && (
+                    <p className="text-sm font-bold text-orange-600 mt-1">{geceDonerDisplayLine(cancelConfirmItem)}</p>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -825,6 +859,9 @@ const TableOrderModal = ({ order, items, onClose, onCompleteTable, onPartialPaym
               <div>
                 <p className="text-sm text-gray-500 mb-1">Ürün Adı</p>
                 <p className="text-lg font-semibold text-gray-800">{selectedItemDetail.product_name}</p>
+                {isGeceMode && geceDonerDisplayLine(selectedItemDetail) && (
+                  <p className="text-sm font-bold text-orange-600 mt-1">{geceDonerDisplayLine(selectedItemDetail)}</p>
+                )}
               </div>
               
               <div className="grid grid-cols-2 gap-4">

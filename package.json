@@ -1,6 +1,6 @@
 {
   "name": "droje-pos",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "description": "Modern POS Uygulaması - Multi-tenant Restaurant Management System",
   "main": "electron/main.js",
   "scripts": {
