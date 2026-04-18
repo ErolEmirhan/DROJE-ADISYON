@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { getThemeColors } from '../utils/themeUtils';
 import { isGeceDonercisi, isYakasGrill, isLacromisa } from '../utils/sultanSomatTables';
 import { GECE_BRANCHES, getGeceSelectedBranch, getOrCreateGeceDeviceId, setGeceSelectedBranch } from '../utils/geceDonercisiBranchSelection';
-import { fetchBranchStockMap, upsertDeviceBranchSelection } from '../utils/geceDonercisiMasalarFirestore';
+import { fetchBranchStockMap, upsertDeviceBranchSelection, adjustBranchStock } from '../utils/geceDonercisiMasalarFirestore';
 
 const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', tenantId = null }) => {
   // Tema renklerini hesapla
@@ -17,8 +17,12 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
   const [printerSubTab, setPrinterSubTab] = useState('usb'); // 'usb' or 'network'
   const [geceBranch, setGeceBranch] = useState(() => getGeceSelectedBranch());
   const [isSavingGeceBranch, setIsSavingGeceBranch] = useState(false);
-  const [geceBranchStocks, setGeceBranchStocks] = useState({}); // productId(string) -> stock
+  /** Gece Dönercisi: Firebase branchStocks — her şube ayrı harita (admin panel ile aynı kaynak) */
+  const [geceStocksByBranch, setGeceStocksByBranch] = useState({ SEKER: {}, SANCAK: {} });
   const [isLoadingGeceBranchStocks, setIsLoadingGeceBranchStocks] = useState(false);
+  const [geceStockQtyInput, setGeceStockQtyInput] = useState({ SEKER: '', SANCAK: '' });
+  const [geceStockSetInput, setGeceStockSetInput] = useState({ SEKER: '', SANCAK: '' });
+  const [geceStockSavingBranch, setGeceStockSavingBranch] = useState(null); // 'SEKER' | 'SANCAK' | null
   
   // Stock management state
   const [stockFilterCategory, setStockFilterCategory] = useState(null);
@@ -136,29 +140,37 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
     return (categories || []).filter((c) => isAllowedStockCategory(c?.name));
   }, [categories, isGeceDonercisiMode]);
 
+  const getGeceStockForBranch = (productId, branch) => {
+    if (branch !== 'SEKER' && branch !== 'SANCAK') return 0;
+    const key = String(productId);
+    const v = geceStocksByBranch[branch]?.[key];
+    return Number.isFinite(v) ? v : 0;
+  };
+
   const getDisplayedStock = (product) => {
     if (isGeceDonercisiMode && geceBranch) {
-      const key = String(product?.id);
-      const v = geceBranchStocks?.[key];
-      return Number.isFinite(v) ? v : 0;
+      return getGeceStockForBranch(product?.id, geceBranch);
     }
     const trackStock = product?.trackStock === true;
     const stock = trackStock && product?.stock !== undefined ? (product.stock || 0) : null;
     return stock ?? 0;
   };
 
-  const loadGeceBranchStocks = async (branch) => {
-    if (!isGeceDonercisiMode || !branch) {
-      setGeceBranchStocks({});
+  const loadGeceAllBranchStocks = async () => {
+    if (!isGeceDonercisiMode) {
+      setGeceStocksByBranch({ SEKER: {}, SANCAK: {} });
       return;
     }
     try {
       setIsLoadingGeceBranchStocks(true);
-      const map = await fetchBranchStockMap(branch);
-      setGeceBranchStocks(map || {});
+      const [seker, sancak] = await Promise.all([
+        fetchBranchStockMap('SEKER'),
+        fetchBranchStockMap('SANCAK'),
+      ]);
+      setGeceStocksByBranch({ SEKER: seker || {}, SANCAK: sancak || {} });
     } catch (e) {
       console.error('Şube stokları yüklenemedi:', e);
-      setGeceBranchStocks({});
+      setGeceStocksByBranch({ SEKER: {}, SANCAK: {} });
     } finally {
       setIsLoadingGeceBranchStocks(false);
     }
@@ -167,12 +179,14 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
   useEffect(() => {
     if (activeTab !== 'stock') return;
     if (!isGeceDonercisiMode) return;
-    if (!geceBranch) {
-      setGeceBranchStocks({});
-      return;
-    }
-    loadGeceBranchStocks(geceBranch);
-  }, [activeTab, isGeceDonercisiMode, geceBranch]);
+    loadGeceAllBranchStocks();
+  }, [activeTab, isGeceDonercisiMode]);
+
+  useEffect(() => {
+    if (!stockFilterProduct) return;
+    setGeceStockQtyInput({ SEKER: '', SANCAK: '' });
+    setGeceStockSetInput({ SEKER: '', SANCAK: '' });
+  }, [stockFilterProduct?.id]);
 
   const saveGeceBranch = async (branch) => {
     setGeceSelectedBranch(branch);
@@ -199,8 +213,71 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
       setIsSavingGeceBranch(false);
     }
 
-    // Şube değişince şube stoklarını yükle
-    await loadGeceBranchStocks(branch);
+    await loadGeceAllBranchStocks();
+  };
+
+  const handleGeceBranchStockDelta = async (branch, productId, mode) => {
+    if (!tenantId || (branch !== 'SEKER' && branch !== 'SANCAK')) return;
+    const amount = parseInt(String(geceStockQtyInput[branch] || '').replace(/\D/g, ''), 10);
+    if (!amount || amount < 1) {
+      alert('Geçerli bir miktar girin');
+      return;
+    }
+    const delta = mode === 'add' ? amount : -amount;
+    try {
+      setGeceStockSavingBranch(branch);
+      await adjustBranchStock({
+        tenantId,
+        branch,
+        productId: String(productId),
+        delta,
+        deviceId: getOrCreateGeceDeviceId(),
+      });
+      setGeceStockQtyInput((prev) => ({ ...prev, [branch]: '' }));
+      await loadGeceAllBranchStocks();
+      if (onProductsUpdated) onProductsUpdated();
+      alert(mode === 'add' ? 'Stok artırıldı.' : 'Stok azaltıldı.');
+    } catch (e) {
+      console.error('Şube stok güncelleme:', e);
+      alert(e?.message || 'Stok güncellenemedi');
+    } finally {
+      setGeceStockSavingBranch(null);
+    }
+  };
+
+  const handleGeceBranchStockSetAbsolute = async (branch, productId) => {
+    if (!tenantId || (branch !== 'SEKER' && branch !== 'SANCAK')) return;
+    const raw = String(geceStockSetInput[branch] ?? '').trim();
+    const target = parseInt(raw, 10);
+    if (raw === '' || Number.isNaN(target) || target < 0) {
+      alert('0 veya daha büyük tam sayı girin.');
+      return;
+    }
+    const current = getGeceStockForBranch(productId, branch);
+    const delta = target - current;
+    if (delta === 0) {
+      alert('Stok zaten bu değerde.');
+      return;
+    }
+    try {
+      setGeceStockSavingBranch(branch);
+      await adjustBranchStock({
+        tenantId,
+        branch,
+        productId: String(productId),
+        delta,
+        deviceId: getOrCreateGeceDeviceId(),
+      });
+      setGeceStockSetInput((prev) => ({ ...prev, [branch]: '' }));
+      await loadGeceAllBranchStocks();
+      if (onProductsUpdated) onProductsUpdated();
+      alert('Stok güncellendi.');
+    } catch (e) {
+      console.error('Şube stok ayarlama:', e);
+      alert(e?.message || 'Stok güncellenemedi');
+    } finally {
+      setGeceStockSavingBranch(null);
+    }
   };
 
   const loadCategories = async () => {
@@ -1926,15 +2003,6 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
             <div className="space-y-6">
               <h3 className="text-xl font-bold text-gray-800 mb-4">Stok Takibi</h3>
 
-              {isGeceDonercisiMode && (
-                <div className="bg-slate-900 text-white rounded-2xl p-5 border border-slate-800">
-                  <div className="text-sm font-extrabold tracking-tight">Salt-okunur</div>
-                  <div className="text-sm text-white/90 font-medium mt-1">
-                    Bu ekranda stok değerleri ve stok takibi değiştirilemez. Tüm stok işlemleri sadece <b>Admin Dashboard</b> üzerinden yapılır.
-                  </div>
-                </div>
-              )}
-
               {/* Gece Dönercisi: Şube seçimi (stok sekmesinin en üstünde) */}
               {isGeceDonercisiMode && (
                 <div className="bg-white rounded-2xl p-6 border border-slate-200">
@@ -1983,11 +2051,11 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                     })}
                   </div>
 
-                  {geceBranch && (
-                    <div className="mt-4 text-xs font-semibold text-slate-500">
-                      {isLoadingGeceBranchStocks ? 'Şube stokları yükleniyor…' : 'Şube stokları admin paneldeki (şube bazlı) stoklarla senkron.'}
-                    </div>
-                  )}
+                  <div className="mt-4 text-xs font-semibold text-slate-500">
+                    {isLoadingGeceBranchStocks
+                      ? 'Firebase şube stokları yükleniyor…'
+                      : 'Satış ekranı seçili şubeyi kullanır; aşağıda Şeker ve Sancak stoklarını ayrı ayrı güncelleyebilirsiniz (Admin Dashboard ile aynı veri).'}
+                  </div>
                 </div>
               )}
               
@@ -2077,7 +2145,12 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                           : products)
                       ).map(prod => (
                         <option key={prod.id} value={prod.id}>
-                          {prod.name} {(isGeceDonercisiMode && geceBranch) ? `(Stok: ${getDisplayedStock(prod)})` : (prod.stock !== undefined ? `(Stok: ${prod.stock || 0})` : '')}
+                          {prod.name}{' '}
+                          {isGeceDonercisiMode
+                            ? `(Şeker: ${getGeceStockForBranch(prod.id, 'SEKER')} · Sancak: ${getGeceStockForBranch(prod.id, 'SANCAK')})`
+                            : prod.stock !== undefined
+                              ? `(Stok: ${prod.stock || 0})`
+                              : ''}
                         </option>
                       ))}
                     </select>
@@ -2107,21 +2180,95 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                   </div>
 
                   {isGeceDonercisiMode ? (
-                    <>
-                      {geceBranch ? (
-                        <p className="text-sm text-gray-600 mb-1">
-                          Mevcut Stok:{' '}
-                          <span className="font-bold text-blue-600">{getDisplayedStock(stockFilterProduct)}</span>
-                        </p>
-                      ) : (
-                        <p className="text-sm text-red-600 font-semibold">
-                          Stokları görmek için önce şube seçiniz.
+                    <div className="space-y-4">
+                      {geceBranch && (
+                        <p className="text-sm text-gray-600">
+                          Bu cihazın satış şubesi:{' '}
+                          <span className="font-bold text-slate-800">
+                            {GECE_BRANCHES.find((b) => b.value === geceBranch)?.label || geceBranch}
+                          </span>
+                          {' '}
+                          (ürün kartlarında kullanılan stok)
                         </p>
                       )}
-                      <p className="text-sm text-gray-500 italic mt-3">
-                        Not: Bu ekranda stok güncelleme ve stok takibi değişikliği kapalıdır.
-                      </p>
-                    </>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        {GECE_BRANCHES.map(({ value: br, label }) => {
+                          const cur = getGeceStockForBranch(stockFilterProduct.id, br);
+                          const busy = geceStockSavingBranch === br;
+                          return (
+                            <div
+                              key={br}
+                              className="rounded-xl border border-slate-200 bg-white p-4 space-y-3"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-extrabold text-slate-900">{label}</span>
+                                <span
+                                  className={`text-sm font-bold px-2 py-1 rounded-lg ${
+                                    cur <= 0 ? 'bg-red-100 text-red-700' : cur < 10 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                                  }`}
+                                >
+                                  Stok: {cur}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2 items-end">
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  disabled={busy}
+                                  value={geceStockQtyInput[br]}
+                                  onChange={(e) => {
+                                    const v = e.target.value.replace(/\D/g, '');
+                                    setGeceStockQtyInput((prev) => ({ ...prev, [br]: v }));
+                                  }}
+                                  className="flex-1 min-w-[100px] px-3 py-2 rounded-lg border-2 border-slate-200 focus:border-blue-500 focus:outline-none"
+                                  placeholder="Miktar"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => handleGeceBranchStockDelta(br, stockFilterProduct.id, 'add')}
+                                  className="px-3 py-2 rounded-lg bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700 disabled:opacity-50"
+                                >
+                                  + Ekle
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => handleGeceBranchStockDelta(br, stockFilterProduct.id, 'sub')}
+                                  className="px-3 py-2 rounded-lg bg-rose-600 text-white font-bold text-sm hover:bg-rose-700 disabled:opacity-50"
+                                >
+                                  − Çıkar
+                                </button>
+                              </div>
+                              <div className="pt-2 border-t border-slate-100 flex flex-wrap gap-2 items-end">
+                                <label className="text-xs font-semibold text-slate-600 w-full">Doğrudan sayıya ayarla</label>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  disabled={busy}
+                                  value={geceStockSetInput[br]}
+                                  onChange={(e) => {
+                                    const v = e.target.value.replace(/\D/g, '');
+                                    setGeceStockSetInput((prev) => ({ ...prev, [br]: v }));
+                                  }}
+                                  className="flex-1 min-w-[100px] px-3 py-2 rounded-lg border-2 border-slate-200 focus:border-indigo-500 focus:outline-none"
+                                  placeholder="Yeni stok"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => handleGeceBranchStockSetAbsolute(br, stockFilterProduct.id)}
+                                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-700 disabled:opacity-50"
+                                >
+                                  Kaydet
+                                </button>
+                              </div>
+                              {busy && <p className="text-xs text-slate-500">Kaydediliyor…</p>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   ) : stockFilterProduct.trackStock ? (
                     <>
                       <p className="text-sm text-gray-600 mb-4">
@@ -2190,9 +2337,14 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                   ).map(product => {
                     const category = categories.find(c => c.id === product.category_id);
                     const trackStock = product.trackStock === true;
-                    const stock = isGeceDonercisiMode && geceBranch
-                      ? getDisplayedStock(product)
-                      : (trackStock && product.stock !== undefined ? (product.stock || 0) : null);
+                    const stockSek = isGeceDonercisiMode ? getGeceStockForBranch(product.id, 'SEKER') : null;
+                    const stockSnc = isGeceDonercisiMode ? getGeceStockForBranch(product.id, 'SANCAK') : null;
+                    const stock =
+                      isGeceDonercisiMode && geceBranch
+                        ? getDisplayedStock(product)
+                        : trackStock && product.stock !== undefined
+                          ? product.stock || 0
+                          : null;
                     return (
                       <div
                         key={product.id}
@@ -2225,22 +2377,52 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                                 )}
                             </div>
                             <p className="text-sm text-gray-500">{category?.name || 'Kategori yok'}</p>
-                            <div className="flex items-center gap-4 mt-1">
+                            <div className="flex flex-wrap items-center gap-2 mt-1">
                               <p className="text-lg font-bold text-orange-600">{product.price.toFixed(2)} ₺</p>
-                              {(isGeceDonercisiMode && geceBranch) || (trackStock && stock !== null) ? (
-                                <span className={`text-sm font-bold px-3 py-1 rounded-lg ${
-                                  stock === 0 
-                                    ? 'bg-red-100 text-red-700' 
-                                    : stock < 10 
-                                    ? 'bg-yellow-100 text-yellow-700'
-                                    : 'bg-green-100 text-green-700'
-                                }`}>
+                              {isGeceDonercisiMode ? (
+                                <>
+                                  <span
+                                    className={`text-xs font-bold px-2 py-1 rounded-lg ${
+                                      stockSek === 0
+                                        ? 'bg-red-100 text-red-700'
+                                        : stockSek < 10
+                                          ? 'bg-yellow-100 text-yellow-700'
+                                          : 'bg-green-100 text-green-700'
+                                    }`}
+                                  >
+                                    Şeker: {stockSek}
+                                  </span>
+                                  <span
+                                    className={`text-xs font-bold px-2 py-1 rounded-lg ${
+                                      stockSnc === 0
+                                        ? 'bg-red-100 text-red-700'
+                                        : stockSnc < 10
+                                          ? 'bg-yellow-100 text-yellow-700'
+                                          : 'bg-green-100 text-green-700'
+                                    }`}
+                                  >
+                                    Sancak: {stockSnc}
+                                  </span>
+                                  {geceBranch && (
+                                    <span className="text-[10px] font-semibold text-slate-500">
+                                      (POS: {GECE_BRANCHES.find((b) => b.value === geceBranch)?.label})
+                                    </span>
+                                  )}
+                                </>
+                              ) : trackStock && stock !== null ? (
+                                <span
+                                  className={`text-sm font-bold px-3 py-1 rounded-lg ${
+                                    stock === 0
+                                      ? 'bg-red-100 text-red-700'
+                                      : stock < 10
+                                        ? 'bg-yellow-100 text-yellow-700'
+                                        : 'bg-green-100 text-green-700'
+                                  }`}
+                                >
                                   Stok: {stock}
                                 </span>
                               ) : trackStock ? (
-                                <span className="text-sm text-gray-400 px-3 py-1 rounded-lg bg-gray-100">
-                                  Stok: 0
-                                </span>
+                                <span className="text-sm text-gray-400 px-3 py-1 rounded-lg bg-gray-100">Stok: 0</span>
                               ) : null}
                             </div>
                           </div>
