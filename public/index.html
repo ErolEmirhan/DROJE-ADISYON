@@ -4,7 +4,7 @@
 <html lang="tr">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#dc2626">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -151,6 +151,18 @@
     let selectedProductName = null;
     let analysisDateRange = { start: null, end: null }; // Date objeleri
     let salesDataLoaded = false; // Lazy load: satışlar sadece ilgili sekmeye girildiğinde yüklensin
+    /** Bellekte yüklü iş günü aralığı (00:00); ihtiyaç olunca geriye doğru genişletilir */
+    let salesLoadedOldest = null;
+    let salesLoadedNewest = null;
+    let salesOlderFetchChain = Promise.resolve();
+    let salesLoadMoreObserver = null;
+    let _loadSalesBusy = false;
+
+    function queueOlderSalesFetch(fn) {
+      const p = salesOlderFetchChain.then(() => fn());
+      salesOlderFetchChain = p.catch(() => {});
+      return p;
+    }
     let deleteSalePendingId = null; // Silme onayı bekleyen satış doc id
     let reportDateFilter = 'all'; // 'all', 'yesterday', 'week', 'month', 'custom'
     let salesDateFilter = 'all'; // Satış geçmişi için tarih filtresi
@@ -484,9 +496,6 @@
         applyThemeColors(themeColor);
       }
 
-      // Gece Dönercisi: rapor şube seçicisini göster/gizle
-      const reportBranchEl = document.getElementById('reportBranchSwitch');
-      if (reportBranchEl) reportBranchEl.style.display = isGeceDonercisi ? 'flex' : 'none';
     }
 
     // Tema renklerini dinamik olarak uygula
@@ -613,11 +622,9 @@
           border-color: ${primary} !important;
           box-shadow: 0 4px 12px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1) !important;
         }
-        .admin-splash-screen::before {
-          background: radial-gradient(circle, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.03) 0%, transparent 70%) !important;
-        }
+        .admin-splash-screen::before,
         .admin-splash-screen::after {
-          background: radial-gradient(circle, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.02) 0%, transparent 70%) !important;
+          display: none !important;
         }
         .tab-btn.active {
           border-color: ${primary} !important;
@@ -760,33 +767,6 @@
       return now;
     }
 
-    // Bulunduğumuz iş gününe göre (gece 04:00 kuralı ile) sadece içinde bulunduğumuz
-    // aya ait satışları döndür (Mart'a girince Mart ayı, Nisan'a girince Nisan ayı vb.)
-    function filterCurrentMonthSales(sales) {
-      if (!Array.isArray(sales) || sales.length === 0) return [];
-
-      const businessDay = getBusinessDayDate();
-      const currentMonth = businessDay.getMonth();
-      const currentYear = businessDay.getFullYear();
-
-      return sales.filter((sale) => {
-        if (!sale || !sale.sale_date || sale.sale_date === 'Bilinmeyen') return false;
-        try {
-          const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
-          const parts = String(saleBusinessDay || '').split('.');
-          if (parts.length !== 3) return false;
-          const day = parseInt(parts[0], 10);
-          const month = parseInt(parts[1], 10);
-          const year = parseInt(parts[2], 10);
-          if (!day || !month || !year) return false;
-          const d = new Date(year, month - 1, day);
-          return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
-        } catch (e) {
-          return false;
-        }
-      });
-    }
-
     // Tarihi normalize et - her zaman DD.MM.YYYY formatında döndür
     function normalizeDateString(date) {
       const day = String(date.getDate()).padStart(2, '0');
@@ -887,6 +867,12 @@
     }
 
     function showLogin() {
+      try {
+        closeNavAppDrawer();
+      } catch (e) {}
+      try {
+        closeManagementOverlay();
+      } catch (e) {}
       const loginSection = document.getElementById('loginSection');
       const dashboard = document.getElementById('dashboard');
       if (loginSection) loginSection.style.display = 'block';
@@ -1063,13 +1049,50 @@
 
       // İlk açılışta aktif sekmeyi render et
       setActiveTab(activeTab);
-      // Dashboard açılır açılmaz satışları canlı dinle (00:00 sonrası satışlar anında ciroyu ve geçmişi günceller)
-      if (!realtimeUnsubscribe) startRealtimeListener();
+      // Canlı satış dinleyicisi loadSales() tamamlanınca tek yerden başlatılır (çift dinleme ve tüm koleksiyon taraması önlenir)
       // Masa verilerini çek (aktif masa sayısı için)
       loadTablesDataForStats();
       // Personel birleştirme/silme kurallarını yükle (kalıcı; başka cihaz veya sonraki girişte de geçerli)
       loadStaffSettings();
     }
+
+    function openNavAppDrawer() {
+      const root = document.getElementById('navAppDrawer');
+      const btn = document.getElementById('navDrawerToggle');
+      if (!root) return;
+      root.classList.add('is-open');
+      root.setAttribute('aria-hidden', 'false');
+      if (btn) {
+        btn.classList.add('is-open');
+        btn.setAttribute('aria-expanded', 'true');
+      }
+      document.body.classList.add('nav-drawer-open');
+    }
+
+    function closeNavAppDrawer() {
+      const root = document.getElementById('navAppDrawer');
+      const btn = document.getElementById('navDrawerToggle');
+      if (!root) return;
+      root.classList.remove('is-open');
+      root.setAttribute('aria-hidden', 'true');
+      if (btn) {
+        btn.classList.remove('is-open');
+        btn.setAttribute('aria-expanded', 'false');
+      }
+      document.body.classList.remove('nav-drawer-open');
+    }
+
+    function toggleNavAppDrawer() {
+      const root = document.getElementById('navAppDrawer');
+      if (root && root.classList.contains('is-open')) closeNavAppDrawer();
+      else openNavAppDrawer();
+    }
+
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape') return;
+      const nd = document.getElementById('navAppDrawer');
+      if (nd && nd.classList.contains('is-open')) closeNavAppDrawer();
+    });
 
     // Personel birleştirme ve silme kurallarını Firestore settings/staff'tan yükle
     async function loadStaffSettings() {
@@ -1094,14 +1117,18 @@
     const REMEMBER_PIN_KEY = 'admin_remember_pin';
     const REMEMBER_ME_KEY = 'admin_remember_me';
 
+    function normalizePin(p) {
+      return String(p == null ? '' : p).trim();
+    }
+
     function verifyPin() {
       const pinInput = document.getElementById('pinInput');
       const rememberMe = document.getElementById('rememberMe');
       if (!pinInput) return;
       
-      const pin = pinInput.value;
+      const pin = normalizePin(pinInput.value);
       
-      if (pin === adminPin) {
+      if (pin === normalizePin(adminPin)) {
         if (rememberMe && rememberMe.checked) {
           try { localStorage.setItem(REMEMBER_PIN_KEY, pin); localStorage.setItem(REMEMBER_ME_KEY, '1'); } catch (e) {}
         } else {
@@ -1120,13 +1147,28 @@
     function applyRememberedPin() {
       try {
         if (localStorage.getItem(REMEMBER_ME_KEY) !== '1') return;
-        const saved = localStorage.getItem(REMEMBER_PIN_KEY);
+        const saved = normalizePin(localStorage.getItem(REMEMBER_PIN_KEY));
         if (!saved) return;
         const pinInput = document.getElementById('pinInput');
         const rememberMe = document.getElementById('rememberMe');
         if (pinInput) { pinInput.value = saved; pinInput.focus(); }
         if (rememberMe) rememberMe.checked = true;
       } catch (e) {}
+    }
+
+    /** Beni hatırla + kayıtlı PIN doğruysa oturum aç (login ekranı göstermeden) */
+    function tryRememberAutoLogin() {
+      try {
+        if (localStorage.getItem(REMEMBER_ME_KEY) !== '1') return false;
+        const saved = normalizePin(localStorage.getItem(REMEMBER_PIN_KEY));
+        if (saved === '') return false;
+        if (saved !== normalizePin(adminPin)) return false;
+        isAuthenticated = true;
+        sessionStorage.setItem('adminAuthenticated', 'true');
+        return true;
+      } catch (e) {
+        return false;
+      }
     }
 
     function showChangePinModal() {
@@ -1170,9 +1212,9 @@
         alert('Mevcut PIN ve yeni PIN girin.');
         return;
       }
-      if (cur !== adminPin) {
-        const saved = localStorage.getItem(REMEMBER_PIN_KEY);
-        if (cur !== saved) {
+      if (normalizePin(cur) !== normalizePin(adminPin)) {
+        const saved = normalizePin(localStorage.getItem(REMEMBER_PIN_KEY));
+        if (normalizePin(cur) !== saved) {
           alert('Mevcut PIN hatalı.');
           return;
         }
@@ -1292,269 +1334,550 @@
       }, 10000);
     }
 
-    // Sayfa yüklendiğinde kontrol et
+    // Sayfa yüklendiğinde kontrol et — splash, Firebase + oturum kararı bitene kadar üstte kalır (login flaşı önlenir)
     window.addEventListener('load', () => {
-      // PWA güncelleme kontrolü
       checkForPWAUpdate();
-      
-      // Splash screen'i göster
+
       const loader = document.getElementById('loader');
-      if (loader) {
-        loader.style.display = 'flex';
+      if (loader) loader.style.display = 'flex';
+
+      const splashStartedAt = Date.now();
+      const MIN_SPLASH_MS = 2400;
+
+      function fadeOutLoader() {
+        if (!loader) return;
+        loader.style.opacity = '0';
+        loader.style.transition = 'opacity 0.45s ease';
+        setTimeout(() => { loader.style.display = 'none'; }, 460);
       }
 
-      // 2.5 saniye sonra splash screen'i kapat
-      setTimeout(() => {
-        if (loader) {
-          loader.style.opacity = '0';
-          loader.style.transition = 'opacity 0.5s ease';
+      function finishSplashAndAuth() {
+        let settled = false;
+
+        async function runAuthFromSplash() {
+          if (!tablesDb) {
+            console.warn('⚠️ Masalar Firebase başlatılamadı - masalar bölümü çalışmayabilir');
+          } else {
+            console.log('✅ Masalar Firebase hazır');
+          }
+
+          let goDash = false;
+          if (sessionStorage.getItem('adminAuthenticated') === 'true') goDash = true;
+          else if (tryRememberAutoLogin()) goDash = true;
+
+          if (goDash) {
+            if (loader) loader.classList.add('splash-preloading');
+            const fill = document.getElementById('splashDataProgressFill');
+            const label = document.getElementById('splashProgressLabel');
+            const idleBar = document.querySelector('.splash-loading-bar-idle');
+            if (idleBar) idleBar.style.display = 'none';
+            const pctEl = document.getElementById('splashProgressPct');
+            if (fill) {
+              fill.style.width = '2%';
+              fill.classList.add('is-active');
+            }
+            if (pctEl) pctEl.textContent = '0%';
+            if (label) label.textContent = 'Satış verileri yükleniyor…';
+            try {
+              await loadSales({
+                quiet: true,
+                onProgress: function (info) {
+                  const p = typeof info.percent === 'number' ? Math.min(100, Math.max(0, Math.round(info.percent))) : null;
+                  if (fill && p != null) fill.style.width = p + '%';
+                  if (pctEl && p != null) pctEl.textContent = p + '%';
+                  if (label) {
+                    if (info.rows != null) label.textContent = String(info.rows) + ' kayıt işlendi';
+                    else if (p != null) label.textContent = 'Veriler hazırlanıyor…';
+                  }
+                }
+              });
+            } catch (err) {
+              console.warn('Ön yükleme:', err);
+            }
+            if (pctEl) pctEl.textContent = '100%';
+            if (label) label.textContent = 'Hazır';
+            if (fill) fill.style.width = '100%';
+            showDashboard();
+          } else {
+            showLogin();
+          }
+
+          const wait = Math.max(0, MIN_SPLASH_MS - (Date.now() - splashStartedAt));
           setTimeout(() => {
-            loader.style.display = 'none';
-            
-            // Firebase'in hazır olmasını bekle
-            const checkFirebase = setInterval(() => {
-              if (db) {
-                clearInterval(checkFirebase);
-                
-                if (!tablesDb) {
-                  console.warn('⚠️ Masalar Firebase başlatılamadı - masalar bölümü çalışmayabilir');
-                } else {
-                  console.log('✅ Masalar Firebase hazır');
-                }
-                
-                if (sessionStorage.getItem('adminAuthenticated') === 'true') {
-                  showDashboard();
-                } else {
-                  showLogin();
-                }
-              }
-            }, 100);
-            
-            // 5 saniye sonra timeout
-            setTimeout(() => {
-              clearInterval(checkFirebase);
-              if (!db) {
-                console.error('❌ Ana Firebase başlatılamadı');
-              }
-            }, 5000);
-          }, 500);
+            requestAnimationFrame(() => requestAnimationFrame(fadeOutLoader));
+          }, wait);
         }
-      }, 2500);
+
+        const checkFirebase = setInterval(() => {
+          if (settled || !db) return;
+          settled = true;
+          clearInterval(checkFirebase);
+          void runAuthFromSplash();
+        }, 50);
+
+        setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          clearInterval(checkFirebase);
+          if (!db) {
+            console.error('❌ Ana Firebase başlatılamadı');
+            showLogin();
+            const wait = Math.max(0, MIN_SPLASH_MS - (Date.now() - splashStartedAt));
+            setTimeout(fadeOutLoader, wait);
+          } else {
+            void runAuthFromSplash();
+          }
+        }, 8000);
+      }
+
+      setTimeout(finishSplashAndAuth, 280);
     });
 
-    // Satışları yükle - SON 60 İŞ GÜNÜ (00:00–03:59 arası satışları kaçırmamak için, gece 04:00 kuralı)
-    async function loadSales() {
+    /** Firestore satış dokümanını liste öğesine çevir (loadSales + canlı dinleyici ortak) */
+    function parseSaleFromDoc(doc) {
+      const data = doc.data();
+      let saleDate = normalizeSaleDateInput(data.sale_date);
+      let saleTime = data.sale_time || '';
+      if (!saleDate && data.created_at) {
+        const timestamp = data.created_at;
+        const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
+        saleDate = formatFirestoreDateAsIstanbulDmy(date) || normalizeDateString(date);
+        saleTime = saleTime || date.toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      } else if (!saleDate && data.timestamp) {
+        const timestamp = data.timestamp;
+        const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
+        saleDate = formatFirestoreDateAsIstanbulDmy(date) || normalizeDateString(date);
+        saleTime = saleTime || date.toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      }
+      if (!saleDate && data.sale_date) saleDate = normalizeSaleDateInput(data.sale_date) || 'Bilinmeyen';
+      if (!saleDate) saleDate = 'Bilinmeyen';
+
+      let items = [];
+      const itemsArray = data.items_array || [];
+
+      if (data.items) {
+        if (Array.isArray(data.items)) {
+          items = data.items;
+        } else if (typeof data.items === 'string') {
+          items = data.items.split(', ').map((item) => {
+            const match = item.match(/(.+) x(\d+)/);
+            if (match) {
+              return {
+                product_name: match[1].replace(' (İKRAM)', ''),
+                quantity: parseInt(match[2], 10),
+                isGift: item.includes('(İKRAM)')
+              };
+            }
+            return { product_name: item, quantity: 1, isGift: false };
+          });
+        }
+      }
+
+      return {
+        id: doc.id,
+        sale_id: data.sale_id || doc.id,
+        total_amount: data.total_amount || 0,
+        payment_method: data.payment_method || 'Nakit',
+        sale_date: saleDate || 'Bilinmeyen',
+        sale_time: saleTime || '',
+        staff_name: data.staff_name || null,
+        table_name: data.table_name || null,
+        table_type: data.table_type || null,
+        order_source: data.order_source || null,
+        branch: data.branch || null,
+        items: items,
+        items_array: itemsArray,
+        itemsText: data.items || 'Ürün bulunamadı',
+        isExpense: data.isExpense === true || data.isExpense === 'true' || data.payment_method === 'Masraf'
+      };
+    }
+
+    function sortSalesByDateDesc(sales) {
+      if (!Array.isArray(sales)) return;
+      sales.sort((a, b) => {
+        if (a.sale_date && b.sale_date) {
+          const [dayA, monthA, yearA] = a.sale_date.split('.');
+          const [dayB, monthB, yearB] = b.sale_date.split('.');
+          if (dayA && monthA && yearA && dayB && monthB && yearB) {
+            const dateA = new Date(yearA, monthA - 1, dayA);
+            const dateB = new Date(yearB, monthB - 1, dayB);
+            if (a.sale_time) {
+              const [hA, mA, sA] = a.sale_time.split(':');
+              dateA.setHours(parseInt(hA, 10) || 0, parseInt(mA, 10) || 0, parseInt(sA, 10) || 0, 0);
+            }
+            if (b.sale_time) {
+              const [hB, mB, sB] = b.sale_time.split(':');
+              dateB.setHours(parseInt(hB, 10) || 0, parseInt(mB, 10) || 0, parseInt(sB, 10) || 0, 0);
+            }
+            const diff = dateB - dateA;
+            if (diff !== 0) return diff;
+          }
+        }
+        const idA = parseInt(a.sale_id || a.id, 10) || 0;
+        const idB = parseInt(b.sale_id || b.id, 10) || 0;
+        return idB - idA;
+      });
+    }
+
+    /** İlk açılışta çekilen iş günü sayısı (1 hafta); daha eski kayıt kaydırma / filtre ile istenirse yüklenir */
+    const SALES_INITIAL_BUSINESS_DAYS = 7;
+    const SALES_ON_DEMAND_CHUNK_DAYS = 7;
+    const REALTIME_RECENT_LIMIT = 450;
+
+    function snapBusinessMidnight(d) {
+      const x = new Date(d);
+      x.setHours(0, 0, 0, 0);
+      return x;
+    }
+
+    /** Firestore Timestamp/Date → DD.MM.YYYY (Europe/Istanbul) — yerel saat UTC kaydırıp yanlış güne düşmesini azaltır */
+    function formatFirestoreDateAsIstanbulDmy(dateVal) {
+      try {
+        const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
+        if (isNaN(d.getTime())) return null;
+        const parts = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Europe/Istanbul',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).formatToParts(d);
+        const get = (type) => (parts.find((p) => p.type === type) || {}).value;
+        const y = get('year');
+        const m = get('month');
+        const day = get('day');
+        if (!y || !m || !day) return null;
+        return `${String(day).padStart(2, '0')}.${String(m).padStart(2, '0')}.${y}`;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function businessDayTrStringToMs(ddmmyyyy) {
+      if (!ddmmyyyy || ddmmyyyy === 'Bilinmeyen') return NaN;
+      const p = String(ddmmyyyy).trim().split('.');
+      if (p.length !== 3) return NaN;
+      const d = parseInt(p[0], 10);
+      const mo = parseInt(p[1], 10);
+      const y = parseInt(p[2], 10);
+      if (!y || !mo || !d) return NaN;
+      const dt = new Date(y, mo - 1, d);
+      if (isNaN(dt.getTime())) return NaN;
+      dt.setHours(0, 0, 0, 0);
+      return dt.getTime();
+    }
+
+    /** Bugünün iş günü takviminden sonraki “iş günü” satışlarını listeden çıkar (hatalı/ileri tarih kayıtları) */
+    function pruneAllSalesAfterBusinessCap() {
+      const capMs = businessDayTrStringToMs(getTodayDateString());
+      if (isNaN(capMs)) return;
+      const before = allSales.length;
+      allSales = allSales.filter((s) => {
+        const t = businessDayTrStringToMs(getSaleBusinessDay(s.sale_date, s.sale_time));
+        if (isNaN(t)) return true;
+        return t <= capMs;
+      });
+      if (before !== allSales.length) sortSalesByDateDesc(allSales);
+    }
+
+    function mergeSalesIntoAllSales(newSales) {
+      const m = new Map(allSales.map((s) => [s.id, s]));
+      (newSales || []).forEach((s) => m.set(s.id, s));
+      allSales = Array.from(m.values());
+      sortSalesByDateDesc(allSales);
+      pruneAllSalesAfterBusinessCap();
+    }
+
+    /** [minDay, maxDay] iş günü aralığı (00:00 dahil) — Firestore sayfalama ile satış listesi */
+    async function fetchSalesForBusinessDayRange(minDay, maxDay, opts) {
+      opts = opts || {};
+      const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+      const salesRef = db.collection('sales');
+      const todayBizCap = snapBusinessMidnight(getBusinessDayDate());
+      let rangeMin = snapBusinessMidnight(minDay);
+      let rangeMax = snapBusinessMidnight(maxDay);
+      if (rangeMax.getTime() > todayBizCap.getTime()) rangeMax = new Date(todayBizCap);
+      if (rangeMin.getTime() > rangeMax.getTime()) rangeMin = new Date(rangeMax);
+      const rangeMinMs = rangeMin.getTime();
+      const rangeMaxMs = rangeMax.getTime();
+
+      let allDocs = [];
+      let lastDoc = null;
+      let hasMore = true;
+      let batchIndex = 0;
+      /** DD.MM.YYYY string orderBy kronolojiyi bozar; mümkünse created_at (Timestamp) ile sayfala */
+      let orderByCreatedAt = true;
+
+      while (hasMore) {
+        let querySnapshot;
+        if (orderByCreatedAt) {
+          try {
+            const q = lastDoc
+              ? salesRef.orderBy('created_at', 'desc').startAfter(lastDoc)
+              : salesRef.orderBy('created_at', 'desc');
+            querySnapshot = await q.limit(500).get();
+          } catch (err) {
+            console.warn('[sales] created_at sıralaması kullanılamıyor, sale_date deneniyor:', err && err.message);
+            orderByCreatedAt = false;
+            lastDoc = null;
+            allDocs = [];
+            batchIndex = 0;
+            hasMore = true;
+            continue;
+          }
+        } else {
+          const q = lastDoc
+            ? salesRef.orderBy('sale_date', 'desc').startAfter(lastDoc)
+            : salesRef.orderBy('sale_date', 'desc');
+          querySnapshot = await q.limit(500).get();
+        }
+
+        if (querySnapshot.empty) {
+          hasMore = false;
+        } else {
+          let foundOlderThanRange = false;
+          querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            const saleDateRaw = data.sale_date || '';
+            const saleDateNorm = normalizeSaleDateInput(saleDateRaw) || '';
+            const saleTime = data.sale_time || '';
+
+            let bizMs = NaN;
+            if (saleDateNorm && saleDateNorm !== 'Bilinmeyen') {
+              try {
+                const saleBusinessDayStr = getSaleBusinessDay(saleDateNorm, saleTime);
+                bizMs = businessDayTrStringToMs(saleBusinessDayStr);
+              } catch (e) {
+                bizMs = NaN;
+              }
+            }
+            if (isNaN(bizMs) && data.created_at) {
+              const timestamp = data.created_at;
+              const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
+              const cal = formatFirestoreDateAsIstanbulDmy(date) || normalizeDateString(date);
+              if (cal) {
+                const st = saleTime || date.toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                try {
+                  bizMs = businessDayTrStringToMs(getSaleBusinessDay(cal, st));
+                } catch (e) {
+                  bizMs = NaN;
+                }
+              }
+            }
+
+            if (!isNaN(bizMs)) {
+              if (bizMs >= rangeMinMs && bizMs <= rangeMaxMs) {
+                allDocs.push(doc);
+              } else if (bizMs < rangeMinMs) {
+                foundOlderThanRange = true;
+              }
+            }
+          });
+
+          lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1];
+          batchIndex += 1;
+          if (onProgress) {
+            const pct = hasMore ? Math.min(94, 5 + batchIndex * 11) : 98;
+            try {
+              onProgress({ percent: pct, rows: allDocs.length, batches: batchIndex });
+            } catch (e) {}
+          }
+          if (foundOlderThanRange || querySnapshot.docs.length < 500) {
+            hasMore = false;
+          }
+        }
+      }
+
+      const sales = [];
+      allDocs.forEach((doc) => sales.push(parseSaleFromDoc(doc)));
+      sortSalesByDateDesc(sales);
+      const capMs = businessDayTrStringToMs(getTodayDateString());
+      const hi = isNaN(capMs) ? rangeMaxMs : Math.min(rangeMaxMs, capMs);
+      const filtered = sales.filter((s) => {
+        const t = businessDayTrStringToMs(getSaleBusinessDay(s.sale_date, s.sale_time));
+        if (isNaN(t)) return true;
+        return t >= rangeMinMs && t <= hi;
+      });
+      if (onProgress) {
+        try {
+          onProgress({ percent: 100, rows: filtered.length, batches: batchIndex });
+        } catch (e) {}
+      }
+      return filtered;
+    }
+
+    function getSalesHistoryFilterMinBusinessDay() {
+      const businessDay = getBusinessDayDate();
+      const bizMid = snapBusinessMidnight(businessDay);
+      if (salesDateFilter === 'yesterday') {
+        const d = new Date(bizMid);
+        d.setDate(d.getDate() - 1);
+        return d;
+      }
+      if (salesDateFilter === 'week') {
+        const d = new Date(bizMid);
+        d.setDate(d.getDate() - 7);
+        return d;
+      }
+      if (salesDateFilter === 'month') {
+        const d = new Date(bizMid);
+        d.setMonth(d.getMonth() - 1);
+        return snapBusinessMidnight(d);
+      }
+      if (salesDateFilter === 'custom' && salesCustomDateRange.start) {
+        return snapBusinessMidnight(new Date(salesCustomDateRange.start));
+      }
+      return null;
+    }
+
+    function getReportFilterMinBusinessDay() {
+      const businessDay = getBusinessDayDate();
+      const bizMid = snapBusinessMidnight(businessDay);
+      if (reportDateFilter === 'yesterday') {
+        const d = new Date(bizMid);
+        d.setDate(d.getDate() - 1);
+        return d;
+      }
+      if (reportDateFilter === 'week') {
+        const d = new Date(bizMid);
+        d.setDate(d.getDate() - 7);
+        return d;
+      }
+      if (reportDateFilter === 'month') {
+        const d = new Date(bizMid);
+        d.setMonth(d.getMonth() - 1);
+        return snapBusinessMidnight(d);
+      }
+      if (reportDateFilter === 'custom' && customDateRange.start) {
+        return snapBusinessMidnight(new Date(customDateRange.start));
+      }
+      return null;
+    }
+
+    async function ensureSalesLoadedThroughDate(minDay) {
+      if (!db || !minDay) return;
+      const target = snapBusinessMidnight(minDay);
+      if (!salesDataLoaded) {
+        await loadSales({ quiet: true });
+      }
+      if (!salesLoadedOldest) return;
+      let guard = 0;
+      while (snapBusinessMidnight(salesLoadedOldest).getTime() > target.getTime() && guard < 80) {
+        guard += 1;
+        await queueOlderSalesFetch(() => extendSalesOlderOneChunk({ quiet: true }));
+      }
+    }
+
+    async function ensureSalesForCurrentSalesHistoryFilter() {
+      const minD = getSalesHistoryFilterMinBusinessDay();
+      if (minD) await ensureSalesLoadedThroughDate(minD);
+    }
+
+    async function ensureSalesForCurrentReportFilter() {
+      const minD = getReportFilterMinBusinessDay();
+      if (minD) await ensureSalesLoadedThroughDate(minD);
+    }
+
+    async function extendSalesOlderOneChunk(opts) {
+      opts = opts || {};
+      const quiet = !!opts.quiet;
+      if (!salesLoadedOldest) return;
+      const chunkEnd = new Date(salesLoadedOldest);
+      chunkEnd.setDate(chunkEnd.getDate() - 1);
+      chunkEnd.setHours(0, 0, 0, 0);
+      const chunkStart = new Date(chunkEnd);
+      chunkStart.setDate(chunkStart.getDate() - (SALES_ON_DEMAND_CHUNK_DAYS - 1));
+      chunkStart.setHours(0, 0, 0, 0);
+
+      if (!quiet) showLoading(true);
+      try {
+        const fetched = await fetchSalesForBusinessDayRange(chunkStart, chunkEnd, { onProgress: opts.onProgress });
+        mergeSalesIntoAllSales(fetched);
+        salesLoadedOldest = chunkStart;
+        updateStats(allSales);
+        if (activeTab === 'sales') renderSales(allSales);
+        if (activeTab === 'reports') void renderReports();
+      } finally {
+        if (!quiet) showLoading(false);
+      }
+    }
+
+    function extendSalesOlderOnScroll() {
+      if (!salesDataLoaded || !salesLoadedOldest) return;
+      if (salesDateFilter !== 'all') return;
+      void queueOlderSalesFetch(() => extendSalesOlderOneChunk({ quiet: true })).catch((e) => console.warn('Eski satış yüklemesi:', e));
+    }
+
+    function setupSalesLoadMoreObserver() {
+      if (salesLoadMoreObserver) {
+        try {
+          salesLoadMoreObserver.disconnect();
+        } catch (e) {}
+        salesLoadMoreObserver = null;
+      }
+      const el = document.getElementById('salesLoadMoreSentinel');
+      if (!el || activeTab !== 'sales' || salesDateFilter !== 'all') return;
+      salesLoadMoreObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((ent) => {
+            if (!ent.isIntersecting) return;
+            extendSalesOlderOnScroll();
+          });
+        },
+        { root: null, rootMargin: '320px 0px', threshold: 0 }
+      );
+      salesLoadMoreObserver.observe(el);
+    }
+
+    async function loadSales(opts) {
+      opts = opts || {};
+      const quiet = !!opts.quiet;
+      const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+      const replace = !!opts.replace;
+
       if (!db) {
         console.error('Firebase başlatılamadı');
         return;
       }
 
+      while (_loadSalesBusy) {
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      if (!replace && salesDataLoaded) return;
+
+      _loadSalesBusy = true;
       try {
-        showLoading(true);
-        const salesRef = db.collection('sales');
-        
-        // Son 60 iş gününü hesapla (gece 04:00'a göre) - Satış Geçmişi'nde tüm satışlar görünsün
-        const businessDay = getBusinessDayDate();
-        const businessDayStart = new Date(businessDay.getFullYear(), businessDay.getMonth(), businessDay.getDate());
-        businessDayStart.setHours(0, 0, 0, 0);
-        const sixtyDaysAgo = new Date(businessDay);
-        sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 59);
-        sixtyDaysAgo.setHours(0, 0, 0, 0);
-        // created_at fallback için geniş takvim aralığı (90 gün)
-        const ninetyDaysAgoCalendar = new Date();
-        ninetyDaysAgoCalendar.setDate(ninetyDaysAgoCalendar.getDate() - 90);
-        ninetyDaysAgoCalendar.setHours(0, 0, 0, 0);
-        
-        let allDocs = [];
-        let lastDoc = null;
-        let hasMore = true;
-        
-        while (hasMore) {
-          let query = salesRef;
-          
-          if (!lastDoc) {
-            try {
-              query = salesRef.orderBy('sale_date', 'desc');
-            } catch (e) {
-              try {
-                query = salesRef.orderBy('created_at', 'desc');
-              } catch (e2) {
-                query = salesRef;
-              }
-            }
-          } else {
-            try {
-              query = salesRef.orderBy('sale_date', 'desc').startAfter(lastDoc);
-            } catch (e) {
-              try {
-                query = salesRef.orderBy('created_at', 'desc').startAfter(lastDoc);
-              } catch (e2) {
-                query = salesRef.startAfter(lastDoc);
-              }
-            }
-          }
-          
-          const querySnapshot = await query.limit(500).get();
-          
-          if (querySnapshot.empty) {
-            hasMore = false;
-          } else {
-            let foundOldDate = false;
-            querySnapshot.forEach((doc) => {
-              const data = doc.data();
-              const saleDateRaw = data.sale_date || '';
-              const saleDate = normalizeSaleDateInput(saleDateRaw) || (saleDateRaw && saleDateRaw !== 'Bilinmeyen' ? saleDateRaw : '');
-              const saleTime = data.sale_time || '';
-              
-              if (saleDate && saleDate !== 'Bilinmeyen') {
-                try {
-                  const saleBusinessDayStr = getSaleBusinessDay(saleDate, saleTime);
-                  const [d, m, y] = saleBusinessDayStr.split('.');
-                  if (d && m && y) {
-                    const saleBusinessDate = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
-                    saleBusinessDate.setHours(0, 0, 0, 0);
-                    if (saleBusinessDate >= sixtyDaysAgo && saleBusinessDate <= businessDayStart) {
-                      allDocs.push(doc);
-                    } else if (saleBusinessDate < sixtyDaysAgo) {
-                      foundOldDate = true;
-                    }
-                  } else {
-                    // Tarih parse edilemezse son 90 gün içindeyse yine de ekle (Firebase'deki tüm satışlar görünsün)
-                    allDocs.push(doc);
-                  }
-                } catch (e) {
-                  allDocs.push(doc); // Hata olsa bile dokümanı ekle
-                }
-              } else {
-                if (data.created_at) {
-                  const timestamp = data.created_at;
-                  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
-                  if (date >= ninetyDaysAgoCalendar) {
-                    allDocs.push(doc);
-                  } else {
-                    foundOldDate = true;
-                  }
-                } else {
-                  allDocs.push(doc); // Tarih yoksa da ekle (sonradan gösterimde Bilinmeyen olur)
-                }
-              }
-            });
-            
-            lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1];
-            if (foundOldDate || querySnapshot.docs.length < 500) {
-              hasMore = false;
-            }
-          }
+        if (!quiet) showLoading(true);
+        if (replace && realtimeUnsubscribe) {
+          try {
+            realtimeUnsubscribe();
+          } catch (e) {}
+          realtimeUnsubscribe = null;
+          salesOlderFetchChain = Promise.resolve();
         }
-        
-        const querySnapshot = {
-          forEach: (callback) => {
-            allDocs.forEach(callback);
-          }
-        };
-        
-        const sales = [];
-        querySnapshot.forEach((doc) => {
-          const data = doc.data();
-          
-          // Timestamp'i dönüştür; sale_date her zaman DD.MM.YYYY olsun
-          let saleDate = normalizeSaleDateInput(data.sale_date);
-          let saleTime = data.sale_time || '';
-          if (!saleDate && data.created_at) {
-            const timestamp = data.created_at;
-            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
-            saleDate = normalizeDateString(date);
-            saleTime = saleTime || date.toLocaleTimeString('tr-TR');
-          } else if (!saleDate && data.timestamp) {
-            const timestamp = data.timestamp;
-            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
-            saleDate = normalizeDateString(date);
-            saleTime = saleTime || date.toLocaleTimeString('tr-TR');
-          }
-          if (!saleDate && data.sale_date) saleDate = normalizeSaleDateInput(data.sale_date) || 'Bilinmeyen';
-          if (!saleDate) saleDate = 'Bilinmeyen';
-          
-          // Items'ı parse et
-          let items = [];
-          let itemsArray = data.items_array || [];
-          
-          if (data.items) {
-            if (Array.isArray(data.items)) {
-              items = data.items;
-            } else if (typeof data.items === 'string') {
-              // String formatı: "Ürün Adı x2, Ürün Adı 2 x3"
-              items = data.items.split(', ').map(item => {
-                const match = item.match(/(.+) x(\d+)/);
-                if (match) {
-                  return {
-                    product_name: match[1].replace(' (İKRAM)', ''),
-                    quantity: parseInt(match[2]),
-                    isGift: item.includes('(İKRAM)')
-                  };
-                }
-                return { product_name: item, quantity: 1, isGift: false };
-              });
-            }
-          }
-          
-        sales.push({
-            id: doc.id,
-            sale_id: data.sale_id || doc.id,
-            total_amount: data.total_amount || 0,
-            payment_method: data.payment_method || 'Nakit',
-            sale_date: saleDate || 'Bilinmeyen',
-            sale_time: saleTime || '',
-            staff_name: data.staff_name || null,
-            table_name: data.table_name || null,
-            table_type: data.table_type || null,
-            order_source: data.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
-            branch: data.branch || null, // Gece Dönercisi: SANCAK | SEKER
-            items: items,
-            items_array: itemsArray, // Gerçek Firebase verileri
-            itemsText: data.items || 'Ürün bulunamadı',
-            isExpense: data.isExpense === true || data.isExpense === 'true' || data.payment_method === 'Masraf'
-          });
-        });
 
-        // Tarih + saate göre sırala (en yeni satış en üstte)
-        sales.sort((a, b) => {
-          if (a.sale_date && b.sale_date) {
-            const [dayA, monthA, yearA] = a.sale_date.split('.');
-            const [dayB, monthB, yearB] = b.sale_date.split('.');
-            if (dayA && monthA && yearA && dayB && monthB && yearB) {
-              const dateA = new Date(yearA, monthA - 1, dayA);
-              const dateB = new Date(yearB, monthB - 1, dayB);
-              
-              if (a.sale_time) {
-                const [hA, mA, sA] = a.sale_time.split(':');
-                dateA.setHours(parseInt(hA) || 0, parseInt(mA) || 0, parseInt(sA) || 0, 0);
-              }
-              if (b.sale_time) {
-                const [hB, mB, sB] = b.sale_time.split(':');
-                dateB.setHours(parseInt(hB) || 0, parseInt(mB) || 0, parseInt(sB) || 0, 0);
-              }
-              
-              const diff = dateB - dateA;
-              if (diff !== 0) return diff;
-            }
-          }
-          
-          // Tarih/saat yoksa veya eşitse, sale_id'ye göre (büyükten küçüğe) sırala
-          const idA = parseInt(a.sale_id || a.id) || 0;
-          const idB = parseInt(b.sale_id || b.id) || 0;
-          return idB - idA;
-        });
+        const businessDay = getBusinessDayDate();
+        const maxD = snapBusinessMidnight(businessDay);
+        const minD = new Date(maxD);
+        minD.setDate(minD.getDate() - (SALES_INITIAL_BUSINESS_DAYS - 1));
 
-        const currentMonthSales = filterCurrentMonthSales(sales);
-        allSales = currentMonthSales; // Tüm satışları (görünür) sakla - sadece mevcut ay
-        salesDataLoaded = true; // Lazy load: bir kez yüklendi
-        if (!realtimeUnsubscribe) startRealtimeListener(); // Real-time dinleme ilk yüklemeden sonra başlat
+        const sales = await fetchSalesForBusinessDayRange(minD, maxD, { onProgress: onProgress });
+
+        if (replace || !salesDataLoaded) {
+          allSales = sales;
+          pruneAllSalesAfterBusinessCap();
+        } else {
+          mergeSalesIntoAllSales(sales);
+        }
+        salesLoadedOldest = minD;
+        salesLoadedNewest = maxD;
+        salesDataLoaded = true;
+        if (!realtimeUnsubscribe) startRealtimeListener();
         renderCurrentView();
-        updateStats(currentMonthSales);
-        showLoading(false);
+        updateStats(allSales);
+        if (!quiet) showLoading(false);
       } catch (error) {
         console.error('Satış yükleme hatası:', error);
-        showLoading(false);
+        if (!quiet) showLoading(false);
         const container = document.getElementById('salesContainer');
         if (container) {
           container.innerHTML = `
@@ -1566,133 +1889,68 @@
             </div>
           `;
         }
+      } finally {
+        _loadSalesBusy = false;
       }
     }
 
-    // Real-time dinleme - TÜM SATIŞLARI DİNLE (limit yok)
+    // Real-time: sadece son N kayıt (UI donmasını önler); loadSales ile gelen eski aralık allSales içinde kalır, burada id ile birleştirilir
     function startRealtimeListener() {
       if (!db) return;
-      
+
       if (realtimeUnsubscribe) {
         realtimeUnsubscribe();
       }
 
       const salesRef = db.collection('sales');
-      // Real-time listener için tüm satışları dinle (limit yok)
-      // Not: Real-time listener'da pagination yapmak zor olduğu için
-      // İlk yüklemede tüm satışlar yüklenecek, sonra sadece yeni satışlar dinlenecek
-      let query = salesRef;
-      try {
-        query = salesRef.orderBy('sale_date', 'desc');
-      } catch (e) {
-        try {
-          query = salesRef.orderBy('created_at', 'desc');
-        } catch (e2) {
-          query = salesRef;
-        }
-      }
-      
-      // Real-time listener için limit kaldırıldı
-      // Not: Firebase real-time listener'da çok fazla veri olabilir
-      // Bu durumda performans sorunları olabilir, ama tüm verileri görmek için gerekli
-      salesDataLoaded = true;
       let hasReceivedServerSnapshot = false;
-      // Yeni satışlar sadece sunucu snapshot'ında gelir; cache ile güncelleme yapma (01:45 satışı 01:43'te takılı kalıyordu)
-      realtimeUnsubscribe = query.onSnapshot({ includeMetadataChanges: true }, (snapshot) => {
-        const fromServer = !snapshot.metadata.fromCache;
-        if (!fromServer && hasReceivedServerSnapshot) return; // İlk yüklemeden sonra sadece sunucu verisiyle güncelle
-        if (fromServer) hasReceivedServerSnapshot = true;
-        const sales = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          let saleDate = normalizeSaleDateInput(data.sale_date);
-          let saleTime = data.sale_time || '';
-          if (!saleDate && data.created_at) {
-            const timestamp = data.created_at;
-            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
-            saleDate = normalizeDateString(date);
-            saleTime = saleTime || date.toLocaleTimeString('tr-TR');
-          } else if (!saleDate && data.timestamp) {
-            const timestamp = data.timestamp;
-            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
-            saleDate = normalizeDateString(date);
-            saleTime = saleTime || date.toLocaleTimeString('tr-TR');
-          }
-          if (!saleDate) saleDate = 'Bilinmeyen';
-          
-          let items = [];
-          let itemsArray = data.items_array || [];
-          
-          if (data.items) {
-            if (Array.isArray(data.items)) {
-              items = data.items;
-            } else if (typeof data.items === 'string') {
-              items = data.items.split(', ').map(item => {
-                const match = item.match(/(.+) x(\d+)/);
-                if (match) {
-                  return {
-                    product_name: match[1].replace(' (İKRAM)', ''),
-                    quantity: parseInt(match[2]),
-                    isGift: item.includes('(İKRAM)')
-                  };
-                }
-                return { product_name: item, quantity: 1, isGift: false };
-              });
-            }
-          }
-          
-          sales.push({
-            id: doc.id,
-            sale_id: data.sale_id || doc.id,
-            total_amount: data.total_amount || 0,
-            payment_method: data.payment_method || 'Nakit',
-            sale_date: saleDate || 'Bilinmeyen',
-            sale_time: saleTime || '',
-            staff_name: data.staff_name || null,
-            table_name: data.table_name || null,
-            table_type: data.table_type || null,
-            order_source: data.order_source || null, // 'Trendyol', 'Yemeksepeti', or null
-            branch: data.branch || null, // Gece Dönercisi: SANCAK | SEKER
-            items: items,
-            items_array: itemsArray, // Gerçek Firebase verileri
-            itemsText: data.items || 'Ürün bulunamadı',
-            isExpense: data.isExpense === true || data.isExpense === 'true' || data.payment_method === 'Masraf'
-          });
-        });
+      let debounceTimer = null;
+      let triedCreatedAtFallback = false;
 
-        sales.sort((a, b) => {
-          if (!a.sale_date || !b.sale_date) return 0;
-          const [dayA, monthA, yearA] = a.sale_date.split('.');
-          const [dayB, monthB, yearB] = b.sale_date.split('.');
-          if (!dayA || !dayB) return 0;
-          const dateA = new Date(yearA, monthA - 1, dayA);
-          const dateB = new Date(yearB, monthB - 1, dayB);
-          if (a.sale_time) {
-            const [hA, mA, sA] = a.sale_time.split(':');
-            dateA.setHours(parseInt(hA) || 0, parseInt(mA) || 0, parseInt(sA) || 0, 0);
-          }
-          if (b.sale_time) {
-            const [hB, mB, sB] = b.sale_time.split(':');
-            dateB.setHours(parseInt(hB) || 0, parseInt(mB) || 0, parseInt(sB) || 0, 0);
-          }
-          const diff = dateB - dateA;
-          if (diff !== 0) return diff;
-          const idA = parseInt(a.sale_id || a.id) || 0;
-          const idB = parseInt(b.sale_id || b.id) || 0;
-          return idB - idA;
-        });
-
-        const currentMonthSales = filterCurrentMonthSales(sales);
-        allSales = currentMonthSales;
-        updateStats(currentMonthSales);
-        // Satış Geçmişi listesini her snapshot'ta mutlaka güncelle (yeni satış anında görünsün; sekme kontrolüne bırakmıyoruz)
+      function applyListenerSnapshot(snapshot) {
+        const incoming = [];
+        snapshot.forEach((doc) => incoming.push(parseSaleFromDoc(doc)));
+        const byId = new Map(allSales.map((s) => [s.id, s]));
+        incoming.forEach((s) => byId.set(s.id, s));
+        allSales = Array.from(byId.values());
+        sortSalesByDateDesc(allSales);
+        pruneAllSalesAfterBusinessCap();
+        salesDataLoaded = true;
+        updateStats(allSales);
         renderSales(allSales);
         updateSalesDateFilterButton();
         renderCurrentView();
         autoSaveDailyRevenue();
-      }, (error) => {
-        console.error('Real-time listener hatası:', error);
-      });
+      }
+
+      function scheduleApply(snapshot) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          debounceTimer = null;
+          applyListenerSnapshot(snapshot);
+        }, 280);
+      }
+
+      function attachListener(q) {
+        realtimeUnsubscribe = q.onSnapshot({ includeMetadataChanges: true }, (snapshot) => {
+          const fromServer = !snapshot.metadata.fromCache;
+          if (!fromServer && hasReceivedServerSnapshot) return;
+          if (fromServer) hasReceivedServerSnapshot = true;
+          scheduleApply(snapshot);
+        }, (error) => {
+          console.error('Real-time listener hatası:', error);
+          if (!triedCreatedAtFallback && error && error.code === 'failed-precondition') {
+            triedCreatedAtFallback = true;
+            try {
+              if (realtimeUnsubscribe) realtimeUnsubscribe();
+            } catch (e) {}
+            hasReceivedServerSnapshot = false;
+            attachListener(salesRef.orderBy('sale_date', 'desc').limit(REALTIME_RECENT_LIMIT));
+          }
+        });
+      }
+
+      attachListener(salesRef.orderBy('created_at', 'desc').limit(REALTIME_RECENT_LIMIT));
     }
 
     // Tarihi formatla
@@ -1803,6 +2061,15 @@
       return true;
     }
 
+    /** Gece Dönercisi günlük ciro modalı: satışın şube kodu (nakit/kart/online dağılımı şube satırında) */
+    function getSaleBranchCodeForDailyModal(sale) {
+      if (!sale || sale.branch == null || sale.branch === '') return 'OTHER';
+      const b = String(sale.branch);
+      if (b === 'SEKER' || b === '#Şeker' || b === 'Şeker') return 'SEKER';
+      if (b === 'SANCAK' || b === '#Sancak' || b === 'Sancak') return 'SANCAK';
+      return 'OTHER';
+    }
+
     // Satışları render et
     function renderSales(sales) {
       const container = document.getElementById('salesContainer');
@@ -1817,7 +2084,7 @@
 
       // Header ve tarih filtresi butonu
       const filterLabels = {
-        'all': 'Tüm Zamanlar',
+        'all': 'Tümü (aşağı kaydırınca eski yüklenir)',
         'yesterday': 'Dün',
         'week': 'Son 1 Hafta',
         'month': 'Son 1 Ay',
@@ -2052,7 +2319,9 @@
         `;
       });
 
+      html += '<div id="salesLoadMoreSentinel" style="height:1px;width:100%;margin-top:16px;flex-shrink:0;" aria-hidden="true"></div>';
       container.innerHTML = html;
+      setupSalesLoadMoreObserver();
     }
 
     function confirmDeleteSale(btnOrId) {
@@ -2109,7 +2378,7 @@
       if (!label) return;
 
       const filterLabels = {
-        'all': 'Tüm Zamanlar',
+        'all': 'Tümü (aşağı kaydırınca eski yüklenir)',
         'yesterday': 'Dün',
         'week': 'Son 1 Hafta',
         'month': 'Son 1 Ay',
@@ -2124,8 +2393,11 @@
     // Satış geçmişi tarih filtresini değiştir
     function setSalesDateFilter(filter) {
       salesDateFilter = filter;
-      renderSales(allSales);
-      updateSalesDateFilterButton();
+      void (async () => {
+        await ensureSalesForCurrentSalesHistoryFilter();
+        renderSales(allSales);
+        updateSalesDateFilterButton();
+      })();
     }
 
     function setSalesBranchFilter(branch) {
@@ -2162,9 +2434,12 @@
       salesCustomDateRange.start = startDate;
       salesCustomDateRange.end = endDate;
       salesDateFilter = 'custom';
-      renderSales(allSales);
-      updateSalesDateFilterButton();
-      closeSalesDateFilterModal();
+      void (async () => {
+        await ensureSalesLoadedThroughDate(snapBusinessMidnight(startDate));
+        renderSales(allSales);
+        updateSalesDateFilterButton();
+        closeSalesDateFilterModal();
+      })();
     }
 
     // Satış geçmişi tarih filtresi modal'ını aç/kapa
@@ -2473,9 +2748,10 @@
     }
 
     function showLoading(show) {
-      const loader = document.getElementById('loader');
-      if (loader) {
-        loader.style.display = show ? 'flex' : 'none';
+      const overlay = document.getElementById('dataLoadingOverlay');
+      if (overlay) {
+        overlay.style.display = show ? 'flex' : 'none';
+        overlay.setAttribute('aria-busy', show ? 'true' : 'false');
       }
     }
 
@@ -2530,8 +2806,16 @@
       if (cancelsContainer) cancelsContainer.style.display = activeTab === 'cancels' ? 'block' : 'none';
       
       if (activeTab === 'sales') {
-        renderSales(allSales);
-        updateSalesDateFilterButton();
+        if (salesDataLoaded) {
+          void (async () => {
+            await ensureSalesForCurrentSalesHistoryFilter();
+            renderSales(allSales);
+            updateSalesDateFilterButton();
+          })();
+        } else {
+          renderSales(allSales);
+          updateSalesDateFilterButton();
+        }
       } else if (activeTab === 'reports') {
         renderReports();
       } else if (activeTab === 'staff') {
@@ -3027,14 +3311,20 @@
       customDateRange.start = startDate;
       customDateRange.end = endDate;
       reportDateFilter = 'custom';
-      renderReports();
-      closeDateFilterModal();
+      void (async () => {
+        await ensureSalesLoadedThroughDate(snapBusinessMidnight(startDate));
+        renderReports();
+        closeDateFilterModal();
+      })();
     }
 
     // Tarih filtresini değiştir
     function setReportDateFilter(filter) {
       reportDateFilter = filter;
-      renderReports();
+      void (async () => {
+        await ensureSalesForCurrentReportFilter();
+        renderReports();
+      })();
     }
 
     function setReportBranchFilter(branch) {
@@ -3072,44 +3362,65 @@
     }
 
     // Günlük ciro detayları modalını göster
-    function showDailyRevenueModal() {
+    async function showDailyRevenueModal() {
       const modal = document.getElementById('dailyRevenueModal');
       if (!modal) return;
+      await ensureSalesForCurrentReportFilter();
 
       // Seçilen zaman dilimindeki satışları al (şube filtresi uygula)
-      let reportSales = allSales.filter(sale => 
+      let reportSales = allSales.filter(sale =>
         !sale.isExpense && sale.payment_method !== 'Masraf'
       );
       reportSales = filterSalesByDate(reportSales);
       if (isGeceDonercisi && reportBranchFilter !== 'all') {
-        reportSales = reportSales.filter(s => s.branch === reportBranchFilter);
+        reportSales = reportSales.filter(s => saleMatchesBranch(s, reportBranchFilter));
       }
 
-      // Günlere göre grupla
+      const useGeceBranchBreakdown = isGeceDonercisi && reportBranchFilter === 'all';
+
+      function emptyBranchBucket() {
+        return { total: 0, online: 0, card: 0, cash: 0 };
+      }
+
+      function newDayStat(dateLabel) {
+        if (useGeceBranchBreakdown) {
+          return {
+            date: dateLabel,
+            online: 0,
+            card: 0,
+            cash: 0,
+            total: 0,
+            byBranch: {
+              SEKER: emptyBranchBucket(),
+              SANCAK: emptyBranchBucket(),
+              OTHER: emptyBranchBucket()
+            }
+          };
+        }
+        return { date: dateLabel, online: 0, card: 0, cash: 0, total: 0 };
+      }
+
+      function addPaymentToBucket(bucket, saleRevenue, isOnline, isCash, isCard) {
+        bucket.total += saleRevenue;
+        if (isOnline) bucket.online += saleRevenue;
+        else if (isCash) bucket.cash += saleRevenue;
+        else if (isCard) bucket.card += saleRevenue;
+      }
+
       const dailyStats = {};
-      let unknownDateStats = {
-        date: 'Tarih Bilinmeyen',
-        online: 0,
-        card: 0,
-        cash: 0,
-        total: 0
-      };
-      
-      // Toplam kontrolü için
+      let unknownDateStats = newDayStat('Tarih Bilinmeyen');
+
       let modalTotal = 0;
-      
+
       reportSales.forEach(sale => {
         const saleRevenue = calculateSaleRevenue(sale);
-        modalTotal += saleRevenue; // Tüm satışları topla
-        // İŞ GÜNÜ hesapla (00:00–03:59 arası satışlar önceki güne ait, gece 04:00)
+        modalTotal += saleRevenue;
         const saleBusinessDay = getSaleBusinessDay(sale.sale_date, sale.sale_time);
         const saleDate = saleBusinessDay || sale.sale_date;
-        
-        // Ödeme yöntemine göre dağıt
+
         const paymentMethod = sale.payment_method || '';
         const orderSource = sale.order_source || '';
-        
-        // Online: payment_method === 'Online' veya order_source === 'Trendyol' || 'Yemeksepeti' || 'Migros Yemek'
+
         const isOnline =
           paymentMethod === 'Online' ||
           orderSource === 'Trendyol' ||
@@ -3117,39 +3428,23 @@
           orderSource === 'Migros Yemek' ||
           orderSource === 'MigrosYemek' ||
           orderSource === 'Migros';
-        // Nakit: payment_method === 'Nakit' ve online değil
         const isCash = !isOnline && paymentMethod === 'Nakit';
-        // Diğerleri: Kart (Online değil, Nakit değil, Masraf değil)
         const isCard = !isOnline && !isCash && paymentMethod !== 'Masraf' && !sale.isExpense;
-        
-        // Tarihi olmayan veya 'Bilinmeyen' olan satışları ayrı topla
+
+        let day;
         if (!saleDate || saleDate === 'Bilinmeyen') {
-          unknownDateStats.total += saleRevenue;
-          if (isOnline) unknownDateStats.online += saleRevenue;
-          else if (isCash) unknownDateStats.cash += saleRevenue;
-          else if (isCard) unknownDateStats.card += saleRevenue;
-          return;
+          day = unknownDateStats;
+        } else {
+          if (!dailyStats[saleDate]) dailyStats[saleDate] = newDayStat(saleDate);
+          day = dailyStats[saleDate];
         }
 
-        if (!dailyStats[saleDate]) {
-          dailyStats[saleDate] = {
-            date: saleDate,
-            online: 0,
-            card: 0,
-            cash: 0,
-            total: 0
-          };
-        }
+        addPaymentToBucket(day, saleRevenue, isOnline, isCash, isCard);
 
-        dailyStats[saleDate].total += saleRevenue;
-
-        // Ödeme yöntemine göre dağıt (yukarıda tanımlanan değişkenleri kullan)
-        if (isOnline) {
-          dailyStats[saleDate].online += saleRevenue;
-        } else if (isCash) {
-          dailyStats[saleDate].cash += saleRevenue;
-        } else if (isCard) {
-          dailyStats[saleDate].card += saleRevenue;
+        if (useGeceBranchBreakdown && day.byBranch) {
+          const code = getSaleBranchCodeForDailyModal(sale);
+          const br = day.byBranch[code] || day.byBranch.OTHER;
+          addPaymentToBucket(br, saleRevenue, isOnline, isCash, isCard);
         }
       });
 
@@ -3187,7 +3482,74 @@
         } else if (reportDateFilter === 'all') {
           periodTitle = 'Tüm Zamanlar - Günlük Ciro Detayları';
         }
-        
+
+        const fmtMoneyModal = (n) => '₺' + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+        function branchPaymentBlockModal(label, emoji, br) {
+          if (!br) return '';
+          return (
+            '<div style="margin-top: 10px; padding: 10px 12px; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-radius: 10px; border: 1px solid #e2e8f0;">' +
+            '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
+            '<div style="font-size: 12px; font-weight: 800; color: #334155;">' + emoji + ' ' + label + '</div>' +
+            '<div style="font-size: 13px; font-weight: 800; color: #059669;">' + fmtMoneyModal(br.total) + '</div>' +
+            '</div>' +
+            '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;">' +
+            '<div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 6px; text-align: center;">' +
+            '<div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 3px; text-transform: uppercase;">Nakit</div>' +
+            '<div style="font-size: 12px; font-weight: 800; color: #1e293b;">' + fmtMoneyModal(br.cash) + '</div></div>' +
+            '<div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 6px; text-align: center;">' +
+            '<div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 3px; text-transform: uppercase;">Kart</div>' +
+            '<div style="font-size: 12px; font-weight: 800; color: #1e293b;">' + fmtMoneyModal(br.card) + '</div></div>' +
+            '<div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 6px; text-align: center;">' +
+            '<div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 3px; text-transform: uppercase;">Online</div>' +
+            '<div style="font-size: 12px; font-weight: 800; color: #1e293b;">' + fmtMoneyModal(br.online) + '</div></div>' +
+            '</div></div>'
+          );
+        }
+
+        let daysRowsHtml = '';
+        if (sortedDays.length > 0) {
+          daysRowsHtml = sortedDays.map(day => {
+            const dateColor = day.date === 'Tarih Bilinmeyen' ? '#dc2626' : '#374151';
+            const dayHeader =
+              '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #f3f4f6;">' +
+              '<div style="font-size: 13px; font-weight: 700; color: ' + dateColor + ';">' + day.date + '</div>' +
+              '<div style="font-size: 15px; font-weight: 800; color: #059669;">' + fmtMoneyModal(day.total) + '</div>' +
+              '</div>';
+
+            if (useGeceBranchBreakdown && day.byBranch) {
+              let inner =
+                dayHeader +
+                '<div style="font-size: 10px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px;">Şube bazında ciro</div>' +
+                branchPaymentBlockModal('Şeker Şubesi', '🍬', day.byBranch.SEKER) +
+                branchPaymentBlockModal('Sancak Şubesi', '🚩', day.byBranch.SANCAK);
+              if (day.byBranch.OTHER && day.byBranch.OTHER.total > 0.005) {
+                inner += branchPaymentBlockModal('Şube atanmamış / diğer', '📍', day.byBranch.OTHER);
+              }
+              return '<div style="background: #ffffff; border-radius: 8px; padding: 12px; border: 1px solid #e5e7eb; margin-bottom: 8px;">' + inner + '</div>';
+            }
+
+            const flatGrid =
+              '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;">' +
+              '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 8px; text-align: center;">' +
+              '<div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">Kart</div>' +
+              '<div style="font-size: 13px; font-weight: 800; color: #1e293b;">' + fmtMoneyModal(day.card) + '</div></div>' +
+              '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 8px; text-align: center;">' +
+              '<div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">Nakit</div>' +
+              '<div style="font-size: 13px; font-weight: 800; color: #1e293b;">' + fmtMoneyModal(day.cash) + '</div></div>' +
+              '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 8px; text-align: center;">' +
+              '<div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">Online</div>' +
+              '<div style="font-size: 13px; font-weight: 800; color: #1e293b;">' + fmtMoneyModal(day.online) + '</div></div>' +
+              '</div>';
+            return '<div style="background: #ffffff; border-radius: 8px; padding: 12px; border: 1px solid #e5e7eb; margin-bottom: 8px;">' + dayHeader + flatGrid + '</div>';
+          }).join('');
+        } else {
+          daysRowsHtml =
+            '<div style="text-align: center; padding: 40px 20px; color: #64748b;">' +
+            '<div style="font-size: 32px; margin-bottom: 12px;">📊</div>' +
+            '<div style="font-size: 14px; font-weight: 600;">Bu zaman diliminde satış bulunamadı</div></div>';
+        }
+
         modalContent.innerHTML = `
           <!-- Şık Header ve Kapatma Butonu -->
           <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 20px 24px; border-radius: 0; position: sticky; top: 0; z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
@@ -3197,6 +3559,7 @@
                 <div style="font-size: 13px; color: rgba(255,255,255,0.9); font-weight: 500;">
                   Toplam: <span style="font-weight: 700; font-size: 15px;">₺${modalTotal.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}</span> • ${sortedDays.length} gün
                 </div>
+                ${useGeceBranchBreakdown ? '<div style="font-size: 12px; color: rgba(255,255,255,0.88); font-weight: 600; margin-top: 8px; line-height: 1.35;">Şeker ve Sancak ayrı satırlar • Her şube: nakit · kart · online (satış kaydındaki ödeme bilgisine göre)</div>' : ''}
               </div>
               <button onclick="closeDailyRevenueModal()" style="
                 background: rgba(255,255,255,0.2);
@@ -3223,33 +3586,7 @@
           
           <div style="padding: 16px; overflow-y: auto; max-height: calc(100vh - 180px); -webkit-overflow-scrolling: touch;">
             <div style="display: flex; flex-direction: column; gap: 8px;">
-              ${sortedDays.length > 0 ? sortedDays.map(day => `
-                <div style="background: #ffffff; border-radius: 8px; padding: 12px; border: 1px solid #e5e7eb; margin-bottom: 8px;">
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #f3f4f6;">
-                    <div style="font-size: 13px; font-weight: 700; color: ${day.date === 'Tarih Bilinmeyen' ? '#dc2626' : '#374151'};">${day.date}</div>
-                    <div style="font-size: 15px; font-weight: 800; color: #059669;">₺${day.total.toFixed(2)}</div>
-                  </div>
-                  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;">
-                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 8px; text-align: center;">
-                      <div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">Kart</div>
-                      <div style="font-size: 13px; font-weight: 800; color: #1e293b;">₺${day.card.toFixed(2)}</div>
-                    </div>
-                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 8px; text-align: center;">
-                      <div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">Nakit</div>
-                      <div style="font-size: 13px; font-weight: 800; color: #1e293b;">₺${day.cash.toFixed(2)}</div>
-                    </div>
-                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 8px; text-align: center;">
-                      <div style="font-size: 9px; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.3px;">Online</div>
-                      <div style="font-size: 13px; font-weight: 800; color: #1e293b;">₺${day.online.toFixed(2)}</div>
-                    </div>
-                  </div>
-                </div>
-              `).join('') : `
-                <div style="text-align: center; padding: 40px 20px; color: #64748b;">
-                  <div style="font-size: 32px; margin-bottom: 12px;">📊</div>
-                  <div style="font-size: 14px; font-weight: 600;">Bu zaman diliminde satış bulunamadı</div>
-                </div>
-              `}
+              ${daysRowsHtml}
             </div>
           </div>
           
@@ -3602,10 +3939,27 @@
       await saveDailyRevenue(yesterdayStr);
     }
 
+    /** Gece Dönercisi: şube filtresi yalnızca Detaylı Raporlama ekranında (navbar’da değil) */
+    function getReportBranchToolbarHtml() {
+      if (!isGeceDonercisi) return '';
+      const br = reportBranchFilter;
+      return (
+        '<div class="report-branch-wrap report-branch-in-reports" id="reportBranchSwitch">' +
+        '<div class="report-branch-segmented" role="group" aria-label="Şube seçimi">' +
+        '<button type="button" class="report-branch-opt' + (br === 'all' ? ' active' : '') + '" data-branch="all" onclick="setReportBranchFilter(\'all\')">Tümü</button>' +
+        '<button type="button" class="report-branch-opt' + (br === 'SANCAK' ? ' active' : '') + '" data-branch="SANCAK" onclick="setReportBranchFilter(\'SANCAK\')">SANCAK</button>' +
+        '<button type="button" class="report-branch-opt' + (br === 'SEKER' ? ' active' : '') + '" data-branch="SEKER" onclick="setReportBranchFilter(\'SEKER\')">ŞEKER</button>' +
+        '</div></div>'
+      );
+    }
+
     // Detaylı Raporlama render et
     async function renderReports() {
       const container = document.getElementById('reportsContainer');
       if (!container) return;
+
+      const minR = getReportFilterMinBusinessDay();
+      if (minR) await ensureSalesLoadedThroughDate(minR);
 
       // Modal'ı ekle (eğer yoksa)
       addDailyRevenueModal();
@@ -3620,13 +3974,14 @@
       }
 
       if (reportSales.length === 0) {
-        container.innerHTML = `
-          <div class="empty-state">
-            <div class="empty-icon">📊</div>
-            <h3>Henüz veri yok</h3>
-            <p>Satış yapıldıkça raporlar oluşturulacak</p>
-          </div>
-        `;
+        container.innerHTML =
+          '<div class="reports-container">' +
+          getReportBranchToolbarHtml() +
+          '<div class="empty-state">' +
+          '<div class="empty-icon">📊</div>' +
+          '<h3>Henüz veri yok</h3>' +
+          '<p>Satış yapıldıkça raporlar oluşturulacak</p>' +
+          '</div></div>';
         return;
       }
 
@@ -3777,7 +4132,7 @@
       }
 
       const filterLabels = {
-        'all': 'Tüm Zamanlar',
+        'all': 'Tümü (aşağı kaydırınca eski yüklenir)',
         'yesterday': 'Dün',
         'week': 'Son 1 Hafta',
         'month': 'Son 1 Ay',
@@ -3802,7 +4157,10 @@
       } else if (reportDateFilter === 'custom' && customDateRange.start && customDateRange.end) {
         periodInfo = `${customDateRange.start.toLocaleDateString('tr-TR')} - ${customDateRange.end.toLocaleDateString('tr-TR')}`;
       } else {
-        periodInfo = 'Tüm Zamanlar';
+        periodInfo =
+          salesLoadedOldest && salesLoadedNewest
+            ? `${salesLoadedOldest.toLocaleDateString('tr-TR')} – ${salesLoadedNewest.toLocaleDateString('tr-TR')} (yüklü)`
+            : 'Yüklü aralık';
       }
       if (isGeceDonercisi && reportBranchFilter !== 'all') {
         periodInfo += ` • ${reportBranchFilter === 'SEKER' ? 'ŞEKER' : reportBranchFilter}`;
@@ -3810,6 +4168,7 @@
 
       let html = `
         <div class="reports-container">
+          ${getReportBranchToolbarHtml()}
           <div class="reports-header">
             <div>
               <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 4px; flex-wrap: nowrap;">
@@ -5700,9 +6059,11 @@
     }
 
     function openManagementOverlay() {
+      closeNavAppDrawer();
       const overlay = document.getElementById('managementOverlay');
       if (!overlay) return;
       overlay.style.display = 'flex';
+      document.body.classList.add('management-fullpage-open');
       openManagementSection('home');
     }
 
@@ -5710,6 +6071,7 @@
       const overlay = document.getElementById('managementOverlay');
       if (!overlay) return;
       overlay.style.display = 'none';
+      document.body.classList.remove('management-fullpage-open');
     }
 
     async function openManagementSection(section) {
@@ -6426,7 +6788,7 @@
         staffDeleted = newDeleted;
 
         selectedStaffForMerge.delete(staffName);
-        await loadSales();
+        await loadSales({ replace: true });
         if (activeTab === 'staff') renderStaffDetails();
         showLoading(false);
         showToast(updatedCount > 0 ? 'success' : 'error',
@@ -6592,7 +6954,7 @@
         staffDeleted = existingDeleted;
 
         selectedStaffForMerge.clear();
-        await loadSales();
+        await loadSales({ replace: true });
         if (activeTab === 'staff') renderStaffDetails();
 
         showLoading(false);
@@ -6994,11 +7356,20 @@
           if (ring) ring.style.strokeDashoffset = '0';
           if (pctEl) pctEl.textContent = '%100';
           setTimeout(function() {
-            runAnalysisByType(selectedAnalysisType, analysisDateRange.start, analysisDateRange.end);
-            var lm = document.getElementById('analysisLoadingModal');
-            if (lm) lm.style.display = 'none';
-            var am = document.getElementById('analysisModal');
-            if (am) { am.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+            void (async function() {
+              try {
+                if (analysisDateRange && analysisDateRange.start) {
+                  await ensureSalesLoadedThroughDate(snapBusinessMidnight(analysisDateRange.start));
+                }
+              } catch (e) {
+                console.warn('Analiz ön yükleme:', e);
+              }
+              runAnalysisByType(selectedAnalysisType, analysisDateRange.start, analysisDateRange.end);
+              var lm = document.getElementById('analysisLoadingModal');
+              if (lm) lm.style.display = 'none';
+              var am = document.getElementById('analysisModal');
+              if (am) { am.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+            })();
           }, 450);
           return;
         }
@@ -8250,9 +8621,15 @@
     window.addDailyRevenueModal = addDailyRevenueModal;
     window.showAnalysisModal = showAnalysisModal;
     window.closeAnalysisModal = closeAnalysisModal;
-    window.showDailyRevenueModal = showDailyRevenueModal;
-    window.closeDailyRevenueModal = closeDailyRevenueModal;
+    window.toggleNavAppDrawer = toggleNavAppDrawer;
+    window.closeNavAppDrawer = closeNavAppDrawer;
     window.logout = function() {
+      try {
+        closeNavAppDrawer();
+      } catch (e) {}
+      try {
+        closeManagementOverlay();
+      } catch (e) {}
       sessionStorage.removeItem('adminAuthenticated');
       isAuthenticated = false;
       if (realtimeUnsubscribe) {
@@ -8295,30 +8672,35 @@
       box-sizing: border-box;
     }
 
+    html {
+      height: 100%;
+      margin: 0;
+      -webkit-text-size-adjust: 100%;
+    }
+
     html, body {
       width: 100%;
+      max-width: 100%;
       overflow-x: hidden;
       -webkit-overflow-scrolling: touch;
     }
 
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background: radial-gradient(circle at top, #ffffff 0, #f3f4f6 55%, #e5e7eb 100%);
-      min-height: 100vh;
-      padding: 24px;
+      background: #ececee;
+      min-height: 100%;
+      min-height: 100dvh;
+      margin: 0;
+      padding: 0;
       color: var(--text-main);
-      display: flex;
-      justify-content: center;
-      align-items: stretch;
+      display: block;
     }
 
     body.login-view {
       padding: 0;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
+      min-height: 100%;
       min-height: 100dvh;
-      background: linear-gradient(165deg, #0f172a 0%, #1e293b 45%, #0f172a 100%);
+      background: #0b0b0c;
       overflow-x: hidden;
     }
 
@@ -8339,13 +8721,17 @@
 
     .container {
       width: 100%;
-      max-width: 1240px;
+      max-width: 100%;
+      min-height: 100vh;
+      min-height: 100dvh;
+      margin: 0;
       background: var(--bg-container);
-      border-radius: 20px;
-      padding: 20px 22px 24px;
-      box-shadow: var(--shadow-soft);
-      border: 1px solid var(--border-subtle);
-      animation: fadeIn 0.35s ease-out;
+      border-radius: 0;
+      padding: 0;
+      box-shadow: none;
+      border: none;
+      animation: fadeIn 0.28s ease-out;
+      box-sizing: border-box;
     }
 
     @keyframes fadeIn {
@@ -8359,7 +8745,12 @@
 
     /* Header kaldırıldı - navbar kullanılıyor */
 
-    /* Login — tam ekran, mobil uygulama tarzı, elit ve modern */
+    /* Splash bitene kadar giriş formu gösterilmesin (kısa flash önlenir) */
+    #loginSection {
+      display: none;
+    }
+
+    /* Login — sade kurumsal tam ekran */
     .pin-section {
       width: 100%;
       min-height: 100vh;
@@ -8367,10 +8758,10 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 24px;
+      padding: 24px 20px;
       box-sizing: border-box;
       position: relative;
-      animation: loginFadeIn 0.5s ease-out;
+      animation: loginFadeIn 0.35s ease-out;
     }
 
     @keyframes loginFadeIn {
@@ -8384,98 +8775,38 @@
       align-items: center;
       justify-content: center;
       width: 100%;
-      max-width: 420px;
+      max-width: 400px;
       gap: 0;
-    }
-
-    .login-brand-title {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      font-size: clamp(1.85rem, 6.5vw, 3.25rem);
-      font-weight: 800;
-      letter-spacing: 0.38em;
-      color: #f8fafc;
-      margin: 0 0 36px 0;
-      padding: 0 8px;
-      text-transform: uppercase;
-      text-align: center;
-      text-shadow: 0 0 48px rgba(251, 191, 36, 0.35), 0 0 24px rgba(251, 191, 36, 0.2), 0 2px 24px rgba(0, 0, 0, 0.4);
-      line-height: 1.1;
-      animation: loginBrandReveal 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-      opacity: 0;
-    }
-
-    @keyframes loginBrandReveal {
-      0% {
-        opacity: 0;
-        transform: translateY(-24px) scale(0.96);
-        letter-spacing: 0.6em;
-        filter: blur(6px);
-      }
-      40% {
-        opacity: 1;
-        filter: blur(0);
-      }
-      100% {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-        letter-spacing: 0.38em;
-        filter: blur(0);
-      }
     }
 
     .login-card {
       position: relative;
       z-index: 1;
       width: 100%;
-      max-width: 380px;
-      background: rgba(255, 255, 255, 0.06);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 28px;
-      padding: 40px 32px;
-      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.1) inset;
+      max-width: 360px;
+      background: #121214;
+      border: 1px solid #2a2a2e;
+      border-radius: 12px;
+      padding: 36px 28px 32px;
       text-align: center;
-      animation: loginCardIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    }
-
-    @keyframes loginCardIn {
-      from {
-        opacity: 0;
-        transform: scale(0.96) translateY(20px);
-      }
-      to {
-        opacity: 1;
-        transform: scale(1) translateY(0);
-      }
-    }
-
-    .pin-section::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 60%;
-      background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(251, 191, 36, 0.06) 0%, transparent 60%);
-      pointer-events: none;
+      box-shadow: none;
     }
 
     .login-header {
-      margin-bottom: 32px;
+      margin-bottom: 28px;
     }
 
     .login-logo-wrap {
-      width: 80px;
-      height: 80px;
-      margin: 0 auto 20px;
-      border-radius: 20px;
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 16px;
+      border-radius: 10px;
       overflow: hidden;
-      background: rgba(255, 255, 255, 0.08);
+      background: #1a1a1d;
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      border: 1px solid #2e2e32;
     }
 
     .login-logo {
@@ -8486,19 +8817,19 @@
     }
 
     .login-title {
-      font-size: 1.5rem;
-      font-weight: 700;
-      color: #f8fafc;
-      margin: 0 0 6px;
+      font-size: 1.0625rem;
+      font-weight: 600;
+      color: #fafafa;
+      margin: 0 0 4px;
       letter-spacing: -0.02em;
     }
 
     .login-subtitle {
-      font-size: 0.9rem;
-      color: rgba(248, 250, 252, 0.6);
+      font-size: 0.8125rem;
+      color: #737373;
       font-weight: 500;
       margin: 0;
-      letter-spacing: 0.02em;
+      letter-spacing: 0;
     }
 
     .pin-form {
@@ -8506,49 +8837,49 @@
     }
 
     .pin-section .input-group {
-      margin-bottom: 20px;
+      margin-bottom: 18px;
     }
 
     .pin-section .input-label {
       display: block;
-      font-size: 0.8rem;
+      font-size: 0.6875rem;
       font-weight: 600;
-      color: rgba(248, 250, 252, 0.8);
-      margin-bottom: 10px;
-      letter-spacing: 0.04em;
+      color: #a3a3a3;
+      margin-bottom: 8px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
     }
 
     .pin-section .pin-input {
-      padding: 16px 20px;
-      font-size: 1.25rem;
-      border-radius: 14px;
+      padding: 14px 16px;
+      font-size: 1.125rem;
+      border-radius: 8px;
       width: 100%;
       box-sizing: border-box;
       text-align: center;
       font-weight: 600;
-      letter-spacing: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      background: rgba(255, 255, 255, 0.06);
-      color: #f8fafc;
-      transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+      letter-spacing: 0.35em;
+      border: 1px solid #2e2e32;
+      background: #0b0b0c;
+      color: #fafafa;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
 
     .pin-section .pin-input::placeholder {
-      color: rgba(248, 250, 252, 0.35);
+      color: #525252;
     }
 
     .pin-section .pin-input:focus {
       outline: none;
-      border-color: rgba(251, 191, 36, 0.5);
-      box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.15);
-      background: rgba(255, 255, 255, 0.08);
+      border-color: #525252;
+      box-shadow: 0 0 0 1px #404040;
     }
 
     .login-options {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 24px;
+      margin-bottom: 20px;
       flex-wrap: wrap;
       gap: 10px;
     }
@@ -8556,83 +8887,83 @@
     .login-remember {
       display: flex;
       align-items: center;
-      gap: 10px;
-      font-size: 0.85rem;
-      color: rgba(248, 250, 252, 0.7);
+      gap: 8px;
+      font-size: 0.8125rem;
+      color: #a3a3a3;
       cursor: pointer;
       user-select: none;
     }
 
     .login-remember input {
-      width: 18px;
-      height: 18px;
-      accent-color: #fbbf24;
+      width: 16px;
+      height: 16px;
+      accent-color: #fafafa;
       cursor: pointer;
       flex-shrink: 0;
     }
 
     .login-change-pin {
-      font-size: 0.8rem;
-      color: rgba(251, 191, 36, 0.95);
+      font-size: 0.75rem;
+      color: #a3a3a3;
       font-weight: 500;
       cursor: pointer;
       background: none;
       border: none;
       padding: 0;
-      transition: color 0.2s, opacity 0.2s;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      transition: color 0.15s ease;
     }
 
     .login-change-pin:hover {
-      color: #fcd34d;
-      opacity: 0.9;
+      color: #d4d4d4;
     }
 
     .pin-section .pin-btn {
-      padding: 16px 24px;
-      border-radius: 14px;
+      padding: 14px 20px;
+      border-radius: 8px;
       border: none;
-      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-      color: #0f172a;
-      font-size: 1rem;
-      font-weight: 700;
+      background: #fafafa;
+      color: #0a0a0a;
+      font-size: 0.875rem;
+      font-weight: 600;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
       width: 100%;
-      transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
-      box-shadow: 0 4px 20px rgba(251, 191, 36, 0.35);
+      transition: opacity 0.15s ease, background 0.15s ease;
     }
 
     .pin-section .pin-btn:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 6px 28px rgba(251, 191, 36, 0.45);
+      background: #e5e5e5;
     }
 
     .pin-section .pin-btn:active {
-      transform: translateY(0);
+      opacity: 0.92;
     }
 
     .login-footer {
-      margin-top: 28px;
-      padding-top: 20px;
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid #2a2a2e;
     }
 
     .login-footer-text {
-      font-size: 0.75rem;
-      color: rgba(248, 250, 252, 0.45);
+      font-size: 0.6875rem;
+      color: #525252;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
+      font-weight: 500;
     }
 
     .login-footer-text svg {
-      width: 14px;
-      height: 14px;
-      color: rgba(248, 250, 252, 0.45);
+      width: 12px;
+      height: 12px;
+      color: #525252;
       flex-shrink: 0;
     }
 
@@ -8812,17 +9143,12 @@
     }
 
     @media (max-width: 480px) {
-      .login-brand-title {
-        font-size: 1.45rem;
-        letter-spacing: 0.22em;
-        margin-bottom: 28px;
-      }
       .login-card {
-        padding: 32px 24px;
-        border-radius: 24px;
+        padding: 28px 20px 24px;
+        border-radius: 10px;
       }
       .login-title {
-        font-size: 1.35rem;
+        font-size: 1rem;
       }
     }
 
@@ -8833,27 +9159,43 @@
 
     .dashboard.active {
       display: block;
+      padding: 0 16px 24px;
+      box-sizing: border-box;
     }
 
-    /* Modern Navbar */
+    /* Modern Navbar — tek satır: başlık (sol) + menü (sağ üst) */
     .admin-navbar {
       position: sticky;
       top: 0;
       z-index: 100;
       background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
       border-bottom: 2px solid var(--primary, #f97316);
-      padding: 12px 20px;
+      padding: 10px 16px 10px 18px;
       margin: 0;
       box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
       backdrop-filter: blur(10px);
+    }
+
+    .dashboard.active > .admin-navbar {
+      margin-left: -16px;
+      margin-right: -16px;
+      padding: 10px 12px 10px 20px;
+      width: calc(100% + 32px);
+      max-width: none;
+      box-sizing: border-box;
     }
 
     .navbar-content {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 12px;
       max-width: 100%;
       margin: 0 auto;
+    }
+
+    .admin-navbar .navbar-subtitle {
+      display: none !important;
     }
 
     .navbar-brand {
@@ -8861,6 +9203,7 @@
       align-items: center;
       gap: 12px;
       flex: 1;
+      min-width: 0;
     }
 
     .navbar-logo {
@@ -8892,12 +9235,15 @@
     }
 
     .navbar-title {
-      font-size: 18px;
+      font-size: 17px;
       font-weight: 800;
       color: #1f2937;
-      line-height: 1.2;
+      line-height: 1.25;
       margin: 0;
       letter-spacing: -0.3px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .navbar-subtitle {
@@ -8925,6 +9271,264 @@
       align-items: center;
       gap: 10px;
       flex-wrap: wrap;
+    }
+
+    .navbar-actions-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0;
+      flex-wrap: nowrap;
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+
+    /* Sağ üst hamburger — menü */
+    .nav-drawer-toggle {
+      flex-shrink: 0;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      background: linear-gradient(165deg, #ffffff 0%, #f1f5f9 100%);
+      color: #0f172a;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: border-color 0.2s ease, box-shadow 0.25s ease, transform 0.2s ease, background 0.2s ease;
+      box-shadow: 0 2px 10px rgba(15, 23, 42, 0.07), 0 0 0 1px rgba(255, 255, 255, 0.8) inset;
+    }
+
+    .nav-drawer-toggle:hover {
+      border-color: rgba(249, 115, 22, 0.55);
+      box-shadow: 0 6px 20px rgba(249, 115, 22, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+      transform: translateY(-1px);
+    }
+
+    .nav-drawer-toggle:active {
+      transform: translateY(0);
+    }
+
+    .nav-drawer-toggle-inner {
+      width: 20px;
+      height: 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: stretch;
+    }
+
+    .nav-drawer-bar {
+      display: block;
+      height: 2px;
+      width: 100%;
+      border-radius: 2px;
+      background: currentColor;
+      transform-origin: center;
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
+    }
+
+    .nav-drawer-toggle.is-open .nav-drawer-bar:nth-child(1) {
+      transform: translateY(6px) rotate(45deg);
+    }
+
+    .nav-drawer-toggle.is-open .nav-drawer-bar:nth-child(2) {
+      opacity: 0;
+      transform: scaleX(0);
+    }
+
+    .nav-drawer-toggle.is-open .nav-drawer-bar:nth-child(3) {
+      transform: translateY(-6px) rotate(-45deg);
+    }
+
+    /* Sağdan kayan menü */
+    .nav-app-drawer {
+      position: fixed;
+      inset: 0;
+      z-index: 280;
+      pointer-events: none;
+      visibility: hidden;
+      transition: visibility 0s linear 0.35s;
+    }
+
+    .nav-app-drawer.is-open {
+      pointer-events: auto;
+      visibility: visible;
+      transition-delay: 0s;
+    }
+
+    .nav-app-drawer-backdrop {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(105deg, rgba(2, 6, 23, 0.45) 0%, rgba(15, 23, 42, 0.62) 45%, rgba(30, 58, 138, 0.35) 100%);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      opacity: 0;
+      transition: opacity 0.34s ease;
+    }
+
+    .nav-app-drawer.is-open .nav-app-drawer-backdrop {
+      opacity: 1;
+    }
+
+    .nav-app-drawer-panel {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: min(340px, 92vw);
+      height: 100%;
+      max-height: 100dvh;
+      background: linear-gradient(195deg, #0b1220 0%, #1e293b 12%, #f8fafc 12%, #ffffff 42%, #f1f5f9 100%);
+      box-shadow:
+        -20px 0 60px rgba(2, 6, 23, 0.38),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+      border-left: none;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.36s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .nav-app-drawer.is-open .nav-app-drawer-panel {
+      transform: translateX(0);
+    }
+
+    .nav-app-drawer-header {
+      flex-shrink: 0;
+      padding: 22px 18px 18px 22px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: none;
+      background: linear-gradient(135deg, #020617 0%, #0f172a 42%, #1e3a8a 88%, rgba(249, 115, 22, 0.55) 165%);
+      color: #fff;
+      box-shadow: 0 12px 40px rgba(2, 6, 23, 0.35);
+    }
+
+    .nav-app-drawer-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: -0.45px;
+      line-height: 1.15;
+    }
+
+    .nav-app-drawer-caption {
+      margin: 8px 0 0 0;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(248, 250, 252, 0.78);
+    }
+
+    .nav-app-drawer-close {
+      flex-shrink: 0;
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      background: linear-gradient(160deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.06) 100%);
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    }
+
+    .nav-app-drawer-close:hover {
+      background: linear-gradient(160deg, rgba(255, 255, 255, 0.32) 0%, rgba(255, 255, 255, 0.12) 100%);
+      transform: scale(1.05);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    }
+
+    .nav-app-drawer-body {
+      padding: 22px 18px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      flex: 1;
+      -webkit-overflow-scrolling: touch;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.65) 0%, #f1f5f9 55%, #e2e8f0 100%);
+    }
+
+    .nav-app-drawer-body .nav-drawer-action {
+      width: 100%;
+      min-width: 0;
+      justify-content: center;
+      box-sizing: border-box;
+      border-radius: 16px;
+      padding: 14px 18px;
+      font-weight: 800;
+      letter-spacing: 0.01em;
+      transition: transform 0.22s ease, box-shadow 0.22s ease, filter 0.2s ease;
+    }
+
+    .nav-app-drawer-body .nav-drawer-action:hover {
+      transform: translateY(-2px);
+      filter: brightness(1.03);
+    }
+
+    .nav-app-drawer-body .nav-drawer-action:active {
+      transform: translateY(0);
+    }
+
+    .nav-app-drawer-body .management-btn {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid rgba(15, 23, 42, 0.45);
+      color: #fff;
+      background: linear-gradient(135deg, #020617 0%, #0f172a 35%, #1e3a5f 75%, #0f172a 100%);
+      box-shadow:
+        0 10px 28px rgba(2, 6, 23, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    }
+
+    .nav-app-drawer-body .management-btn:hover {
+      box-shadow:
+        0 14px 36px rgba(2, 6, 23, 0.42),
+        inset 0 1px 0 rgba(255, 255, 255, 0.16);
+    }
+
+    .nav-app-drawer-body .refresh-btn.nav-drawer-action {
+      border: 1px solid rgba(251, 146, 60, 0.55);
+      color: #9a3412;
+      background: linear-gradient(145deg, #fffbeb 0%, #ffedd5 40%, #fdba74 180%);
+      box-shadow:
+        0 8px 24px rgba(251, 146, 60, 0.22),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    }
+
+    .nav-app-drawer-body .refresh-btn.nav-drawer-action:hover {
+      border-color: rgba(249, 115, 22, 0.75);
+      box-shadow:
+        0 12px 28px rgba(249, 115, 22, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 1);
+    }
+
+    .nav-app-drawer-body .logout-btn.nav-drawer-action {
+      border: 1px solid rgba(194, 65, 12, 0.45);
+      color: #fff;
+      background: linear-gradient(135deg, var(--primary, #f97316) 0%, #ea580c 42%, #c2410c 100%);
+      box-shadow:
+        0 10px 28px rgba(234, 88, 12, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    }
+
+    .nav-app-drawer-body .logout-btn.nav-drawer-action:hover {
+      box-shadow:
+        0 14px 34px rgba(234, 88, 12, 0.42),
+        inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    }
+
+    body.nav-drawer-open {
+      overflow: hidden;
     }
 
     /* Yönetim butonu (Gece Dönercisi) */
@@ -8956,73 +9560,130 @@
       transform: translateY(0);
     }
 
-    /* Yönetim overlay */
+    /* Yönetim — tam sayfa (modal değil) */
     .management-overlay {
       display: none;
       position: fixed;
       inset: 0;
       z-index: 10050;
-      align-items: center;
-      justify-content: center;
-      padding: 18px;
-      background: rgba(2, 6, 23, 0.62);
-      backdrop-filter: blur(6px);
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      padding: 0;
+      margin: 0;
+      width: 100vw;
+      min-height: 100vh;
+      min-height: 100dvh;
+      box-sizing: border-box;
+      background: linear-gradient(165deg, #eef2f7 0%, #f8fafc 38%, #ffffff 100%);
+    }
+
+    body.management-fullpage-open {
+      overflow: hidden;
     }
 
     .management-modal {
       width: 100%;
-      max-width: 980px;
-      max-height: 90vh;
+      flex: 1;
+      min-height: 0;
+      max-width: none;
+      max-height: none;
+      height: 100%;
       overflow: hidden;
       background: #ffffff;
-      border-radius: 24px;
-      border: 1px solid rgba(148, 163, 184, 0.35);
-      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+      border-radius: 0;
+      border: none;
+      box-shadow: none;
       display: flex;
       flex-direction: column;
-      animation: slideUp 0.25s ease;
+      animation: managementPageIn 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    @keyframes managementPageIn {
+      from {
+        opacity: 0;
+        transform: translateY(14px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     .management-header {
-      padding: 18px 20px;
+      padding: 14px 18px 14px 20px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      background: linear-gradient(135deg, #0f172a 0%, #1f2937 100%);
+      gap: 12px;
+      flex-shrink: 0;
+      background: linear-gradient(120deg, #020617 0%, #0f172a 38%, #1e293b 72%, rgba(249, 115, 22, 0.35) 140%);
       color: #fff;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 8px 32px rgba(2, 6, 23, 0.35);
     }
 
     .management-header h2 {
       margin: 0;
-      font-size: 18px;
+      font-size: clamp(17px, 2.5vw, 20px);
       font-weight: 900;
-      letter-spacing: -0.2px;
+      letter-spacing: -0.3px;
     }
 
     .management-close {
-      width: 40px;
-      height: 40px;
-      border-radius: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      background: rgba(255, 255, 255, 0.12);
+      flex-shrink: 0;
+      height: 42px;
+      padding: 0 18px 0 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.08) 100%);
       color: #fff;
       cursor: pointer;
-      font-size: 24px;
+      font-size: 15px;
+      font-weight: 700;
       line-height: 1;
-      display: flex;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
-      transition: all 0.2s;
+      gap: 8px;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    }
+
+    .management-close-arrow {
+      font-size: 18px;
+      font-weight: 900;
+      opacity: 0.95;
     }
 
     .management-close:hover {
-      background: rgba(255, 255, 255, 0.18);
-      transform: scale(1.03);
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.12) 100%);
+      border-color: rgba(255, 255, 255, 0.45);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    }
+
+    .management-close:active {
+      transform: translateY(0);
     }
 
     .management-body {
-      padding: 18px 20px 22px 20px;
+      flex: 1;
+      min-height: 0;
+      padding: 18px 20px 28px 20px;
       overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    }
+
+    @media (max-width: 400px) {
+      .management-close-label {
+        display: none;
+      }
+
+      .management-close {
+        padding: 0 14px;
+      }
     }
 
     .management-home-grid {
@@ -9490,6 +10151,13 @@
       align-items: center;
       min-width: 0;
     }
+
+    .report-branch-in-reports {
+      width: 100%;
+      margin: 0 0 14px 0;
+      justify-content: flex-start;
+    }
+
     .report-branch-segmented {
       display: inline-flex;
       border-radius: 12px;
@@ -11105,11 +11773,16 @@
       box-shadow: 0 8px 18px rgba(220, 38, 38, 0.25);
     }
 
-    /* Admin Splash Screen — elit, modern, profesyonel */
+    /* Admin Splash — beyaz, büyük logo, alt başlık animasyonlu */
     .admin-splash-screen {
       position: fixed;
       inset: 0;
-      background: linear-gradient(165deg, #0f172a 0%, #1e293b 45%, #0f172a 100%);
+      width: 100vw;
+      min-height: 100vh;
+      min-height: 100dvh;
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -11117,71 +11790,220 @@
       overflow: hidden;
     }
 
+    .admin-splash-screen::before,
+    .admin-splash-screen::after {
+      display: none;
+    }
+
     .splash-content {
       position: relative;
       z-index: 2;
       width: 100%;
-      max-width: 96vw;
-      padding: 24px;
+      max-width: 100%;
+      padding: 40px 24px 48px;
       text-align: center;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
+      animation: splashContentIn 0.45s ease-out;
+    }
+
+    @keyframes splashContentIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
     .splash-logo {
-      width: 88px;
-      height: 88px;
-      object-fit: cover;
+      width: clamp(168px, 44vw, 300px);
+      height: clamp(168px, 44vw, 300px);
+      object-fit: contain;
       border-radius: 20px;
       margin-bottom: 28px;
-      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.06);
-      animation: splashLogoIn 1s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-      opacity: 0;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+      background: #fafafa;
     }
 
     .splash-main-text {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      font-weight: 700;
-      font-size: clamp(1.5rem, 5vw, 2.75rem);
-      line-height: 1.15;
-      letter-spacing: 0.12em;
-      color: #f8fafc;
+      font-weight: 600;
+      font-size: clamp(1.25rem, 4vw, 1.75rem);
+      line-height: 1.25;
+      letter-spacing: -0.03em;
+      color: #0f172a;
       margin: 0;
-      padding: 0 12px;
+      padding: 0 20px;
       text-align: center;
-      text-transform: uppercase;
-      max-width: 100%;
+      text-transform: none;
+      max-width: 24rem;
       word-break: break-word;
-      text-shadow: 0 2px 24px rgba(0, 0, 0, 0.3);
-      animation: splashTitleIn 1.1s cubic-bezier(0.22, 1, 0.36, 1) 0.2s forwards;
-      opacity: 0;
-    }
-
-    .splash-decorative-line {
-      width: 0%;
-      height: 2px;
-      background: linear-gradient(90deg, transparent 0%, rgba(251, 191, 36, 0.4) 30%, rgba(251, 191, 36, 0.9) 50%, rgba(251, 191, 36, 0.4) 70%, transparent 100%);
-      margin: 24px auto 20px;
-      max-width: 280px;
-      border-radius: 2px;
-      animation: splashLineIn 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.5s forwards;
-      opacity: 0;
     }
 
     .splash-subtitle-text {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      font-size: clamp(0.7rem, 1.2vw, 0.85rem);
-      font-weight: 500;
-      color: rgba(248, 250, 252, 0.6);
-      margin: 0;
+      font-size: clamp(0.875rem, 2.5vw, 1rem);
+      font-weight: 600;
+      color: #475569;
+      margin: 18px 0 0;
       padding: 0;
-      letter-spacing: 0.28em;
+      letter-spacing: 0.22em;
       text-transform: uppercase;
       text-align: center;
-      animation: splashSubtitleIn 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.65s forwards;
       opacity: 0;
+      transform: translateY(18px) scale(0.97);
+      filter: blur(6px);
+      animation: splashSubtitleReveal 1.05s cubic-bezier(0.22, 1, 0.36, 1) 0.42s forwards;
+    }
+
+    @keyframes splashSubtitleReveal {
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        letter-spacing: 0.06em;
+        filter: blur(0);
+      }
+    }
+
+    .splash-data-progress {
+      width: min(380px, 90vw);
+      margin: 24px auto 0;
+      text-align: center;
+    }
+
+    .admin-splash-screen:not(.splash-preloading) .splash-data-progress {
+      display: none;
+    }
+
+    .splash-progress-pct-wrap {
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .splash-progress-pct {
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-size: clamp(2rem, 7vw, 2.75rem);
+      font-weight: 800;
+      letter-spacing: -0.06em;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      color: #0f172a;
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.9);
+    }
+
+    .splash-data-progress-track {
+      height: 11px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(241, 245, 249, 0.9));
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      box-shadow:
+        inset 0 1px 3px rgba(15, 23, 42, 0.08),
+        0 1px 0 rgba(255, 255, 255, 0.9);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .splash-data-progress-fill {
+      height: 100%;
+      width: 0;
+      min-width: 0;
+      border-radius: 999px;
+      background: linear-gradient(
+        90deg,
+        #0f172a 0%,
+        #1e293b 22%,
+        var(--primary, #f97316) 55%,
+        var(--primary-strong, #ea580c) 100%
+      );
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.2) inset,
+        0 0 24px rgba(249, 115, 22, 0.35);
+      transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .splash-data-progress-fill.is-active {
+      transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .splash-data-progress-fill::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      width: 45%;
+      background: linear-gradient(
+        105deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.55) 50%,
+        transparent 100%
+      );
+      transform: translateX(-120%);
+      animation: splashProgressShine 1.65s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    @keyframes splashProgressShine {
+      0% { transform: translateX(-120%); }
+      55% { transform: translateX(220%); }
+      100% { transform: translateX(220%); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .splash-data-progress-fill::after {
+        animation: none;
+        opacity: 0;
+      }
+    }
+
+    .splash-data-progress-label {
+      margin: 12px 0 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: #64748b;
+      letter-spacing: 0.03em;
+      line-height: 1.35;
+    }
+
+    .data-loading-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 99990;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.35);
+      backdrop-filter: blur(2px);
+    }
+
+    .data-loading-inner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 22px;
+      border-radius: 12px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 12px 40px rgba(15, 23, 42, 0.12);
+      font-size: 14px;
+      font-weight: 600;
+      color: #334155;
+    }
+
+    .data-loading-spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid #e2e8f0;
+      border-top-color: #0f172a;
+      border-radius: 50%;
+      animation: dataLoadSpin 0.7s linear infinite;
+    }
+
+    @keyframes dataLoadSpin {
+      to { transform: rotate(360deg); }
     }
 
     .splash-loading-bar {
@@ -11189,85 +12011,30 @@
       bottom: 0;
       left: 0;
       width: 100%;
-      height: 3px;
-      background: linear-gradient(90deg, transparent, rgba(251, 191, 36, 0.8), transparent);
-      border-radius: 0 3px 0 0;
-      animation: splashLoadingBar 2.2s ease-in-out 0.4s forwards;
-      transform-origin: left;
+      height: 2px;
+      background: #e2e8f0;
+      overflow: hidden;
     }
 
-    @keyframes splashLogoIn {
-      0% {
-        opacity: 0;
-        transform: scale(0.85) translateY(-12px);
-      }
-      100% {
-        opacity: 1;
-        transform: scale(1) translateY(0);
-      }
-    }
-
-    @keyframes splashTitleIn {
-      0% {
-        opacity: 0;
-        transform: translateY(24px);
-      }
-      100% {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    @keyframes splashSubtitleIn {
-      0% {
-        opacity: 0;
-        transform: translateY(12px);
-      }
-      100% {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    @keyframes splashLineIn {
-      0% {
-        width: 0%;
-        opacity: 0;
-      }
-      100% {
-        width: 100%;
-        opacity: 1;
-      }
-    }
-
-    @keyframes splashLoadingBar {
-      0% { transform: scaleX(0); }
-      40% { transform: scaleX(0.6); }
-      70% { transform: scaleX(0.85); }
-      100% { transform: scaleX(1); }
-    }
-
-    /* Splash: dekoratif arka plan */
-    .admin-splash-screen::before {
+    .splash-loading-bar::after {
       content: '';
       position: absolute;
+      left: 0;
       top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(251, 191, 36, 0.06) 0%, transparent 55%);
-      pointer-events: none;
+      height: 100%;
+      width: 38%;
+      background: linear-gradient(90deg, transparent, #0f172a 45%, transparent);
+      opacity: 0.22;
+      animation: splashBarSlide 1.35s ease-in-out infinite;
     }
 
-    .admin-splash-screen::after {
-      content: '';
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      height: 40%;
-      background: linear-gradient(to top, rgba(0, 0, 0, 0.2) 0%, transparent 100%);
-      pointer-events: none;
+    .admin-splash-screen.splash-preloading .splash-loading-bar-idle::after {
+      display: none !important;
+    }
+
+    @keyframes splashBarSlide {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
     }
 
     /* Sekme butonları */
@@ -14414,33 +15181,33 @@
       }
 
       .navbar-content {
-        flex-direction: column;
-        gap: 12px;
-        align-items: stretch;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: 10px;
       }
 
       .navbar-brand {
-        justify-content: center;
-        text-align: center;
-      }
-
-      .navbar-title-group {
+        justify-content: flex-start;
+        text-align: left;
         align-items: center;
       }
 
-      .navbar-actions {
-        justify-content: center;
+      .navbar-title-group {
+        align-items: flex-start;
         width: 100%;
+        min-width: 0;
+      }
+
+      .navbar-actions,
+      .navbar-actions-toolbar {
+        justify-content: flex-end;
+        width: auto;
+        flex-shrink: 0;
       }
 
       .dashboard-header > div {
         justify-content: stretch;
-      }
-
-      .refresh-btn,
-      .logout-btn {
-        flex: 1;
-        justify-content: center;
       }
 
       .stats-grid {
@@ -14797,24 +15564,38 @@
 <body>
   <div id="loader" class="admin-splash-screen">
     <div class="splash-content">
-      <img src="tenant.png" alt="Logo" class="splash-logo" onerror="this.style.display='none';">
+      <img src="tenant.png" alt="" class="splash-logo" onerror="this.style.display='none';">
       <h1 class="splash-main-text" id="splashBusinessName">Gece Dönercisi</h1>
-      <div class="splash-decorative-line"></div>
-      <p class="splash-subtitle-text">Admin Dashboard</p>
+      <p class="splash-subtitle-text">Yönetim paneli</p>
+      <div class="splash-data-progress" aria-hidden="true">
+        <div class="splash-progress-pct-wrap">
+          <span id="splashProgressPct" class="splash-progress-pct">0%</span>
+        </div>
+        <div class="splash-data-progress-track">
+          <div id="splashDataProgressFill" class="splash-data-progress-fill"></div>
+        </div>
+        <p class="splash-data-progress-label" id="splashProgressLabel"></p>
+      </div>
     </div>
-    <div class="splash-loading-bar" aria-hidden="true"></div>
+    <div class="splash-loading-bar splash-loading-bar-idle" aria-hidden="true"></div>
+  </div>
+
+  <div id="dataLoadingOverlay" class="data-loading-overlay" aria-busy="false" role="status" aria-live="polite">
+    <div class="data-loading-inner">
+      <span class="data-loading-spinner" aria-hidden="true"></span>
+      <span>İşleniyor…</span>
+    </div>
   </div>
 
   <div class="container">
     <div id="loginSection" class="pin-section">
       <div class="login-center-wrap">
-        <h1 class="login-brand-title">DROJE SYSTEMS</h1>
         <div class="login-card">
         <div class="login-header">
           <div class="login-logo-wrap">
-            <img src="tenant.png" alt="Logo" class="login-logo" onerror="this.style.display='none';">
+            <img src="tenant.png" alt="" class="login-logo" onerror="this.style.display='none';">
           </div>
-          <h2 class="login-title">Admin Girişi</h2>
+          <h2 class="login-title">Oturum aç</h2>
           <p class="login-subtitle" id="loginBusinessName">Gece Dönercisi</p>
         </div>
         <div class="pin-form">
@@ -14884,45 +15665,59 @@
       <nav class="admin-navbar">
         <div class="navbar-content">
           <div class="navbar-brand">
-            <img src="tenant.png" alt="Gece Dönercisi Logo" class="navbar-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <img src="tenant.png" alt="Logo" class="navbar-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
             <div class="navbar-logo" style="display: none;">M</div>
             <div class="navbar-title-group">
               <h1 class="navbar-title" id="navbarBusinessName">Yaka's Grill Admin Dashboard</h1>
               <p class="navbar-subtitle">Anlık Satış Detayları ve İstatistikler</p>
             </div>
           </div>
-          <div class="navbar-actions navbar-actions-stack">
-            <div class="navbar-actions-row">
-              <div class="report-branch-wrap" id="reportBranchSwitch" style="display: none;">
-                <div class="report-branch-segmented" role="group" aria-label="Şube seçimi">
-                  <button type="button" class="report-branch-opt active" data-branch="all" onclick="setReportBranchFilter('all')">Tümü</button>
-                  <button type="button" class="report-branch-opt" data-branch="SANCAK" onclick="setReportBranchFilter('SANCAK')">SANCAK</button>
-                  <button type="button" class="report-branch-opt" data-branch="SEKER" onclick="setReportBranchFilter('SEKER')">ŞEKER</button>
-                </div>
-              </div>
-              <button onclick="loadSales()" class="refresh-btn">
-                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/>
-                </svg>
-                <span>Yenile</span>
-              </button>
-              <button onclick="logout()" class="logout-btn">
-                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"/>
-                </svg>
-                <span>Çıkış</span>
-              </button>
-            </div>
+          <div class="navbar-actions navbar-actions-toolbar">
+            <button type="button" class="nav-drawer-toggle" id="navDrawerToggle" aria-label="Menü" aria-expanded="false" aria-controls="navAppDrawerPanel" aria-haspopup="true" onclick="toggleNavAppDrawer()">
+              <span class="nav-drawer-toggle-inner" aria-hidden="true">
+                <span class="nav-drawer-bar"></span>
+                <span class="nav-drawer-bar"></span>
+                <span class="nav-drawer-bar"></span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </nav>
 
-            <button onclick="openManagementOverlay()" class="management-btn" id="managementBtn">
+      <div id="navAppDrawer" class="nav-app-drawer" aria-hidden="true">
+        <div class="nav-app-drawer-backdrop" onclick="closeNavAppDrawer()" aria-hidden="true"></div>
+        <aside id="navAppDrawerPanel" class="nav-app-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="navAppDrawerTitle">
+          <div class="nav-app-drawer-header">
+            <div>
+              <h2 id="navAppDrawerTitle" class="nav-app-drawer-title">Menü</h2>
+              <p class="nav-app-drawer-caption">Hızlı işlemler</p>
+            </div>
+            <button type="button" class="nav-app-drawer-close" onclick="closeNavAppDrawer()" aria-label="Kapat">
+              <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div class="nav-app-drawer-body">
+            <button type="button" onclick="openManagementOverlay()" class="management-btn nav-drawer-action" id="managementBtn">
               <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m-6-9H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6.75z"/>
               </svg>
               <span>Yönetim</span>
             </button>
+            <button type="button" onclick="closeNavAppDrawer(); loadSales({ replace: true });" class="refresh-btn nav-drawer-action">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/>
+              </svg>
+              <span>Yenile</span>
+            </button>
+            <button type="button" onclick="closeNavAppDrawer(); logout();" class="logout-btn nav-drawer-action">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"/>
+              </svg>
+              <span>Çıkış</span>
+            </button>
           </div>
-        </div>
-      </nav>
+        </aside>
+      </div>
       
       <!-- Tab Butonları - En Üstte Modern ve Kurumsal -->
       <div class="tab-buttons-container">
@@ -14999,12 +15794,15 @@
     </div>
   </div>
 
-  <!-- Yönetim Overlay (Stok / Fiyat) -->
-  <div id="managementOverlay" class="management-overlay" onclick="if(event.target === this) closeManagementOverlay()">
-    <div class="management-modal" onclick="event.stopPropagation()">
+  <!-- Yönetim — tam sayfa panel (Stok / Fiyat) -->
+  <div id="managementOverlay" class="management-overlay" role="dialog" aria-modal="true" aria-labelledby="managementOverlayTitle">
+    <div class="management-modal">
       <div class="management-header">
-        <h2>🏢 Yönetim</h2>
-        <button class="management-close" onclick="closeManagementOverlay()" title="Kapat">×</button>
+        <h2 id="managementOverlayTitle">🏢 Yönetim paneli</h2>
+        <button type="button" class="management-close" onclick="closeManagementOverlay()" title="Ana panele dön">
+          <span class="management-close-arrow" aria-hidden="true">←</span>
+          <span class="management-close-label">Panele dön</span>
+        </button>
       </div>
       <div class="management-body">
         <div id="managementHome">
