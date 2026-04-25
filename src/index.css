@@ -313,6 +313,21 @@
   animation: slide-up 0.3s ease-out;
 }
 
+/* Ayarlar > Gece Dönercisi şube stok toast — süre çubuğu */
+@keyframes gece-stock-notice-bar {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.gece-stock-notice-bar {
+  transform-origin: left center;
+  animation: gece-stock-notice-bar 4s linear forwards;
+}
+
 /* Touch optimization */
 .touch-manipulation {
   touch-action: manipulation;

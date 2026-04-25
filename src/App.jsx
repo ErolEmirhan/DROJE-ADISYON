@@ -104,6 +104,42 @@ function App() {
   const isGeceDonercisiMode = tenantId && isGeceDonercisi(tenantId);
   const isLacromisaMode = tenantId && isLacromisa(tenantId);
 
+  /** Gece Dönercisi: native alert penceresi odak/klavye sorununa yol açıyor; uygulama içi kuyruk kullan */
+  const [geceNativeAlertText, setGeceNativeAlertText] = useState(null);
+  const geceNativeAlertQueueRef = useRef([]);
+  const setGeceNativeAlertTextRef = useRef(setGeceNativeAlertText);
+  setGeceNativeAlertTextRef.current = setGeceNativeAlertText;
+
+  useEffect(() => {
+    if (!isGeceDonercisiMode) return;
+    const origAlert = window.alert.bind(window);
+    window.alert = (message) => {
+      const text = String(message ?? '');
+      setGeceNativeAlertTextRef.current((cur) => {
+        if (cur == null) return text;
+        geceNativeAlertQueueRef.current.push(text);
+        return cur;
+      });
+    };
+    return () => {
+      window.alert = origAlert;
+    };
+  }, [isGeceDonercisiMode]);
+
+  const dismissGeceNativeAlert = () => {
+    setGeceNativeAlertText(() => {
+      const next = geceNativeAlertQueueRef.current.shift();
+      return next !== undefined ? next : null;
+    });
+  };
+
+  useEffect(() => {
+    if (!isGeceDonercisiMode) {
+      geceNativeAlertQueueRef.current = [];
+      setGeceNativeAlertText(null);
+    }
+  }, [isGeceDonercisiMode]);
+
   const getActiveBranchForGece = () => {
     // Şube seçimi Settings'ten değiştirilebildiği için her işlem anında localStorage'tan oku
     return getGeceSelectedBranch();
@@ -1466,6 +1502,37 @@ function App() {
         onClose={() => setPrintToast(null)}
         autoHideDuration={printToast?.status === 'printing' ? null : 2500}
       />
+
+      {/* Gece Dönercisi: window.alert yerine (Electron odak kaybı / input kilidi önlenir) */}
+      {geceNativeAlertText != null && (
+        <div
+          className="fixed inset-0 z-[28000] flex items-center justify-center bg-black/55 backdrop-blur-sm p-4"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="gece-native-alert-title"
+        >
+          <div className="w-full max-w-lg rounded-2xl border border-white/20 bg-gradient-to-br from-white to-slate-50 shadow-2xl overflow-hidden">
+            <div className="h-1 w-full bg-gradient-to-r from-amber-400 via-orange-500 to-orange-600" />
+            <div className="px-6 pt-5 pb-4">
+              <h2 id="gece-native-alert-title" className="text-lg font-extrabold text-slate-900">
+                Bilgi
+              </h2>
+              <p className="mt-3 text-sm font-medium text-slate-700 whitespace-pre-wrap leading-relaxed">
+                {geceNativeAlertText}
+              </p>
+            </div>
+            <div className="border-t border-slate-200 bg-slate-50/80 px-6 py-4 flex justify-end">
+              <button
+                type="button"
+                onClick={dismissGeceNativeAlert}
+                className="px-8 py-2.5 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 shadow-md transition"
+              >
+                Tamam
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Error Toast */}
       {errorToast && (

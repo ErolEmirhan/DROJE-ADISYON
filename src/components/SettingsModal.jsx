@@ -23,13 +23,22 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
   const [geceStockQtyInput, setGeceStockQtyInput] = useState({ SEKER: '', SANCAK: '' });
   const [geceStockSetInput, setGeceStockSetInput] = useState({ SEKER: '', SANCAK: '' });
   const [geceStockSavingBranch, setGeceStockSavingBranch] = useState(null); // 'SEKER' | 'SANCAK' | null
-  
+  /** Gece Dönercisi şube stoku: uygulama içi bildirim (alert yerine) */
+  const [geceStockNotice, setGeceStockNotice] = useState(null); // { variant, title, message, key }
+  const geceStockNoticeTimerRef = useRef(null);
+  /** Gece: confirm() yerine (Electron’da odak/input sorunu) */
+  const [geceSettingsConfirm, setGeceSettingsConfirm] = useState(null); // { message, onConfirm }
+
   // Stock management state
   const [stockFilterCategory, setStockFilterCategory] = useState(null);
   const [stockFilterProduct, setStockFilterProduct] = useState(null);
   const [stockAdjustmentAmount, setStockAdjustmentAmount] = useState('');
   const [stockAdjustmentType, setStockAdjustmentType] = useState('add'); // 'add' or 'subtract'
-  
+  /** Stok sekmesi kart ızgarasında metin arama */
+  const [stockSearchQuery, setStockSearchQuery] = useState('');
+  /** Gece: stok ekranına her girişte şube sorulur; yalnızca bu şubenin stokları görünür (satış şubesinden bağımsız) */
+  const [stockGeceSessionBranch, setStockGeceSessionBranch] = useState(null);
+
   // Password change state
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -97,6 +106,35 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
   }, [showCategoryDropdown]);
 
   useEffect(() => {
+    return () => {
+      if (geceStockNoticeTimerRef.current) {
+        clearTimeout(geceStockNoticeTimerRef.current);
+        geceStockNoticeTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const dismissGeceStockNotice = () => {
+    if (geceStockNoticeTimerRef.current) {
+      clearTimeout(geceStockNoticeTimerRef.current);
+      geceStockNoticeTimerRef.current = null;
+    }
+    setGeceStockNotice(null);
+  };
+
+  const showGeceStockNotice = (variant, title, message) => {
+    if (geceStockNoticeTimerRef.current) {
+      clearTimeout(geceStockNoticeTimerRef.current);
+      geceStockNoticeTimerRef.current = null;
+    }
+    setGeceStockNotice({ variant, title, message, key: Date.now() });
+    geceStockNoticeTimerRef.current = setTimeout(() => {
+      setGeceStockNotice(null);
+      geceStockNoticeTimerRef.current = null;
+    }, 4200);
+  };
+
+  useEffect(() => {
     loadCategories();
     loadAllProducts();
     if (activeTab === 'printers') {
@@ -111,9 +149,20 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
       if (isGeceDonercisiMode) {
         const b = getGeceSelectedBranch();
         setGeceBranch(b);
+        // Stok ekranına her girişte şube seçimi zorunlu; diğer şube bu ekranda gösterilmez
+        setStockGeceSessionBranch(null);
+        setStockFilterProduct(null);
       }
     }
+  }, [activeTab, isGeceDonercisiMode]);
+
+  useEffect(() => {
+    if (activeTab !== 'stock') setStockSearchQuery('');
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!isGeceDonercisiMode) setStockGeceSessionBranch(null);
+  }, [isGeceDonercisiMode]);
 
   const normalizeTr = (s) => {
     try {
@@ -139,6 +188,61 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
     if (!isGeceDonercisiMode) return categories;
     return (categories || []).filter((c) => isAllowedStockCategory(c?.name));
   }, [categories, isGeceDonercisiMode]);
+
+  const stockTabProductList = useMemo(() => {
+    if (stockFilterCategory) {
+      return products.filter((p) => p.category_id === stockFilterCategory.id);
+    }
+    if (isGeceDonercisiMode) {
+      return products.filter((p) => {
+        const cat = categories.find((c) => c.id === p.category_id);
+        return isAllowedStockCategory(cat?.name);
+      });
+    }
+    return products;
+  }, [products, stockFilterCategory, isGeceDonercisiMode, categories]);
+
+  const stockTabProductGridList = useMemo(() => {
+    const raw = stockSearchQuery.trim();
+    if (!raw) return stockTabProductList;
+    const q = raw.toLocaleLowerCase('tr-TR');
+    return stockTabProductList.filter((p) =>
+      String(p?.name || '').toLocaleLowerCase('tr-TR').includes(q)
+    );
+  }, [stockTabProductList, stockSearchQuery]);
+
+  /** Tam ekran stok: sol panel yalnızca "İçecekler" kategorisi ürünleri */
+  const stockIceceklerCategories = useMemo(
+    () => (categories || []).filter((c) => normalizeTr(c?.name) === 'icecekler'),
+    [categories]
+  );
+
+  const stockLeftPanelBaseList = useMemo(() => {
+    const ids = new Set(stockIceceklerCategories.map((c) => c.id));
+    return (products || []).filter((p) => ids.has(p.category_id));
+  }, [products, stockIceceklerCategories]);
+
+  const stockLeftPanelList = useMemo(() => {
+    if (stockFilterCategory && stockIceceklerCategories.some((c) => c.id === stockFilterCategory.id)) {
+      return stockLeftPanelBaseList.filter((p) => p.category_id === stockFilterCategory.id);
+    }
+    return stockLeftPanelBaseList;
+  }, [stockLeftPanelBaseList, stockFilterCategory, stockIceceklerCategories]);
+
+  const stockLeftPanelGridList = useMemo(() => {
+    const raw = stockSearchQuery.trim();
+    if (!raw) return stockLeftPanelList;
+    const q = raw.toLocaleLowerCase('tr-TR');
+    return stockLeftPanelList.filter((p) => String(p?.name || '').toLocaleLowerCase('tr-TR').includes(q));
+  }, [stockLeftPanelList, stockSearchQuery]);
+
+  const stockFullscreenOpen = activeTab === 'stock' && (!isGeceDonercisiMode || !!stockGeceSessionBranch);
+
+  const exitStockFullscreen = () => {
+    setStockFilterProduct(null);
+    setStockSearchQuery('');
+    setActiveTab('password');
+  };
 
   const getGeceStockForBranch = (productId, branch) => {
     if (branch !== 'SEKER' && branch !== 'SANCAK') return 0;
@@ -220,7 +324,7 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
     if (!tenantId || (branch !== 'SEKER' && branch !== 'SANCAK')) return;
     const amount = parseInt(String(geceStockQtyInput[branch] || '').replace(/\D/g, ''), 10);
     if (!amount || amount < 1) {
-      alert('Geçerli bir miktar girin');
+      showGeceStockNotice('warning', 'Miktar gerekli', 'Lütfen geçerli bir miktar girin (en az 1).');
       return;
     }
     const delta = mode === 'add' ? amount : -amount;
@@ -236,10 +340,16 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
       setGeceStockQtyInput((prev) => ({ ...prev, [branch]: '' }));
       await loadGeceAllBranchStocks();
       if (onProductsUpdated) onProductsUpdated();
-      alert(mode === 'add' ? 'Stok artırıldı.' : 'Stok azaltıldı.');
+      showGeceStockNotice(
+        'success',
+        mode === 'add' ? 'Stok artırıldı' : 'Stok azaltıldı',
+        mode === 'add'
+          ? `${branch} şubesinde +${amount} adet işlendi.`
+          : `${branch} şubesinde −${amount} adet işlendi.`
+      );
     } catch (e) {
       console.error('Şube stok güncelleme:', e);
-      alert(e?.message || 'Stok güncellenemedi');
+      showGeceStockNotice('error', 'Güncellenemedi', e?.message || 'Stok güncellenemedi. Bağlantınızı kontrol edin.');
     } finally {
       setGeceStockSavingBranch(null);
     }
@@ -250,13 +360,13 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
     const raw = String(geceStockSetInput[branch] ?? '').trim();
     const target = parseInt(raw, 10);
     if (raw === '' || Number.isNaN(target) || target < 0) {
-      alert('0 veya daha büyük tam sayı girin.');
+      showGeceStockNotice('warning', 'Geçersiz değer', '0 veya daha büyük tam sayı girin.');
       return;
     }
     const current = getGeceStockForBranch(productId, branch);
     const delta = target - current;
     if (delta === 0) {
-      alert('Stok zaten bu değerde.');
+      showGeceStockNotice('info', 'Değişiklik yok', 'Stok zaten bu değerde.');
       return;
     }
     try {
@@ -271,10 +381,14 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
       setGeceStockSetInput((prev) => ({ ...prev, [branch]: '' }));
       await loadGeceAllBranchStocks();
       if (onProductsUpdated) onProductsUpdated();
-      alert('Stok güncellendi.');
+      showGeceStockNotice(
+        'success',
+        'Stok güncellendi',
+        `${branch} şubesi için yeni stok: ${target} adet.`
+      );
     } catch (e) {
       console.error('Şube stok ayarlama:', e);
-      alert(e?.message || 'Stok güncellenemedi');
+      showGeceStockNotice('error', 'Güncellenemedi', e?.message || 'Stok güncellenemedi.');
     } finally {
       setGeceStockSavingBranch(null);
     }
@@ -305,25 +419,7 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
     }
   };
 
-  const handleOptimizeAllImages = async () => {
-    if (!window.electronAPI || typeof window.electronAPI.optimizeAllProductImages !== 'function') {
-      alert('Görsel optimizasyon özelliği yüklenemedi. Lütfen uygulamayı yeniden başlatın.');
-      return;
-    }
-
-    if (
-      !window.confirm(
-        'Tüm ürün görselleri Firebase Storage üzerinde yeniden optimize edilecek.\n\n' +
-        '- Tümü WebP formatına dönüştürülecek\n' +
-        '- Maksimum genişlik 600px, kalite ~65\n' +
-        '- Amaç: 50–120 KB arası, 200 KB üstü reddedilir\n\n' +
-        'Bu işlem internet bağlantınıza ve görsel sayısına göre birkaç dakika sürebilir.\n\n' +
-        'Devam etmek istiyor musunuz?'
-      )
-    ) {
-      return;
-    }
-
+  const runOptimizeAllImagesAfterConfirm = async () => {
     try {
       setIsOptimizingImages(true);
       setLastOptimizeResult(null);
@@ -349,6 +445,84 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
     } finally {
       setIsOptimizingImages(false);
     }
+  };
+
+  const handleOptimizeAllImages = () => {
+    if (!window.electronAPI || typeof window.electronAPI.optimizeAllProductImages !== 'function') {
+      alert('Görsel optimizasyon özelliği yüklenemedi. Lütfen uygulamayı yeniden başlatın.');
+      return;
+    }
+
+    const confirmMsg =
+      'Tüm ürün görselleri Firebase Storage üzerinde yeniden optimize edilecek.\n\n' +
+      '- Tümü WebP formatına dönüştürülecek\n' +
+      '- Maksimum genişlik 600px, kalite ~65\n' +
+      '- Amaç: 50–120 KB arası, 200 KB üstü reddedilir\n\n' +
+      'Bu işlem internet bağlantınıza ve görsel sayısına göre birkaç dakika sürebilir.\n\n' +
+      'Devam etmek istiyor musunuz?';
+
+    if (isGeceDonercisiMode) {
+      setGeceSettingsConfirm({
+        message: confirmMsg,
+        onConfirm: () => {
+          setGeceSettingsConfirm(null);
+          void runOptimizeAllImagesAfterConfirm();
+        },
+      });
+      return;
+    }
+
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+
+    void runOptimizeAllImagesAfterConfirm();
+  };
+
+  const runCreateImageRecordsForAllProducts = async () => {
+    try {
+      setIsCreatingImageRecords(true);
+      const result = await window.electronAPI.createImageRecordsForAllProducts();
+      if (result.success) {
+        alert(
+          `✅ Image kayıtları oluşturuldu!\n\n` +
+          `Oluşturulan: ${result.created}\n` +
+          `Atlanan: ${result.skipped}\n` +
+          `Hata: ${result.errors}`
+        );
+      } else {
+        alert('Image kayıtları oluşturulamadı: ' + (result.error || 'Bilinmeyen hata'));
+      }
+    } catch (error) {
+      console.error('Image kayıtları oluşturma hatası:', error);
+      alert('Image kayıtları oluşturma hatası: ' + error.message);
+    } finally {
+      setIsCreatingImageRecords(false);
+    }
+  };
+
+  const handleCreateImageRecordsForAllProducts = () => {
+    const msg =
+      "Tüm mevcut ürünler için Firebase'de image kayıtları oluşturulacak.\n\n" +
+      "Bu işlem sadece görseli olan ve henüz Firebase'de kaydı olmayan ürünler için çalışır.\n\n" +
+      'Devam etmek istiyor musunuz?';
+
+    if (isGeceDonercisiMode) {
+      setGeceSettingsConfirm({
+        message: msg,
+        onConfirm: () => {
+          setGeceSettingsConfirm(null);
+          void runCreateImageRecordsForAllProducts();
+        },
+      });
+      return;
+    }
+
+    if (!window.confirm(msg)) {
+      return;
+    }
+
+    void runCreateImageRecordsForAllProducts();
   };
 
   const loadPrinterAssignments = async () => {
@@ -527,27 +701,20 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
     }
   };
 
-  const handleRemoveCategoryAssignment = async (categoryId) => {
-    if (!categoryId) return;
-    
-    if (!confirm(`Bu kategorinin yazıcı atamasını kaldırmak istediğinize emin misiniz?`)) {
-      return;
-    }
-    
+  const runRemoveCategoryAssignment = async (categoryId) => {
     try {
-      // Kategori bazlı kaldırma için categoryId kullan
       const assignment = printerAssignments.find(a => a.category_id === categoryId);
       if (!assignment) {
         alert('Atama bulunamadı');
         return;
       }
-      
+
       const result = await window.electronAPI.removePrinterAssignment(
         assignment.printerName,
         assignment.printerType,
         categoryId
       );
-      
+
       if (result && result.success) {
         await loadPrinterAssignments();
         alert('Kategori ataması kaldırıldı');
@@ -558,6 +725,29 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
       console.error('Kategori ataması kaldırma hatası:', error);
       alert('Kategori ataması kaldırılamadı: ' + error.message);
     }
+  };
+
+  const handleRemoveCategoryAssignment = (categoryId) => {
+    if (!categoryId) return;
+
+    const msg = 'Bu kategorinin yazıcı atamasını kaldırmak istediğinize emin misiniz?';
+
+    if (isGeceDonercisiMode) {
+      setGeceSettingsConfirm({
+        message: msg,
+        onConfirm: () => {
+          setGeceSettingsConfirm(null);
+          void runRemoveCategoryAssignment(categoryId);
+        },
+      });
+      return;
+    }
+
+    if (!confirm(msg)) {
+      return;
+    }
+
+    void runRemoveCategoryAssignment(categoryId);
   };
 
   const handlePasswordChange = async () => {
@@ -641,6 +831,7 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
       // Reset form
       setProductForm({ name: '', category_id: selectedCategory?.id || '', price: '', image: '' });
       setEditingProduct(null);
+      setShowCreateProductPanel(false);
       loadAllProducts();
       
       // Ana uygulamayı yenile
@@ -690,9 +881,10 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
 
   const handleEditProduct = (product) => {
     setEditingProduct(product);
+    setShowCreateProductPanel(true);
     setProductForm({
       name: product.name,
-      category_id: product.category_id,
+      category_id: String(product.category_id ?? ''),
       price: product.price.toString(),
       image: product.image || ''
     });
@@ -785,6 +977,7 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
 
   const handleCancelEdit = () => {
     setEditingProduct(null);
+    setShowCreateProductPanel(false);
     setProductForm({ name: '', category_id: selectedCategory?.id || '', price: '', image: '' });
   };
 
@@ -935,6 +1128,15 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
     ? products.filter(p => p.category_id === selectedCategory.id)
     : products;
 
+  /** Ürün sekmesi: kategori + arama (Lacromisa ve varsayılan ortak) */
+  const productsForManagementList = useMemo(() => {
+    if (!productSearchQuery.trim()) return filteredProducts;
+    const q = productSearchQuery.toLowerCase();
+    return filteredProducts.filter((p) =>
+      String(p?.name || '').toLowerCase().includes(q)
+    );
+  }, [filteredProducts, productSearchQuery]);
+
   // Stock management functions
   const handleStockAdjustment = async () => {
     if (!stockFilterProduct) {
@@ -1052,7 +1254,7 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
         }
       }
 
-      // Ana uygulamadaki kategori/pano görünümünü yenile (masaüstü POS + mobil)
+      // Ana uygulamadaki kategori/pano görünümünü yenile (masaüstü + mobil)
       if (onProductsUpdated) {
         onProductsUpdated();
       }
@@ -1064,7 +1266,11 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
 
   return createPortal(
     <div className="fixed inset-0 bg-black/80 backdrop-blur-lg flex items-center justify-center z-[999] animate-fade-in px-4">
-      <div className="bg-white rounded-3xl p-8 w-full max-w-6xl max-h-[90vh] shadow-2xl transform animate-scale-in relative overflow-hidden flex flex-col">
+      <div
+        className={`bg-white rounded-2xl p-6 sm:p-8 w-full max-h-[92vh] shadow-2xl transform animate-scale-in relative overflow-hidden flex flex-col border border-slate-200/80 ${
+          activeTab === 'products' || activeTab === 'stock' ? 'max-w-[min(96rem,96vw)]' : 'max-w-6xl'
+        }`}
+      >
         <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-orange-500 via-orange-400 to-blue-500"></div>
       
         <button
@@ -1312,35 +1518,32 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                         {showCreateProductPanel ? 'Yeni Ürün (Kapat)' : 'Yeni Ürün'}
                       </button>
 
-                      <div className="text-sm font-bold text-slate-600">
-                        {(filteredProducts || []).filter((p) => {
-                          if (!productSearchQuery) return true;
-                          return String(p?.name || '').toLowerCase().includes(productSearchQuery.toLowerCase());
-                        }).length} ürün
+                      <div className="text-xs font-semibold tabular-nums text-slate-500">
+                        {productsForManagementList.length} kayıt
                       </div>
                     </div>
 
                     {showCreateProductPanel && (
-                      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="text-sm font-extrabold text-slate-900 mb-3">Yeni Ürün Ekle</div>
+                      <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/90 p-4">
+                        <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Yeni ürün</div>
                         <form onSubmit={handleProductSubmit} className="grid grid-cols-12 gap-3 items-end">
-                          <div className="col-span-12 md:col-span-4">
-                            <label className="block text-xs font-bold text-slate-600 mb-1">Ürün</label>
+                          <div className="col-span-12 md:col-span-5">
+                            <label className="block text-xs font-bold text-slate-600 mb-1">Ürün adı</label>
                             <input
                               type="text"
                               value={productForm.name}
                               onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
-                              className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-slate-500 focus:outline-none bg-white"
+                              className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:border-slate-900 focus:ring-1 focus:ring-slate-900/20 focus:outline-none bg-white text-sm"
                               placeholder="Ürün adı"
                               required
                             />
                           </div>
-                          <div className="col-span-12 md:col-span-3">
+                          <div className="col-span-12 md:col-span-4">
                             <label className="block text-xs font-bold text-slate-600 mb-1">Kategori</label>
                             <select
                               value={productForm.category_id || ''}
                               onChange={(e) => setProductForm({ ...productForm, category_id: e.target.value })}
-                              className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-slate-500 focus:outline-none bg-white"
+                              className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:border-slate-900 focus:outline-none bg-white text-sm"
                               required
                             >
                               <option value="" disabled>Kategori seç</option>
@@ -1349,8 +1552,8 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                               ))}
                             </select>
                           </div>
-                          <div className="col-span-12 md:col-span-2">
-                            <label className="block text-xs font-bold text-slate-600 mb-1">Fiyat</label>
+                          <div className="col-span-12 md:col-span-3">
+                            <label className="block text-xs font-bold text-slate-600 mb-1">Fiyat (₺)</label>
                             <input
                               type="text"
                               inputMode="decimal"
@@ -1362,40 +1565,17 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                                 const finalValue = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : normalized;
                                 setProductForm({ ...productForm, price: finalValue });
                               }}
-                              className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-slate-500 focus:outline-none bg-white text-right"
+                              className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:border-slate-900 focus:outline-none bg-white text-sm text-right font-semibold"
                               placeholder="0.00"
                               required
                             />
                           </div>
-                          <div className="col-span-12 md:col-span-3">
-                            <label className="block text-xs font-bold text-slate-600 mb-1">Görsel (opsiyonel)</label>
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                value={productForm.image}
-                                onChange={(e) => setProductForm({ ...productForm, image: e.target.value })}
-                                className="flex-1 px-3 py-2 rounded-xl border border-slate-200 focus:border-slate-500 focus:outline-none bg-white"
-                                placeholder="URL veya dosya seç"
-                              />
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  const productId = null;
-                                  const result = await window.electronAPI.selectImageFile(productId);
-                                  if (result?.success && result?.path) setProductForm({ ...productForm, image: result.path });
-                                }}
-                                className="px-3 py-2 rounded-xl bg-slate-900 text-white font-semibold"
-                              >
-                                Dosya
-                              </button>
-                            </div>
-                          </div>
-                          <div className="col-span-12">
+                          <div className="col-span-12 flex justify-end">
                             <button
                               type="submit"
-                              className="w-full px-4 py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 text-white font-extrabold hover:shadow-lg transition-all"
+                              className="px-6 py-2.5 rounded-lg bg-slate-900 text-white text-sm font-bold hover:bg-slate-800 transition-colors"
                             >
-                              Ekle
+                              Ürünü ekle
                             </button>
                           </div>
                         </form>
@@ -1403,72 +1583,42 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                     )}
                   </div>
 
-                  {/* Dense table */}
-                  <div className="max-h-[62vh] overflow-y-auto">
-                    <div className="sticky top-0 z-10 bg-white border-b border-slate-200">
-                      <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[11px] font-extrabold text-slate-600">
-                        <div className="col-span-5">Ürün</div>
+                  <div className="max-h-[min(68vh,720px)] overflow-auto">
+                    <div className="sticky top-0 z-10 bg-slate-100/95 backdrop-blur border-b border-slate-200">
+                      <div className="grid grid-cols-12 gap-2 px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                        <div className="col-span-1">#</div>
+                        <div className="col-span-4">Ürün</div>
                         <div className="col-span-3">Kategori</div>
                         <div className="col-span-2 text-right">Fiyat</div>
                         <div className="col-span-2 text-right">İşlem</div>
                       </div>
                     </div>
 
-                    {(filteredProducts || [])
-                      .filter((p) => {
-                        if (!productSearchQuery) return true;
-                        return String(p?.name || '').toLowerCase().includes(productSearchQuery.toLowerCase());
-                      })
-                      .map((product) => {
+                    {productsForManagementList.map((product) => {
                         const isInline = inlineEditingProductId === product.id;
                         const draft = isInline ? inlineDraft : null;
                         const catName = categories.find((c) => c.id === product.category_id)?.name || '—';
 
                         return (
-                          <div key={product.id} className="border-b border-slate-100 hover:bg-slate-50">
-                            <div className="grid grid-cols-12 gap-2 px-4 py-2.5 items-center">
-                              <div className="col-span-5 flex items-center gap-3 min-w-0">
-                                {product.image ? (
-                                  <img
-                                    src={product.image}
-                                    alt={product.name}
-                                    className="w-9 h-9 rounded-xl object-cover border border-slate-200 bg-white"
-                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                          <div key={product.id} className="border-b border-slate-100 hover:bg-slate-50/80">
+                            <div className="grid grid-cols-12 gap-2 px-4 py-2 items-center">
+                              <div className="col-span-1 text-[11px] font-mono text-slate-400 tabular-nums">{product.id}</div>
+                              <div className="col-span-4 min-w-0">
+                                {isInline ? (
+                                  <input
+                                    type="text"
+                                    value={draft?.name || ''}
+                                    onChange={(e) => setInlineDraft((prev) => ({ ...(prev || {}), name: e.target.value }))}
+                                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 focus:border-slate-900 focus:outline-none bg-white text-sm font-semibold text-slate-900"
                                   />
                                 ) : (
-                                  <div className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-500 text-sm">
-                                    📦
+                                  <div className="text-sm font-semibold text-slate-900 truncate" title={product.name}>
+                                    {product.name}
                                   </div>
                                 )}
-
-                                <div className="min-w-0 flex-1">
-                                  {isInline ? (
-                                    <div className="flex items-center gap-2">
-                                      <input
-                                        type="text"
-                                        value={draft?.name || ''}
-                                        onChange={(e) => setInlineDraft((prev) => ({ ...(prev || {}), name: e.target.value }))}
-                                        className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:border-slate-500 focus:outline-none bg-white text-slate-900 text-sm font-semibold"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => selectInlineImage(product.id)}
-                                        className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-900 font-semibold whitespace-nowrap"
-                                        title="Görsel seç"
-                                      >
-                                        Görsel
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <>
-                                      <div className="text-sm font-extrabold text-slate-900 truncate">{product.name}</div>
-                                      <div className="text-[11px] font-semibold text-slate-500 truncate">{catName}</div>
-                                    </>
-                                  )}
-                                </div>
                               </div>
 
-                              <div className="col-span-3">
+                              <div className="col-span-3 min-w-0">
                                 {isInline ? (
                                   <select
                                     value={draft?.category_id || ''}
@@ -1551,166 +1701,265 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                         );
                       })}
 
-                    {(filteredProducts || []).filter((p) => {
-                      if (!productSearchQuery) return true;
-                      return String(p?.name || '').toLowerCase().includes(productSearchQuery.toLowerCase());
-                    }).length === 0 && (
-                      <div className="p-10 text-center text-slate-500 font-semibold">
-                        Ürün bulunamadı
+                    {productsForManagementList.length === 0 && (
+                      <div className="py-16 text-center text-sm font-medium text-slate-500">
+                        Bu filtrelere uygun ürün yok
                       </div>
                     )}
                   </div>
                 </div>
               ) : (
-                <>
-                  {/* Product Form */}
-                  <div className="bg-gradient-to-br from-orange-50 to-orange-50 rounded-2xl p-6 border border-orange-200">
-                    <h3 className="text-xl font-bold text-gray-800 mb-4">
-                      {editingProduct ? 'Ürün Düzenle' : 'Yeni Ürün Ekle'}
-                    </h3>
-                    <form onSubmit={handleProductSubmit} className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Ürün Adı
-                          </label>
-                          <input
-                            type="text"
-                            value={productForm.name}
-                            onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
-                            className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none"
-                            placeholder="Ürün adı"
-                            required
-                          />
-                        </div>
-
-                        <div className="relative" ref={categoryDropdownRef}>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Kategori
-                          </label>
+                <div className="rounded-xl border border-slate-200 bg-white shadow-sm flex flex-col min-h-[min(70vh,640px)] max-h-[min(78vh,720px)]">
+                  <div className="shrink-0 border-b border-slate-200 bg-slate-50/90 px-3 py-3 sm:px-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="relative flex-1 min-w-[160px] max-w-md">
+                        <svg className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <input
+                          type="text"
+                          value={productSearchQuery}
+                          onChange={(e) => setProductSearchQuery(e.target.value)}
+                          placeholder="Ürün ara…"
+                          className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900/15"
+                        />
+                      </div>
+                      <select
+                        value={selectedCategory?.id || ''}
+                        onChange={(e) => {
+                          const id = e.target.value ? parseInt(e.target.value, 10) : null;
+                          setSelectedCategory(id ? categories.find((c) => c.id === id) || null : null);
+                        }}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 focus:border-slate-900 focus:outline-none"
+                      >
+                        <option value="">Tüm kategoriler</option>
+                        {categories.map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddCategoryModal(true)}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        + Kategori
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (editingProduct || showCreateProductPanel) {
+                            handleCancelEdit();
+                          } else {
+                            setEditingProduct(null);
+                            setShowCreateProductPanel(true);
+                            setProductForm({
+                              name: '',
+                              category_id: selectedCategory?.id ? String(selectedCategory.id) : '',
+                              price: '',
+                              image: '',
+                            });
+                          }
+                        }}
+                        className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800"
+                      >
+                        {editingProduct || showCreateProductPanel ? 'Formu kapat' : 'Yeni ürün'}
+                      </button>
+                      {window.electronAPI && typeof window.electronAPI.optimizeAllProductImages === 'function' && (
+                        <button
+                          type="button"
+                          onClick={handleOptimizeAllImages}
+                          className="rounded-lg border border-slate-200 px-2.5 py-2 text-[11px] font-semibold text-slate-600 hover:bg-white"
+                        >
+                          Görsel optimizasyon
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleCreateImageRecordsForAllProducts}
+                        disabled={isCreatingImageRecords}
+                        className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                      >
+                        {isCreatingImageRecords ? 'Kayıtlar…' : 'Firebase image kayıtları'}
+                      </button>
+                      <span className="ml-auto text-xs font-semibold tabular-nums text-slate-500">
+                        {productsForManagementList.length} kayıt
+                      </span>
+                    </div>
+                    <div className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCategory(null)}
+                        className={`shrink-0 rounded-md px-2.5 py-1 text-xs font-semibold ${
+                          !selectedCategory ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        Tümü
+                      </button>
+                      {categories.map((cat) => (
+                        <div key={cat.id} className="group relative flex shrink-0 items-stretch">
                           <button
                             type="button"
-                            onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
-                            className={`w-full px-4 py-3 rounded-xl border-2 transition-all text-left flex items-center justify-between ${
-                              productForm.category_id
-                                ? 'border-orange-500 bg-orange-50'
-                                : 'border-gray-200 hover:border-orange-300'
-                            } focus:border-orange-500 focus:outline-none`}
+                            onClick={() => setSelectedCategory(cat)}
+                            className={`rounded-l-md px-2.5 py-1 text-xs font-semibold ${
+                              selectedCategory?.id === cat.id
+                                ? 'bg-slate-900 text-white'
+                                : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50'
+                            }`}
                           >
-                            <span className={productForm.category_id ? 'text-orange-700 font-medium' : 'text-gray-500'}>
-                              {productForm.category_id
-                                ? categories.find(c => c.id === parseInt(productForm.category_id))?.name || 'Kategori Seçin'
-                                : 'Kategori Seçin'}
-                            </span>
-                            <svg 
-                              className={`w-5 h-5 transition-transform ${showCategoryDropdown ? 'rotate-180' : ''} ${
-                                productForm.category_id ? 'text-orange-600' : 'text-gray-400'
-                              }`}
-                              fill="none" 
-                              stroke="currentColor" 
-                              viewBox="0 0 24 24"
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
+                            {cat.name}
                           </button>
-                          
-                          {showCategoryDropdown && (
-                            <div className="absolute z-20 w-full mt-2 bg-white rounded-xl shadow-2xl border-2 border-orange-200 overflow-hidden max-h-60 overflow-y-auto">
-                              {categories.map(cat => (
-                                <button
-                                  key={cat.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setProductForm({ ...productForm, category_id: cat.id.toString() });
-                                    setShowCategoryDropdown(false);
-                                  }}
-                                  className={`w-full px-4 py-3 text-left hover:bg-orange-50 transition-all flex items-center space-x-3 ${
-                                    productForm.category_id === cat.id.toString()
-                                      ? 'bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white'
-                                      : 'text-gray-700'
-                                  }`}
-                                >
-                                  <div className={`w-2 h-2 rounded-full ${
-                                    productForm.category_id === cat.id.toString()
-                                      ? 'bg-white'
-                                      : 'bg-orange-500'
-                                  }`}></div>
-                                  <span className="font-medium">{cat.name}</span>
-                                  {productForm.category_id === cat.id.toString() && (
-                                    <svg className="w-5 h-5 ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                    </svg>
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                          )}
+                          <div className="flex rounded-r-md ring-1 ring-slate-200 bg-slate-50 opacity-0 transition-opacity group-hover:opacity-100">
+                            <button
+                              type="button"
+                              title="Yukarı"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleMoveCategory(cat.id, 'up');
+                              }}
+                              className="px-1 text-slate-500 hover:bg-slate-200"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              title="Aşağı"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleMoveCategory(cat.id, 'down');
+                              }}
+                              className="px-1 text-slate-500 hover:bg-slate-200"
+                            >
+                              ↓
+                            </button>
+                            <button
+                              type="button"
+                              title="Düzenle"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEditCategory(cat);
+                              }}
+                              className="px-1 text-slate-500 hover:bg-slate-200"
+                            >
+                              ✎
+                            </button>
+                            <button
+                              type="button"
+                              title="Sil"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteCategoryModal({ categoryId: cat.id, categoryName: cat.name });
+                              }}
+                              className="px-1 text-red-600 hover:bg-red-50"
+                            >
+                              ×
+                            </button>
+                          </div>
                         </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {(editingProduct || showCreateProductPanel) && (
+                    <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-3 sm:px-4">
+                      <div className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+                        {editingProduct ? 'Ürün düzenle' : 'Yeni ürün'}
                       </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Fiyat (₺)
-                          </label>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={productForm.price}
-                            onChange={(e) => {
-                              // Sadece sayı ve nokta/virgül kabul et
-                              const val = e.target.value.replace(/[^\d.,]/g, '');
-                              // Virgülü noktaya çevir
-                              const normalized = val.replace(',', '.');
-                              // Sadece bir ondalık ayırıcı olmasını sağla
-                              const parts = normalized.split('.');
-                              const finalValue = parts.length > 2 
-                                ? parts[0] + '.' + parts.slice(1).join('')
-                                : normalized;
-                              setProductForm({ ...productForm, price: finalValue });
-                            }}
-                            className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none"
-                            placeholder="0.00"
-                            required
-                          />
+                      <form onSubmit={handleProductSubmit} className="flex flex-col gap-3">
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div className="min-w-[140px] flex-1">
+                            <label className="mb-1 block text-[11px] font-semibold text-slate-500">Ürün adı</label>
+                            <input
+                              type="text"
+                              value={productForm.name}
+                              onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
+                              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none"
+                              placeholder="Ad"
+                              required
+                            />
+                          </div>
+                          <div className="min-w-[140px] flex-1">
+                            <label className="mb-1 block text-[11px] font-semibold text-slate-500">Kategori</label>
+                            <select
+                              value={productForm.category_id || ''}
+                              onChange={(e) => setProductForm({ ...productForm, category_id: e.target.value })}
+                              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none"
+                              required
+                            >
+                              <option value="" disabled>Seçin</option>
+                              {categories.map((c) => (
+                                <option key={c.id} value={String(c.id)}>{c.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="w-28">
+                            <label className="mb-1 block text-[11px] font-semibold text-slate-500">Fiyat ₺</label>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={productForm.price}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^\d.,]/g, '');
+                                const normalized = val.replace(',', '.');
+                                const parts = normalized.split('.');
+                                const finalValue =
+                                  parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : normalized;
+                                setProductForm({ ...productForm, price: finalValue });
+                              }}
+                              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm font-semibold focus:border-slate-900 focus:outline-none"
+                              placeholder="0.00"
+                              required
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="submit"
+                              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800"
+                            >
+                              {editingProduct ? 'Kaydet' : 'Ekle'}
+                            </button>
+                            {(editingProduct || showCreateProductPanel) && (
+                              <button
+                                type="button"
+                                onClick={handleCancelEdit}
+                                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                              >
+                                İptal
+                              </button>
+                            )}
+                          </div>
                         </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Ürün Görseli (Opsiyonel)
-                          </label>
-                          <div className="flex space-x-2">
+                        <details className="text-xs text-slate-500">
+                          <summary className="cursor-pointer font-semibold text-slate-600">Görsel (isteğe bağlı)</summary>
+                          <div className="mt-2 flex flex-wrap gap-2">
                             <input
                               type="text"
                               value={productForm.image}
                               onChange={(e) => setProductForm({ ...productForm, image: e.target.value })}
-                              className="flex-1 px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none"
-                              placeholder="Görsel URL'si girin veya dosya seçin"
+                              className="min-w-[200px] flex-1 rounded border border-slate-200 px-2 py-1.5 text-sm"
+                              placeholder="URL"
                             />
                             <button
                               type="button"
                               onClick={async () => {
                                 if (!window.electronAPI || typeof window.electronAPI.selectImageFile !== 'function') {
-                                  alert('Dosya seçimi özelliği yüklenemedi. Lütfen uygulamayı yeniden başlatın.');
+                                  alert('Dosya seçimi yüklenemedi.');
                                   return;
                                 }
-                                
                                 try {
-                                  // Ürün ID'sini parametre olarak gönder (düzenleme modunda)
                                   const productId = editingProduct ? editingProduct.id : null;
                                   const result = await window.electronAPI.selectImageFile(productId);
                                   if (result.success && result.path) {
                                     setProductForm({ ...productForm, image: result.path });
                                   } else if (!result.canceled) {
-                                    alert('Dosya seçilemedi: ' + (result.error || 'Bilinmeyen hata'));
+                                    alert('Dosya seçilemedi: ' + (result.error || 'Bilinmeyen'));
                                   }
                                 } catch (error) {
-                                  alert('Dosya seçme hatası: ' + error.message);
+                                  alert('Dosya: ' + error.message);
                                 }
                               }}
-                              className="px-6 py-2 bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white rounded-xl font-medium hover:shadow-lg transform hover:scale-105 transition-all whitespace-nowrap"
+                              className="rounded border border-slate-200 px-2 py-1 text-xs font-semibold"
                             >
-                              📁 Dosya Seç
+                              Dosya
                             </button>
                             <button
                               type="button"
@@ -1719,744 +1968,125 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                                 setShowFirebaseImageModal(true);
                                 try {
                                   const result = await window.electronAPI.getFirebaseImages();
-                                  if (result.success) {
-                                    setFirebaseImages(result.images || []);
-                                  } else {
-                                    alert('Firebase görselleri yüklenemedi: ' + (result.error || 'Bilinmeyen hata'));
-                                  }
+                                  if (result.success) setFirebaseImages(result.images || []);
+                                  else alert('Firebase: ' + (result.error || 'Hata'));
                                 } catch (error) {
-                                  alert('Firebase görselleri yükleme hatası: ' + error.message);
+                                  alert(error.message);
                                 } finally {
                                   setIsLoadingFirebaseImages(false);
                                 }
                               }}
-                              className="px-6 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-xl font-medium hover:shadow-lg transform hover:scale-105 transition-all whitespace-nowrap"
+                              className="rounded border border-slate-200 px-2 py-1 text-xs font-semibold"
                             >
-                              🔥 Firebase'den Seç
+                              Firebase
                             </button>
-                            {productForm.image && (
-                              <button
-                                type="button"
-                                onClick={() => setProductForm({ ...productForm, image: '' })}
-                                className="px-4 py-2 bg-red-500 text-white rounded-xl font-medium hover:bg-red-600 transition-all"
-                              >
-                                ✕
-                              </button>
-                            )}
                           </div>
-                          <p className="text-xs text-gray-500 mt-1">
-                            💡 Görsel URL'si girebilir, dosya seçebilir veya Firebase'den seçebilirsiniz. URL girildiğinde otomatik olarak Firebase'e kaydedilir.
-                          </p>
-                          {productForm.image && (
-                            <div className="mt-2">
-                              <img 
-                                src={productForm.image} 
-                                alt="Önizleme" 
-                                className="w-24 h-24 object-cover rounded-lg border-2 border-orange-200"
-                                onError={(e) => {
-                                  e.target.style.display = 'none';
-                                }}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex space-x-3">
-                        <button
-                          type="submit"
-                          className="flex-1 px-6 py-3 bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white rounded-xl font-semibold hover:shadow-lg transform hover:scale-105 transition-all"
-                        >
-                          {editingProduct ? 'Güncelle' : 'Ekle'}
-                        </button>
-                        {editingProduct && (
-                          <button
-                            type="button"
-                            onClick={handleCancelEdit}
-                            className="px-6 py-3 bg-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-300 transition-all"
-                          >
-                            İptal
-                          </button>
-                        )}
-                      </div>
-                    </form>
-                  </div>
-
-                  {/* Firebase Image Records Button */}
-                  <div className="mb-6">
-                    <button
-                      onClick={async () => {
-                        if (!window.confirm(
-                          'Tüm mevcut ürünler için Firebase\'de image kayıtları oluşturulacak.\n\n' +
-                          'Bu işlem sadece görseli olan ve henüz Firebase\'de kaydı olmayan ürünler için çalışır.\n\n' +
-                          'Devam etmek istiyor musunuz?'
-                        )) {
-                          return;
-                        }
-                        
-                        try {
-                          setIsCreatingImageRecords(true);
-                          const result = await window.electronAPI.createImageRecordsForAllProducts();
-                          if (result.success) {
-                            alert(
-                              `✅ Image kayıtları oluşturuldu!\n\n` +
-                              `Oluşturulan: ${result.created}\n` +
-                              `Atlanan: ${result.skipped}\n` +
-                              `Hata: ${result.errors}`
-                            );
-                          } else {
-                            alert('Image kayıtları oluşturulamadı: ' + (result.error || 'Bilinmeyen hata'));
-                          }
-                        } catch (error) {
-                          console.error('Image kayıtları oluşturma hatası:', error);
-                          alert('Image kayıtları oluşturma hatası: ' + error.message);
-                        } finally {
-                          setIsCreatingImageRecords(false);
-                        }
-                      }}
-                      disabled={isCreatingImageRecords}
-                      className="w-full px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl font-semibold hover:shadow-lg transform hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isCreatingImageRecords ? '🔄 Oluşturuluyor...' : '🔥 Tüm Ürünler İçin Firebase Image Kayıtları Oluştur'}
-                    </button>
-                  </div>
-
-                  {/* Product List */}
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-800 mb-6">Mevcut Ürünler</h3>
-                    
-                    {/* Modern Category Filter */}
-                    <div className="mb-6">
-                      <div className="bg-gradient-to-br from-orange-50 via-orange-50 to-blue-50 rounded-2xl p-4 border-2 border-orange-200 shadow-lg">
-                        <div className="flex items-center space-x-2 mb-3">
-                          <svg className="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                          </svg>
-                          <span className="text-sm font-semibold text-gray-700">Kategori Filtrele</span>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            onClick={() => setSelectedCategory(null)}
-                            className={`px-4 py-2.5 rounded-xl font-medium transition-all duration-300 transform hover:scale-105 ${
-                              !selectedCategory
-                                ? 'bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white shadow-lg scale-105'
-                                : 'bg-white text-gray-700 hover:bg-orange-50 border-2 border-gray-200 hover:border-orange-300'
-                            }`}
-                          >
-                            <div className="flex items-center space-x-2">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                              </svg>
-                              <span>Tümü</span>
-                            </div>
-                          </button>
-                          {categories.map(cat => (
-                            <div key={cat.id} className="relative group">
-                              <button
-                                onClick={() => setSelectedCategory(cat)}
-                                className={`px-4 py-2.5 rounded-xl font-medium transition-all duration-300 transform hover:scale-105 ${
-                                  selectedCategory?.id === cat.id
-                                    ? 'bg-gradient-to-r from-orange-500 via-orange-400 to-orange-600 text-white shadow-lg scale-105'
-                                    : 'bg-white text-gray-700 hover:bg-orange-50 border-2 border-gray-200 hover:border-orange-300'
-                                }`}
-                              >
-                                <div className="flex items-center space-x-2">
-                                  <div className={`w-2 h-2 rounded-full ${
-                                    selectedCategory?.id === cat.id ? 'bg-white' : 'bg-orange-500'
-                                  }`}></div>
-                                  <span>{cat.name}</span>
-                                  {selectedCategory?.id === cat.id && (
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                    </svg>
-                                  )}
-                                </div>
-                              </button>
-                              <div className="absolute -top-1 -right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                                {/* Yukarı taşı */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleMoveCategory(cat.id, 'up');
-                                  }}
-                                  className="w-6 h-6 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-full flex items-center justify-center shadow-lg transition-all"
-                                  title="Yukarı Taşı"
-                                >
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                                  </svg>
-                                </button>
-                                {/* Aşağı taşı */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleMoveCategory(cat.id, 'down');
-                                  }}
-                                  className="w-6 h-6 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-full flex items-center justify-center shadow-lg transition-all"
-                                  title="Aşağı Taşı"
-                                >
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                  </svg>
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleEditCategory(cat);
-                                  }}
-                                  className="w-6 h-6 bg-blue-500 hover:bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg transition-all"
-                                  title="Kategoriyi Düzenle"
-                                >
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                  </svg>
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setDeleteCategoryModal({ categoryId: cat.id, categoryName: cat.name });
-                                  }}
-                                  className="w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center shadow-lg transition-all"
-                                  title="Kategoriyi Sil"
-                                >
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                  </svg>
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                          <button
-                            onClick={() => setShowAddCategoryModal(true)}
-                            className="px-4 py-2.5 rounded-xl font-medium transition-all duration-300 transform hover:scale-105 bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg hover:shadow-xl border-2 border-green-400"
-                          >
-                            <div className="flex items-center space-x-2">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                              </svg>
-                              <span>Kategori Ekle</span>
-                            </div>
-                          </button>
-                        </div>
-                        {selectedCategory && (
-                          <div className="mt-3 pt-3 border-t border-orange-200">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-gray-600">
-                                <span className="font-semibold text-orange-600">{selectedCategory.name}</span> kategorisinde
-                              </span>
-                              <span className="text-sm font-bold text-orange-600">
-                                {filteredProducts.length} ürün
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                        </details>
+                      </form>
                     </div>
+                  )}
 
-                    <div className="grid grid-cols-1 gap-3 max-h-96 overflow-y-auto scrollbar-custom">
-                      {filteredProducts.map(product => {
-                        const category = categories.find(c => c.id === product.category_id);
-                        return (
-                          <div
-                            key={product.id}
-                            className="bg-white rounded-xl p-4 border border-gray-200 hover:shadow-md transition-all flex items-center justify-between"
-                          >
-                            <div className="flex items-center space-x-4 flex-1">
-                              {product.image ? (
-                                <img src={product.image} alt={product.name} className="w-16 h-16 rounded-lg object-cover" />
-                              ) : (
-                                <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-orange-200 to-orange-200 flex items-center justify-center">
-                                  <span className="text-2xl">📦</span>
-                                </div>
-                              )}
-                              <div className="flex-1">
-                                <h4 className="font-semibold text-gray-800">{product.name}</h4>
-                                <p className="text-sm text-gray-500">{category?.name || 'Kategori yok'}</p>
-                                <p className="text-lg font-bold text-orange-600">{product.price.toFixed(2)} ₺</p>
-                              </div>
-                            </div>
-                            <div className="flex space-x-2">
-                              <button
-                                onClick={() => handleEditProduct(product)}
-                                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all"
-                              >
-                                ✏️ Düzenle
-                              </button>
-                              <button
-                                onClick={() => handleDeleteProduct(product.id)}
-                                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all"
-                              >
-                                🗑️ Sil
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                  <div className="min-h-0 flex-1 overflow-auto">
+                    <table className="w-full min-w-[520px] border-collapse text-sm">
+                      <thead className="sticky top-0 z-[1] border-b border-slate-200 bg-slate-100">
+                        <tr className="text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                          <th className="whitespace-nowrap px-2 py-2.5 sm:px-3 w-12">#</th>
+                          <th className="whitespace-nowrap px-2 py-2.5 sm:px-3">Ürün</th>
+                          <th className="hidden md:table-cell whitespace-nowrap px-3 py-2.5">Kategori</th>
+                          <th className="whitespace-nowrap px-2 py-2.5 text-right sm:px-3 w-24">Fiyat</th>
+                          <th className="whitespace-nowrap px-2 py-2.5 text-center sm:px-3 w-20">Stok</th>
+                          <th className="whitespace-nowrap px-2 py-2.5 text-right sm:px-3 w-32">İşlem</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {productsForManagementList.map((product) => {
+                          const category = categories.find((c) => c.id === product.category_id);
+                          const track = product.trackStock === true;
+                          const st = product.stock !== undefined ? product.stock : null;
+                          return (
+                            <tr key={product.id} className="border-b border-slate-100 hover:bg-slate-50/90">
+                              <td className="px-2 py-2 font-mono text-xs text-slate-400 sm:px-3">{product.id}</td>
+                              <td className="px-2 py-2 font-medium text-slate-900 sm:px-3">
+                                <div className="max-w-[220px] truncate sm:max-w-none" title={product.name}>{product.name}</div>
+                                <div className="text-[11px] text-slate-500 md:hidden">{category?.name || '—'}</div>
+                              </td>
+                              <td className="hidden px-3 py-2 text-slate-600 md:table-cell">{category?.name || '—'}</td>
+                              <td className="px-2 py-2 text-right font-semibold tabular-nums text-slate-900 sm:px-3">
+                                {Number(product.price || 0).toFixed(2)} ₺
+                              </td>
+                              <td className="px-2 py-2 text-center sm:px-3">
+                                {track && st !== null ? (
+                                  <span
+                                    className={`inline-block min-w-[2rem] rounded px-1.5 py-0.5 text-xs font-bold tabular-nums ${
+                                      st === 0
+                                        ? 'bg-red-100 text-red-700'
+                                        : st < 10
+                                          ? 'bg-amber-100 text-amber-800'
+                                          : 'bg-emerald-50 text-emerald-800'
+                                    }`}
+                                  >
+                                    {st}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-2 text-right sm:px-3">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditProduct(product)}
+                                  className="mr-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  Düzenle
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteProduct(product.id)}
+                                  className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-100"
+                                >
+                                  Sil
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {productsForManagementList.length === 0 && (
+                      <div className="py-14 text-center text-sm font-medium text-slate-500">Kayıt bulunamadı</div>
+                    )}
                   </div>
-                </>
+                </div>
               )}
             </div>
           )}
 
-          {activeTab === 'stock' && (
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-gray-800 mb-4">Stok Takibi</h3>
-
-              {/* Gece Dönercisi: Şube seçimi (stok sekmesinin en üstünde) */}
-              {isGeceDonercisiMode && (
-                <div className="bg-white rounded-2xl p-6 border border-slate-200">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h4 className="text-lg font-bold text-slate-900">Şube Seçimi</h4>
-                      <p className="text-sm text-slate-600 font-medium mt-1">
-                        Bu cihazın şubesini seçin. Seçiminizi daha sonra buradan değiştirebilirsiniz.
-                      </p>
-                      {geceBranch ? (
-                        <p className="text-sm mt-2">
-                          Seçili Şube:{' '}
-                          <span className="font-extrabold text-slate-900">
-                            {GECE_BRANCHES.find((b) => b.value === geceBranch)?.label || geceBranch}
-                          </span>
-                        </p>
-                      ) : (
-                        <p className="text-sm mt-2 font-bold text-red-600">
-                          Şube seçimi zorunludur.
-                        </p>
-                      )}
-                    </div>
-                    <div className="text-xs font-semibold text-slate-500">
-                      {isSavingGeceBranch ? 'Kaydediliyor…' : ''}
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    {GECE_BRANCHES.map((b) => {
-                      const active = geceBranch === b.value;
-                      return (
-                        <button
-                          key={b.value}
-                          type="button"
-                          onClick={() => saveGeceBranch(b.value)}
-                          className={`px-5 py-4 rounded-2xl border-2 font-extrabold transition-all ${
-                            active
-                              ? 'border-slate-900 bg-slate-900 text-white shadow-lg'
-                              : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-900'
-                          }`}
-                          disabled={isSavingGeceBranch}
-                        >
-                          {b.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="mt-4 text-xs font-semibold text-slate-500">
-                    {isLoadingGeceBranchStocks
-                      ? 'Firebase şube stokları yükleniyor…'
-                      : 'Satış ekranı seçili şubeyi kullanır; aşağıda Şeker ve Sancak stoklarını ayrı ayrı güncelleyebilirsiniz (Admin Dashboard ile aynı veri).'}
-                  </div>
-                </div>
-              )}
-              
-              {/* Filtreler */}
-              <div className="bg-gradient-to-br from-orange-50 to-orange-50 rounded-2xl p-6 border border-orange-200">
-                <h4 className="text-lg font-semibold text-gray-800 mb-4">Filtrele</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Kategori
-                    </label>
-                    <select
-                      value={stockFilterCategory?.id || ''}
-                      onChange={(e) => {
-                        const catId = e.target.value ? parseInt(e.target.value) : null;
-                        const cat = (isGeceDonercisiMode ? allowedStockCategories : categories).find(c => c.id === catId);
-                        setStockFilterCategory(cat || null);
-                        setStockFilterProduct(null); // Kategori değişince ürün seçimini temizle
-                      }}
-                      className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none"
-                    >
-                      <option value="">Tüm Kategoriler</option>
-                      {(isGeceDonercisiMode ? allowedStockCategories : categories).map(cat => (
-                        <option key={cat.id} value={cat.id}>{cat.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  {stockFilterCategory && (
-                    <div className="flex items-end">
-                      {!isGeceDonercisiMode && (
-                        <button
-                          onClick={async () => {
-                            if (!window.confirm(
-                              `${stockFilterCategory.name} kategorisindeki TÜM ürünlerin stokunu 0 yapmak ve stok takibini açmak istediğinize emin misiniz?\n\nBu işlem geri alınamaz!`
-                            )) {
-                              return;
-                            }
-                            
-                            try {
-                              const result = await window.electronAPI.markCategoryOutOfStock(stockFilterCategory.id);
-                              
-                              if (result && result.success) {
-                                alert(`✅ ${result.updatedCount} ürün "kalmadı" olarak işaretlendi`);
-                                // Ürünleri yenile
-                                await loadAllProducts();
-                                // Ana uygulamayı yenile
-                                if (onProductsUpdated) {
-                                  onProductsUpdated();
-                                }
-                              } else {
-                                alert(result?.error || 'Kategori işaretlenemedi');
-                              }
-                            } catch (error) {
-                              console.error('Kategori işaretleme hatası:', error);
-                              alert('Kategori işaretlenemedi: ' + error.message);
-                            }
-                          }}
-                          className="w-full px-4 py-2 bg-gradient-to-r from-red-500 to-rose-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all"
-                        >
-                          🔴 Kalmadı İşaretle
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Ürün
-                    </label>
-                    <select
-                      value={stockFilterProduct?.id || ''}
-                      onChange={(e) => {
-                        const prodId = e.target.value ? parseInt(e.target.value) : null;
-                        const prod = products.find(p => p.id === prodId);
-                        setStockFilterProduct(prod || null);
-                      }}
-                      className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-orange-500 focus:outline-none"
-                      disabled={!stockFilterCategory && categories.length > 0}
-                    >
-                      <option value="">Ürün Seçin</option>
-                      {(stockFilterCategory 
-                        ? products.filter(p => p.category_id === stockFilterCategory.id)
-                        : (isGeceDonercisiMode
-                          ? products.filter(p => {
-                            const cat = categories.find(c => c.id === p.category_id);
-                            return isAllowedStockCategory(cat?.name);
-                          })
-                          : products)
-                      ).map(prod => (
-                        <option key={prod.id} value={prod.id}>
-                          {prod.name}{' '}
-                          {isGeceDonercisiMode
-                            ? `(Şeker: ${getGeceStockForBranch(prod.id, 'SEKER')} · Sancak: ${getGeceStockForBranch(prod.id, 'SANCAK')})`
-                            : prod.stock !== undefined
-                              ? `(Stok: ${prod.stock || 0})`
-                              : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+          {activeTab === 'stock' && isGeceDonercisiMode && stockGeceSessionBranch === null && (
+            <div className="relative flex min-h-[min(52vh,480px)] flex-col items-center justify-center gap-6 rounded-xl border border-slate-200 bg-white px-4 py-10 shadow-sm">
+              <div className="max-w-md">
+                <p className="text-center text-xs font-bold uppercase tracking-wide text-slate-500">Stok takibi</p>
+                <h3 className="mt-2 text-center text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl">
+                  Hangi şubenin stoğunu yöneteceksiniz?
+                </h3>
+                <p className="mt-3 text-center text-sm leading-relaxed text-slate-600">
+                  Şube seçtikten sonra stok ekranı tam ekran açılır. Her stok sekmesine girişinizde şube seçmeniz gerekir.
+                </p>
               </div>
-
-              {/* Stok Güncelleme */}
-              {stockFilterProduct && (
-                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-200">
-                  <div className="flex items-center justify-between mb-4">
-                    <h4 className="text-lg font-semibold text-gray-800">
-                      {stockFilterProduct.name}
-                    </h4>
-                    {!isGeceDonercisiMode && (
-                      <button
-                        onClick={() => handleToggleStockTracking(stockFilterProduct.id, stockFilterProduct.trackStock)}
-                        className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                          stockFilterProduct.trackStock
-                            ? 'bg-green-500 text-white hover:bg-green-600'
-                            : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
-                        }`}
-                      >
-                        {stockFilterProduct.trackStock ? '✅ Stok Takibi Açık' : '❌ Stok Takibi Kapalı'}
-                      </button>
-                    )}
-                  </div>
-
-                  {isGeceDonercisiMode ? (
-                    <div className="space-y-4">
-                      {geceBranch && (
-                        <p className="text-sm text-gray-600">
-                          Bu cihazın satış şubesi:{' '}
-                          <span className="font-bold text-slate-800">
-                            {GECE_BRANCHES.find((b) => b.value === geceBranch)?.label || geceBranch}
-                          </span>
-                          {' '}
-                          (ürün kartlarında kullanılan stok)
-                        </p>
-                      )}
-                      <div className="grid md:grid-cols-2 gap-4">
-                        {GECE_BRANCHES.map(({ value: br, label }) => {
-                          const cur = getGeceStockForBranch(stockFilterProduct.id, br);
-                          const busy = geceStockSavingBranch === br;
-                          return (
-                            <div
-                              key={br}
-                              className="rounded-xl border border-slate-200 bg-white p-4 space-y-3"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="font-extrabold text-slate-900">{label}</span>
-                                <span
-                                  className={`text-sm font-bold px-2 py-1 rounded-lg ${
-                                    cur <= 0 ? 'bg-red-100 text-red-700' : cur < 10 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
-                                  }`}
-                                >
-                                  Stok: {cur}
-                                </span>
-                              </div>
-                              <div className="flex flex-wrap gap-2 items-end">
-                                <input
-                                  type="text"
-                                  inputMode="numeric"
-                                  disabled={busy}
-                                  value={geceStockQtyInput[br]}
-                                  onChange={(e) => {
-                                    const v = e.target.value.replace(/\D/g, '');
-                                    setGeceStockQtyInput((prev) => ({ ...prev, [br]: v }));
-                                  }}
-                                  className="flex-1 min-w-[100px] px-3 py-2 rounded-lg border-2 border-slate-200 focus:border-blue-500 focus:outline-none"
-                                  placeholder="Miktar"
-                                />
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => handleGeceBranchStockDelta(br, stockFilterProduct.id, 'add')}
-                                  className="px-3 py-2 rounded-lg bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700 disabled:opacity-50"
-                                >
-                                  + Ekle
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => handleGeceBranchStockDelta(br, stockFilterProduct.id, 'sub')}
-                                  className="px-3 py-2 rounded-lg bg-rose-600 text-white font-bold text-sm hover:bg-rose-700 disabled:opacity-50"
-                                >
-                                  − Çıkar
-                                </button>
-                              </div>
-                              <div className="pt-2 border-t border-slate-100 flex flex-wrap gap-2 items-end">
-                                <label className="text-xs font-semibold text-slate-600 w-full">Doğrudan sayıya ayarla</label>
-                                <input
-                                  type="text"
-                                  inputMode="numeric"
-                                  disabled={busy}
-                                  value={geceStockSetInput[br]}
-                                  onChange={(e) => {
-                                    const v = e.target.value.replace(/\D/g, '');
-                                    setGeceStockSetInput((prev) => ({ ...prev, [br]: v }));
-                                  }}
-                                  className="flex-1 min-w-[100px] px-3 py-2 rounded-lg border-2 border-slate-200 focus:border-indigo-500 focus:outline-none"
-                                  placeholder="Yeni stok"
-                                />
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => handleGeceBranchStockSetAbsolute(br, stockFilterProduct.id)}
-                                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-700 disabled:opacity-50"
-                                >
-                                  Kaydet
-                                </button>
-                              </div>
-                              {busy && <p className="text-xs text-slate-500">Kaydediliyor…</p>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : stockFilterProduct.trackStock ? (
-                    <>
-                      <p className="text-sm text-gray-600 mb-4">
-                        Mevcut Stok: <span className="font-bold text-blue-600">{isGeceDonercisiMode && geceBranch ? getDisplayedStock(stockFilterProduct) : (stockFilterProduct.stock !== undefined ? (stockFilterProduct.stock || 0) : 0)}</span>
-                      </p>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        İşlem Tipi
-                      </label>
-                      <select
-                        value={stockAdjustmentType}
-                        onChange={(e) => setStockAdjustmentType(e.target.value)}
-                        className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-blue-500 focus:outline-none"
-                      >
-                        <option value="add">Stok Ekle</option>
-                        <option value="subtract">Stok Çıkar</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Miktar
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={stockAdjustmentAmount}
-                        onChange={(e) => {
-                          const val = e.target.value.replace(/\D/g, '');
-                          setStockAdjustmentAmount(val);
-                        }}
-                        className="w-full px-4 py-2 rounded-xl border-2 border-gray-200 focus:border-blue-500 focus:outline-none"
-                        placeholder="Miktar"
-                      />
-                    </div>
-                    <div className="flex items-end">
-                      <button
-                        onClick={handleStockAdjustment}
-                        className="w-full px-6 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all"
-                      >
-                        {stockAdjustmentType === 'add' ? '➕ Ekle' : '➖ Çıkar'}
-                      </button>
-                    </div>
-                  </div>
-                    </>
-                  ) : (
-                    <p className="text-sm text-gray-500 italic">
-                      Bu ürün için stok takibi yapılmıyor. Stok takibini açmak için yukarıdaki butona tıklayın.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Ürün Listesi */}
-              <div>
-                <h4 className="text-lg font-semibold text-gray-800 mb-4">Ürün Stokları</h4>
-                <div className="grid grid-cols-1 gap-3 max-h-96 overflow-y-auto scrollbar-custom">
-                  {(stockFilterCategory 
-                    ? products.filter(p => p.category_id === stockFilterCategory.id)
-                    : (isGeceDonercisiMode
-                      ? products.filter(p => {
-                        const cat = categories.find(c => c.id === p.category_id);
-                        return isAllowedStockCategory(cat?.name);
-                      })
-                      : products)
-                  ).map(product => {
-                    const category = categories.find(c => c.id === product.category_id);
-                    const trackStock = product.trackStock === true;
-                    const stockSek = isGeceDonercisiMode ? getGeceStockForBranch(product.id, 'SEKER') : null;
-                    const stockSnc = isGeceDonercisiMode ? getGeceStockForBranch(product.id, 'SANCAK') : null;
-                    const stock =
-                      isGeceDonercisiMode && geceBranch
-                        ? getDisplayedStock(product)
-                        : trackStock && product.stock !== undefined
-                          ? product.stock || 0
-                          : null;
-                    return (
-                      <div
-                        key={product.id}
-                        className={`bg-white rounded-xl p-4 border border-gray-200 hover:shadow-md transition-all flex items-center justify-between ${isGeceDonercisiMode ? 'cursor-pointer' : ''}`}
-                        onClick={() => {
-                          if (!isGeceDonercisiMode) return;
-                          setStockFilterCategory(category || null);
-                          setStockFilterProduct(product);
-                          setStockAdjustmentAmount('');
-                          setStockAdjustmentType('add');
-                        }}
-                      >
-                        <div className="flex items-center space-x-4 flex-1">
-                          {product.image ? (
-                            <img src={product.image} alt={product.name} className="w-16 h-16 rounded-lg object-cover" />
-                          ) : (
-                            <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-orange-200 to-orange-200 flex items-center justify-center">
-                              <span className="text-2xl">📦</span>
-                            </div>
-                          )}
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-semibold text-gray-800">{product.name}</h4>
-                              {isGeceDonercisiMode ? (
-                                <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded">Şube Stok</span>
-                              ) : trackStock ? (
-                                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Stok Takibi</span>
-                                ) : (
-                                  <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded">Takip Yok</span>
-                                )}
-                            </div>
-                            <p className="text-sm text-gray-500">{category?.name || 'Kategori yok'}</p>
-                            <div className="flex flex-wrap items-center gap-2 mt-1">
-                              <p className="text-lg font-bold text-orange-600">{product.price.toFixed(2)} ₺</p>
-                              {isGeceDonercisiMode ? (
-                                <>
-                                  <span
-                                    className={`text-xs font-bold px-2 py-1 rounded-lg ${
-                                      stockSek === 0
-                                        ? 'bg-red-100 text-red-700'
-                                        : stockSek < 10
-                                          ? 'bg-yellow-100 text-yellow-700'
-                                          : 'bg-green-100 text-green-700'
-                                    }`}
-                                  >
-                                    Şeker: {stockSek}
-                                  </span>
-                                  <span
-                                    className={`text-xs font-bold px-2 py-1 rounded-lg ${
-                                      stockSnc === 0
-                                        ? 'bg-red-100 text-red-700'
-                                        : stockSnc < 10
-                                          ? 'bg-yellow-100 text-yellow-700'
-                                          : 'bg-green-100 text-green-700'
-                                    }`}
-                                  >
-                                    Sancak: {stockSnc}
-                                  </span>
-                                  {geceBranch && (
-                                    <span className="text-[10px] font-semibold text-slate-500">
-                                      (POS: {GECE_BRANCHES.find((b) => b.value === geceBranch)?.label})
-                                    </span>
-                                  )}
-                                </>
-                              ) : trackStock && stock !== null ? (
-                                <span
-                                  className={`text-sm font-bold px-3 py-1 rounded-lg ${
-                                    stock === 0
-                                      ? 'bg-red-100 text-red-700'
-                                      : stock < 10
-                                        ? 'bg-yellow-100 text-yellow-700'
-                                        : 'bg-green-100 text-green-700'
-                                  }`}
-                                >
-                                  Stok: {stock}
-                                </span>
-                              ) : trackStock ? (
-                                <span className="text-sm text-gray-400 px-3 py-1 rounded-lg bg-gray-100">Stok: 0</span>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                        {!isGeceDonercisiMode && (
-                          <div className="flex flex-col gap-2">
-                            <button
-                              onClick={() => {
-                                setStockFilterCategory(category || null);
-                                setStockFilterProduct(product);
-                                setStockAdjustmentAmount('');
-                                setStockAdjustmentType('add');
-                              }}
-                              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all text-sm"
-                            >
-                              📊 Stok Güncelle
-                            </button>
-                            <button
-                              onClick={() => handleToggleStockTracking(product.id, trackStock)}
-                              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                                trackStock
-                                  ? 'bg-orange-500 text-white hover:bg-orange-600'
-                                  : 'bg-green-500 text-white hover:bg-green-600'
-                              }`}
-                            >
-                              {trackStock ? '❌ Takibi Kapat' : '✅ Takibi Aç'}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+              <div className="flex w-full max-w-lg flex-col gap-3 sm:flex-row sm:justify-center">
+                {GECE_BRANCHES.map((b) => (
+                  <button
+                    key={b.value}
+                    type="button"
+                    onClick={() => setStockGeceSessionBranch(b.value)}
+                    className="flex-1 rounded-2xl border-2 border-slate-200 bg-gradient-to-b from-white to-slate-50 py-5 text-base font-extrabold text-slate-900 shadow-sm transition-all hover:border-slate-900 hover:shadow-md active:scale-[0.99] sm:py-6 sm:text-lg"
+                  >
+                    {b.label}
+                  </button>
+                ))}
               </div>
+              {isLoadingGeceBranchStocks && (
+                <p className="text-xs font-semibold text-slate-500">Şube stokları yükleniyor…</p>
+              )}
             </div>
           )}
 
@@ -2595,6 +2225,450 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
           )}
         </div>
       </div>
+
+      {stockFullscreenOpen && (
+        <div className="fixed inset-0 z-[60] flex flex-col bg-slate-100 text-slate-900">
+          <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-3 py-3 shadow-sm sm:gap-4 sm:px-5">
+            <div className="flex min-w-0 flex-1 flex-wrap items-end gap-3">
+              <div className="min-w-[140px] flex-1 sm:max-w-xs">
+                <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Kategori</label>
+                <select
+                  value={stockFilterCategory?.id || ''}
+                  onChange={(e) => {
+                    const catId = e.target.value ? parseInt(e.target.value, 10) : null;
+                    const cat = stockIceceklerCategories.find((c) => c.id === catId);
+                    setStockFilterCategory(cat || null);
+                    setStockFilterProduct(null);
+                  }}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-900 focus:outline-none"
+                >
+                  <option value="">Tüm içecekler</option>
+                  {stockIceceklerCategories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {stockFilterCategory && !isGeceDonercisiMode && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (
+                      !window.confirm(
+                        `${stockFilterCategory.name} kategorisindeki TÜM ürünlerin stokunu 0 yapmak ve stok takibini açmak istediğinize emin misiniz?\n\nBu işlem geri alınamaz!`
+                      )
+                    ) {
+                      return;
+                    }
+                    try {
+                      const result = await window.electronAPI.markCategoryOutOfStock(stockFilterCategory.id);
+                      if (result && result.success) {
+                        alert(`✅ ${result.updatedCount} ürün "kalmadı" olarak işaretlendi`);
+                        await loadAllProducts();
+                        if (onProductsUpdated) onProductsUpdated();
+                      } else {
+                        alert(result?.error || 'Kategori işaretlenemedi');
+                      }
+                    } catch (error) {
+                      console.error('Kategori işaretleme hatası:', error);
+                      alert('Kategori işaretlenemedi: ' + error.message);
+                    }
+                  }}
+                  className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-800 hover:bg-red-100"
+                >
+                  Kategoriyi kalmadı işaretle
+                </button>
+              )}
+              <div className="relative min-w-[160px] flex-1 sm:max-w-md">
+                <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Ürün ara</label>
+                <svg
+                  className="pointer-events-none absolute bottom-2.5 left-2.5 h-4 w-4 text-slate-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                  type="search"
+                  value={stockSearchQuery}
+                  onChange={(e) => setStockSearchQuery(e.target.value)}
+                  placeholder="İsim ile ara…"
+                  className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-sm focus:border-slate-900 focus:outline-none"
+                />
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={exitStockFullscreen}
+              className="ml-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+              aria-label="Kapat"
+            >
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </header>
+
+          {isGeceDonercisiMode && stockGeceSessionBranch && (
+            <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Düzenlenen şube</p>
+                  <p className="mt-0.5 text-sm font-bold text-slate-900">
+                    {GECE_BRANCHES.find((x) => x.value === stockGeceSessionBranch)?.label || stockGeceSessionBranch}
+                  </p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Satış şubesi:{' '}
+                    <span className="font-semibold text-slate-700">
+                      {geceBranch ? GECE_BRANCHES.find((x) => x.value === geceBranch)?.label || geceBranch : '—'}
+                    </span>
+                    {isLoadingGeceBranchStocks ? ' · Stoklar yükleniyor…' : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStockGeceSessionBranch(null);
+                    setStockFilterProduct(null);
+                  }}
+                  className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100"
+                >
+                  Şube değiştir
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+            <aside className="flex min-h-[200px] max-h-[42vh] shrink-0 flex-col border-b border-slate-200 bg-white lg:max-h-none lg:w-[min(100%,420px)] lg:border-b-0 lg:border-r lg:border-slate-200 xl:w-[min(100%,480px)]">
+              <div className="shrink-0 border-b border-slate-100 bg-slate-50 px-4 py-2">
+                <p className="text-xs font-extrabold uppercase tracking-wide text-slate-600">İçecekler</p>
+                <p className="text-[11px] text-slate-500">{stockLeftPanelGridList.length} ürün</p>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-2 scrollbar-custom">
+                {stockIceceklerCategories.length === 0 ? (
+                  <div className="py-16 text-center text-sm text-slate-500">
+                    Veritabanında &quot;İçecekler&quot; adlı bir kategori yok. Sol liste için bu isimde kategori oluşturun.
+                  </div>
+                ) : stockLeftPanelBaseList.length === 0 ? (
+                  <div className="py-16 text-center text-sm text-slate-500">Bu kategoride ürün yok</div>
+                ) : stockLeftPanelGridList.length === 0 ? (
+                  <div className="py-16 text-center text-sm text-slate-500">Aramanızla eşleşen ürün yok</div>
+                ) : (
+                  <ul className="flex flex-col gap-1.5">
+                    {stockLeftPanelGridList.map((product) => {
+                      const category = categories.find((c) => c.id === product.category_id);
+                      const trackStock = product.trackStock === true;
+                      const sessionBr = stockGeceSessionBranch;
+                      const geceOneStock =
+                        isGeceDonercisiMode && sessionBr ? getGeceStockForBranch(product.id, sessionBr) : null;
+                      const stock =
+                        isGeceDonercisiMode && sessionBr
+                          ? geceOneStock
+                          : trackStock && product.stock !== undefined
+                            ? product.stock || 0
+                            : null;
+                      const selected = stockFilterProduct?.id === product.id;
+                      const selectRow = () => {
+                        setStockFilterCategory(category || null);
+                        setStockFilterProduct(product);
+                        setStockAdjustmentAmount('');
+                        setStockAdjustmentType('add');
+                      };
+                      return (
+                        <li key={product.id}>
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={selectRow}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                selectRow();
+                              }
+                            }}
+                            className={`flex w-full cursor-pointer items-center gap-2.5 rounded-xl border px-2 py-2 text-left transition-all outline-none focus-visible:ring-2 focus-visible:ring-slate-900 ${
+                              selected
+                                ? 'border-slate-900 bg-slate-50 shadow-md ring-1 ring-slate-900/10'
+                                : 'border-slate-200/90 bg-white hover:border-slate-300 hover:shadow-sm'
+                            }`}
+                          >
+                            <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-gradient-to-br from-slate-100 to-slate-200">
+                              {product.image ? (
+                                <img
+                                  src={product.image}
+                                  alt=""
+                                  className="h-full w-full object-cover"
+                                  referrerPolicy="no-referrer"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none';
+                                  }}
+                                />
+                              ) : (
+                                <span className="flex h-full w-full items-center justify-center text-lg font-black text-slate-400">
+                                  {(product.name || '?').charAt(0).toUpperCase()}
+                                </span>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="line-clamp-2 text-xs font-bold leading-snug text-slate-900">{product.name}</p>
+                              <p className="mt-0.5 truncate text-[10px] font-semibold text-slate-500">{category?.name || '—'}</p>
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                <span className="text-[10px] font-extrabold tabular-nums text-slate-700">
+                                  {Number(product.price || 0).toFixed(2)} ₺
+                                </span>
+                                {isGeceDonercisiMode && sessionBr ? (
+                                  <span
+                                    className={`rounded px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+                                      geceOneStock === 0
+                                        ? 'bg-red-100 text-red-700'
+                                        : geceOneStock < 10
+                                          ? 'bg-amber-100 text-amber-800'
+                                          : 'bg-emerald-100 text-emerald-800'
+                                    }`}
+                                  >
+                                    {geceOneStock}
+                                  </span>
+                                ) : (
+                                  <span
+                                    className={`rounded px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+                                      !trackStock
+                                        ? 'bg-slate-100 text-slate-600'
+                                        : stock === 0
+                                          ? 'bg-red-100 text-red-700'
+                                          : stock < 10
+                                            ? 'bg-amber-100 text-amber-800'
+                                            : 'bg-emerald-100 text-emerald-800'
+                                    }`}
+                                  >
+                                    {trackStock ? (stock === null ? '—' : stock) : 'Kapalı'}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {!isGeceDonercisiMode && (
+                              <div className="flex shrink-0 flex-col gap-0.5" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleStockTracking(product.id, trackStock);
+                                  }}
+                                  className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${
+                                    trackStock
+                                      ? 'border border-amber-200 bg-amber-50 text-amber-900'
+                                      : 'border border-emerald-200 bg-emerald-50 text-emerald-900'
+                                  }`}
+                                >
+                                  {trackStock ? 'Kapat' : 'Aç'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </aside>
+
+            <section className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-slate-50/50 p-4 sm:p-6">
+              {!stockFilterProduct ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-16 text-center">
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 shadow-sm">
+                    <p className="text-base font-bold text-slate-800">Stok yönetimi</p>
+                    <p className="mt-2 max-w-sm text-sm leading-relaxed text-slate-500">
+                      Soldan bir içecek seçin; görsel ve stok işlemleri burada görünür.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="mx-auto w-full max-w-xl">
+                  <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+                    <div className="relative mx-auto aspect-square w-full max-w-[240px] shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-100 to-slate-50 shadow-inner sm:mx-0">
+                      <div className="absolute inset-0 flex items-center justify-center bg-slate-100">
+                        <span className="text-5xl font-black text-slate-300">
+                          {(stockFilterProduct.name || '?').charAt(0).toUpperCase()}
+                        </span>
+                      </div>
+                      {stockFilterProduct.image ? (
+                        <img
+                          src={stockFilterProduct.image}
+                          alt=""
+                          className="relative z-10 h-full w-full object-cover"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            e.currentTarget.classList.add('opacity-0', 'pointer-events-none');
+                          }}
+                        />
+                      ) : null}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-xl font-extrabold leading-tight text-slate-900 sm:text-2xl">{stockFilterProduct.name}</h3>
+                      <p className="mt-1 text-sm font-semibold text-slate-500">
+                        {categories.find((c) => c.id === stockFilterProduct.category_id)?.name || '—'} ·{' '}
+                        <span className="tabular-nums text-slate-800">{Number(stockFilterProduct.price || 0).toFixed(2)} ₺</span>
+                      </p>
+                      {!isGeceDonercisiMode && (
+                        <button
+                          type="button"
+                          onClick={() => handleToggleStockTracking(stockFilterProduct.id, stockFilterProduct.trackStock)}
+                          className={`mt-3 rounded-lg px-3 py-2 text-xs font-bold transition-all ${
+                            stockFilterProduct.trackStock
+                              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                              : 'bg-slate-200 text-slate-800 hover:bg-slate-300'
+                          }`}
+                        >
+                          {stockFilterProduct.trackStock ? 'Stok takibi açık' : 'Stok takibini aç'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isGeceDonercisiMode ? (
+                    <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <p className="text-xs leading-relaxed text-slate-600">
+                        Aşağıdaki alan yalnızca{' '}
+                        <span className="font-bold text-slate-900">
+                          {GECE_BRANCHES.find((x) => x.value === stockGeceSessionBranch)?.label || stockGeceSessionBranch}
+                        </span>{' '}
+                        şubesi içindir.
+                      </p>
+                      <div className="grid gap-4">
+                        {stockGeceSessionBranch &&
+                          GECE_BRANCHES.filter((x) => x.value === stockGeceSessionBranch).map(({ value: br, label }) => {
+                            const cur = getGeceStockForBranch(stockFilterProduct.id, br);
+                            const busy = geceStockSavingBranch === br;
+                            return (
+                              <div key={br} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-extrabold text-slate-900">{label}</span>
+                                  <span
+                                    className={`rounded-lg px-2 py-1 text-sm font-bold ${
+                                      cur <= 0 ? 'bg-red-100 text-red-700' : cur < 10 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                                    }`}
+                                  >
+                                    Stok: {cur}
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap items-end gap-2">
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    disabled={busy}
+                                    value={geceStockQtyInput[br]}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/\D/g, '');
+                                      setGeceStockQtyInput((prev) => ({ ...prev, [br]: v }));
+                                    }}
+                                    className="min-w-[100px] flex-1 rounded-lg border-2 border-slate-200 px-3 py-2 focus:border-blue-500 focus:outline-none"
+                                    placeholder="Miktar"
+                                  />
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => handleGeceBranchStockDelta(br, stockFilterProduct.id, 'add')}
+                                    className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                  >
+                                    + Ekle
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => handleGeceBranchStockDelta(br, stockFilterProduct.id, 'sub')}
+                                    className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50"
+                                  >
+                                    − Çıkar
+                                  </button>
+                                </div>
+                                <div className="flex flex-wrap items-end gap-2 border-t border-slate-200 pt-3">
+                                  <label className="w-full text-xs font-semibold text-slate-600">Doğrudan sayıya ayarla</label>
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    disabled={busy}
+                                    value={geceStockSetInput[br]}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/\D/g, '');
+                                      setGeceStockSetInput((prev) => ({ ...prev, [br]: v }));
+                                    }}
+                                    className="min-w-[100px] flex-1 rounded-lg border-2 border-slate-200 px-3 py-2 focus:border-indigo-500 focus:outline-none"
+                                    placeholder="Yeni stok"
+                                  />
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => handleGeceBranchStockSetAbsolute(br, stockFilterProduct.id)}
+                                    className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                                  >
+                                    Kaydet
+                                  </button>
+                                </div>
+                                {busy && <p className="text-xs text-slate-500">Kaydediliyor…</p>}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  ) : stockFilterProduct.trackStock ? (
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <p className="mb-4 text-sm text-slate-600">
+                        Mevcut stok:{' '}
+                        <span className="font-bold text-blue-600">
+                          {stockFilterProduct.stock !== undefined ? stockFilterProduct.stock || 0 : 0}
+                        </span>
+                      </p>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                        <div>
+                          <label className="mb-2 block text-sm font-medium text-slate-700">İşlem tipi</label>
+                          <select
+                            value={stockAdjustmentType}
+                            onChange={(e) => setStockAdjustmentType(e.target.value)}
+                            className="w-full rounded-xl border-2 border-slate-200 px-4 py-2 focus:border-blue-500 focus:outline-none"
+                          >
+                            <option value="add">Stok ekle</option>
+                            <option value="subtract">Stok çıkar</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-sm font-medium text-slate-700">Miktar</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={stockAdjustmentAmount}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/\D/g, '');
+                              setStockAdjustmentAmount(val);
+                            }}
+                            className="w-full rounded-xl border-2 border-slate-200 px-4 py-2 focus:border-blue-500 focus:outline-none"
+                            placeholder="Miktar"
+                          />
+                        </div>
+                        <div className="flex items-end">
+                          <button
+                            type="button"
+                            onClick={handleStockAdjustment}
+                            className="w-full rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 px-6 py-2.5 font-semibold text-white shadow-sm transition-all hover:shadow-md"
+                          >
+                            {stockAdjustmentType === 'add' ? 'Ekle' : 'Çıkar'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-amber-100 bg-amber-50/80 p-4 text-sm text-amber-900">
+                      Bu ürün için stok takibi kapalı. Yukarıdaki <span className="font-bold">Stok takibini aç</span> ile açabilirsiniz.
+                    </p>
+                  )}
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
+      )}
 
       {/* Category Assignment Modal */}
       {showCategoryAssignModal && selectedPrinter && (
@@ -3096,6 +3170,126 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                   </svg>
                   <span>Sil</span>
                 </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {geceStockNotice && (
+        <div className="fixed inset-x-0 bottom-8 z-[1200] flex justify-center px-4 pointer-events-none">
+          <div
+            key={geceStockNotice.key}
+            role="alert"
+            aria-live="polite"
+            className="pointer-events-auto w-full max-w-md overflow-hidden rounded-2xl border border-white/70 bg-white/95 shadow-[0_22px_55px_-12px_rgba(15,23,42,0.42)] backdrop-blur-xl ring-1 ring-slate-900/5 animate-slide-up"
+          >
+            <div
+              className={`h-1.5 w-full bg-gradient-to-r ${
+                geceStockNotice.variant === 'success'
+                  ? 'from-emerald-400 via-teal-500 to-cyan-600'
+                  : geceStockNotice.variant === 'error'
+                    ? 'from-rose-500 via-red-600 to-red-800'
+                    : geceStockNotice.variant === 'warning'
+                      ? 'from-amber-400 via-orange-500 to-orange-600'
+                      : 'from-slate-500 via-slate-600 to-slate-800'
+              }`}
+            />
+            <div className="relative px-5 pt-4 pb-4 bg-gradient-to-br from-white via-slate-50/90 to-slate-100/80">
+              <button
+                type="button"
+                onClick={dismissGeceStockNotice}
+                className="absolute top-3 right-3 flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200/80 bg-white/80 text-slate-500 shadow-sm transition hover:bg-slate-50 hover:text-slate-800"
+                aria-label="Kapat"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+              <div className="flex gap-4 pr-10">
+                <div
+                  className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br text-white shadow-lg ${
+                    geceStockNotice.variant === 'success'
+                      ? 'from-emerald-500 to-teal-600 shadow-emerald-500/30'
+                      : geceStockNotice.variant === 'error'
+                        ? 'from-rose-500 to-red-600 shadow-rose-500/30'
+                        : geceStockNotice.variant === 'warning'
+                          ? 'from-amber-400 to-orange-600 shadow-amber-500/30'
+                          : 'from-slate-500 to-slate-800 shadow-slate-600/30'
+                  }`}
+                >
+                  {geceStockNotice.variant === 'success' && (
+                    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  {geceStockNotice.variant === 'error' && (
+                    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.122zM12 15.75h.007v.008H12v-.008z" />
+                    </svg>
+                  )}
+                  {geceStockNotice.variant === 'warning' && (
+                    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  )}
+                  {geceStockNotice.variant === 'info' && (
+                    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M13 16h-1v-4h-1m1-4h.01M12 20a8 8 0 110-16 8 8 0 010 16z" />
+                    </svg>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1 pt-0.5">
+                  <h4 className="text-base font-extrabold tracking-tight text-slate-900">{geceStockNotice.title}</h4>
+                  <p className="mt-1 text-sm font-medium leading-relaxed text-slate-600">{geceStockNotice.message}</p>
+                </div>
+              </div>
+              <div className="mt-4 h-1 overflow-hidden rounded-full bg-slate-200/80">
+                <div
+                  className={`h-full rounded-full bg-gradient-to-r gece-stock-notice-bar ${
+                    geceStockNotice.variant === 'success'
+                      ? 'from-emerald-400 to-teal-500'
+                      : geceStockNotice.variant === 'error'
+                        ? 'from-rose-500 to-red-600'
+                        : geceStockNotice.variant === 'warning'
+                          ? 'from-amber-400 to-orange-500'
+                          : 'from-slate-400 to-slate-600'
+                  }`}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {geceSettingsConfirm && (
+        <div
+          className="fixed inset-0 z-[2100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          role="alertdialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-lg rounded-2xl border border-white/20 bg-gradient-to-br from-white to-slate-50 shadow-2xl overflow-hidden">
+            <div className="h-1 w-full bg-gradient-to-r from-amber-400 via-orange-500 to-orange-600" />
+            <div className="px-6 pt-5 pb-4">
+              <h2 className="text-lg font-extrabold text-slate-900">Onay</h2>
+              <p className="mt-3 text-sm font-medium text-slate-700 whitespace-pre-wrap leading-relaxed">
+                {geceSettingsConfirm.message}
+              </p>
+            </div>
+            <div className="border-t border-slate-200 bg-slate-50/80 px-6 py-4 flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setGeceSettingsConfirm(null)}
+                className="px-5 py-2.5 rounded-xl font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition"
+              >
+                İptal
+              </button>
+              <button
+                type="button"
+                onClick={() => geceSettingsConfirm.onConfirm?.()}
+                className="px-6 py-2.5 rounded-xl font-bold text-white bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 shadow-md transition"
+              >
+                Devam
               </button>
             </div>
           </div>

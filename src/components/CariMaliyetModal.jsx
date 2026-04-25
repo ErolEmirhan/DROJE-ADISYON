@@ -5,8 +5,39 @@ import { addZahiyatRecords, adjustBranchStocksBulk } from '../utils/geceDonercis
 import { getGeceSelectedBranch, getOrCreateGeceDeviceId } from '../utils/geceDonercisiBranchSelection';
 import { isGeceDonercisi } from '../utils/sultanSomatTables';
 
+const mergeProductIntoRows = (prevRows, product, selectedStaff, tenantId) => {
+  if (!selectedStaff) return prevRows;
+  const price = Number(product?.price || 0);
+  const staffId = selectedStaff.id;
+  const productId = product?.id != null ? product.id : null;
+  const existing = prevRows.find(
+    (r) => String(r.productId) === String(productId) && r.staffId === staffId
+  );
+  if (existing) {
+    return prevRows.map((r) =>
+      r._localId === existing._localId ? { ...r, quantity: (r.quantity || 1) + 1 } : r
+    );
+  }
+  return [
+    ...prevRows,
+    {
+      _localId: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      tenantId,
+      staffId,
+      staffName: selectedStaff.name || selectedStaff.full_name || selectedStaff.username || 'Personel',
+      productId,
+      productName: product.name,
+      price,
+      quantity: 1,
+      source: 'pos',
+      type: 'cari-maliyet',
+    },
+  ];
+};
+
 const CariMaliyetModal = ({ tenantId, themeColor = '#f97316', products = [], onClose }) => {
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
+  const isGeceCariMultiProduct = !!(tenantId && isGeceDonercisi(tenantId));
   const [staff, setStaff] = useState([]);
   const [staffLoading, setStaffLoading] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState(null);
@@ -41,36 +72,15 @@ const CariMaliyetModal = ({ tenantId, themeColor = '#f97316', products = [], onC
 
   const handleSelectProduct = (product) => {
     if (!selectedStaff) return;
-    const price = Number(product?.price || 0);
-    const staffId = selectedStaff.id;
-    const productId = product?.id != null ? product.id : null;
-    setRows((prev) => {
-      const existing = prev.find(
-        (r) => String(r.productId) === String(productId) && r.staffId === staffId
-      );
-      if (existing) {
-        return prev.map((r) =>
-          r._localId === existing._localId
-            ? { ...r, quantity: (r.quantity || 1) + 1 }
-            : r
-        );
-      }
-      return [
-        ...prev,
-        {
-          _localId: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          tenantId,
-          staffId,
-          staffName: selectedStaff.name || selectedStaff.full_name || selectedStaff.username || 'Personel',
-          productId,
-          productName: product.name,
-          price,
-          quantity: 1,
-          source: 'pos',
-          type: 'cari-maliyet',
-        },
-      ];
-    });
+    if (isGeceCariMultiProduct) return;
+    setRows((prev) => mergeProductIntoRows(prev, product, selectedStaff, tenantId));
+    setShowProductModal(false);
+  };
+
+  /** Gece Dönercisi: ürün seçiminde birden fazla ürün → Tamam ile listeye ekle */
+  const handleConfirmProducts = (productList) => {
+    if (!selectedStaff || !productList?.length) return;
+    setRows((prev) => productList.reduce((acc, p) => mergeProductIntoRows(acc, p, selectedStaff, tenantId), prev));
     setShowProductModal(false);
   };
 
@@ -350,8 +360,10 @@ const CariMaliyetModal = ({ tenantId, themeColor = '#f97316', products = [], onC
         <CariMaliyetProductModal
           products={products}
           themeColor={themeColor}
+          multiSelect={isGeceCariMultiProduct}
           onClose={() => setShowProductModal(false)}
           onSelectProduct={handleSelectProduct}
+          onConfirmProducts={isGeceCariMultiProduct ? handleConfirmProducts : undefined}
         />
       )}
     </>
