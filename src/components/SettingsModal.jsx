@@ -211,30 +211,28 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
     );
   }, [stockTabProductList, stockSearchQuery]);
 
-  /** Tam ekran stok: sol panel yalnızca "İçecekler" kategorisi ürünleri */
-  const stockIceceklerCategories = useMemo(
-    () => (categories || []).filter((c) => normalizeTr(c?.name) === 'icecekler'),
-    [categories]
+  /** Tam ekran stok sol panel: içecekler + yan ürünler (filtre/arama yok, doğrudan liste) */
+  const stockSidebarCategories = useMemo(
+    () => (categories || []).filter((c) => allowedStockCategoryNames.has(normalizeTr(c?.name))),
+    [categories, allowedStockCategoryNames]
   );
 
-  const stockLeftPanelBaseList = useMemo(() => {
-    const ids = new Set(stockIceceklerCategories.map((c) => c.id));
-    return (products || []).filter((p) => ids.has(p.category_id));
-  }, [products, stockIceceklerCategories]);
-
-  const stockLeftPanelList = useMemo(() => {
-    if (stockFilterCategory && stockIceceklerCategories.some((c) => c.id === stockFilterCategory.id)) {
-      return stockLeftPanelBaseList.filter((p) => p.category_id === stockFilterCategory.id);
-    }
-    return stockLeftPanelBaseList;
-  }, [stockLeftPanelBaseList, stockFilterCategory, stockIceceklerCategories]);
-
-  const stockLeftPanelGridList = useMemo(() => {
-    const raw = stockSearchQuery.trim();
-    if (!raw) return stockLeftPanelList;
-    const q = raw.toLocaleLowerCase('tr-TR');
-    return stockLeftPanelList.filter((p) => String(p?.name || '').toLocaleLowerCase('tr-TR').includes(q));
-  }, [stockLeftPanelList, stockSearchQuery]);
+  const stockSidebarProductList = useMemo(() => {
+    const ids = new Set(stockSidebarCategories.map((c) => c.id));
+    const list = (products || []).filter((p) => ids.has(p.category_id));
+    const iceCat = stockSidebarCategories.find((c) => normalizeTr(c?.name) === 'icecekler');
+    const yanCat = stockSidebarCategories.find((c) => normalizeTr(c?.name) === 'yan urunler');
+    const rank = (p) => {
+      if (iceCat && p.category_id === iceCat.id) return 0;
+      if (yanCat && p.category_id === yanCat.id) return 1;
+      return 2;
+    };
+    return [...list].sort((a, b) => {
+      const d = rank(a) - rank(b);
+      if (d !== 0) return d;
+      return String(a?.name || '').localeCompare(String(b?.name || ''), 'tr');
+    });
+  }, [products, stockSidebarCategories]);
 
   const stockFullscreenOpen = activeTab === 'stock' && (!isGeceDonercisiMode || !!stockGeceSessionBranch);
 
@@ -2228,81 +2226,15 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
 
       {stockFullscreenOpen && (
         <div className="fixed inset-0 z-[60] flex flex-col bg-slate-100 text-slate-900">
-          <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-3 py-3 shadow-sm sm:gap-4 sm:px-5">
-            <div className="flex min-w-0 flex-1 flex-wrap items-end gap-3">
-              <div className="min-w-[140px] flex-1 sm:max-w-xs">
-                <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Kategori</label>
-                <select
-                  value={stockFilterCategory?.id || ''}
-                  onChange={(e) => {
-                    const catId = e.target.value ? parseInt(e.target.value, 10) : null;
-                    const cat = stockIceceklerCategories.find((c) => c.id === catId);
-                    setStockFilterCategory(cat || null);
-                    setStockFilterProduct(null);
-                  }}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-900 focus:outline-none"
-                >
-                  <option value="">Tüm içecekler</option>
-                  {stockIceceklerCategories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {stockFilterCategory && !isGeceDonercisiMode && (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (
-                      !window.confirm(
-                        `${stockFilterCategory.name} kategorisindeki TÜM ürünlerin stokunu 0 yapmak ve stok takibini açmak istediğinize emin misiniz?\n\nBu işlem geri alınamaz!`
-                      )
-                    ) {
-                      return;
-                    }
-                    try {
-                      const result = await window.electronAPI.markCategoryOutOfStock(stockFilterCategory.id);
-                      if (result && result.success) {
-                        alert(`✅ ${result.updatedCount} ürün "kalmadı" olarak işaretlendi`);
-                        await loadAllProducts();
-                        if (onProductsUpdated) onProductsUpdated();
-                      } else {
-                        alert(result?.error || 'Kategori işaretlenemedi');
-                      }
-                    } catch (error) {
-                      console.error('Kategori işaretleme hatası:', error);
-                      alert('Kategori işaretlenemedi: ' + error.message);
-                    }
-                  }}
-                  className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-800 hover:bg-red-100"
-                >
-                  Kategoriyi kalmadı işaretle
-                </button>
-              )}
-              <div className="relative min-w-[160px] flex-1 sm:max-w-md">
-                <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Ürün ara</label>
-                <svg
-                  className="pointer-events-none absolute bottom-2.5 left-2.5 h-4 w-4 text-slate-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                <input
-                  type="search"
-                  value={stockSearchQuery}
-                  onChange={(e) => setStockSearchQuery(e.target.value)}
-                  placeholder="İsim ile ara…"
-                  className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-sm focus:border-slate-900 focus:outline-none"
-                />
-              </div>
+          <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 shadow-sm sm:px-5">
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-extrabold tracking-tight text-slate-900 sm:text-lg">Stok takibi</h1>
+              <p className="text-[11px] font-medium text-slate-500">İçecekler ve yan ürünler</p>
             </div>
             <button
               type="button"
               onClick={exitStockFullscreen}
-              className="ml-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
               aria-label="Kapat"
             >
               <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2344,21 +2276,19 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
           <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
             <aside className="flex min-h-[200px] max-h-[42vh] shrink-0 flex-col border-b border-slate-200 bg-white lg:max-h-none lg:w-[min(100%,420px)] lg:border-b-0 lg:border-r lg:border-slate-200 xl:w-[min(100%,480px)]">
               <div className="shrink-0 border-b border-slate-100 bg-slate-50 px-4 py-2">
-                <p className="text-xs font-extrabold uppercase tracking-wide text-slate-600">İçecekler</p>
-                <p className="text-[11px] text-slate-500">{stockLeftPanelGridList.length} ürün</p>
+                <p className="text-xs font-extrabold uppercase tracking-wide text-slate-600">Ürünler</p>
+                <p className="text-[11px] text-slate-500">{stockSidebarProductList.length} kayıt · içecekler ve yan ürünler</p>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-2 scrollbar-custom">
-                {stockIceceklerCategories.length === 0 ? (
+                {stockSidebarCategories.length === 0 ? (
                   <div className="py-16 text-center text-sm text-slate-500">
-                    Veritabanında &quot;İçecekler&quot; adlı bir kategori yok. Sol liste için bu isimde kategori oluşturun.
+                    &quot;İçecekler&quot; veya &quot;Yan Ürünler&quot; adlı kategorilerden en az biri tanımlı olmalı.
                   </div>
-                ) : stockLeftPanelBaseList.length === 0 ? (
-                  <div className="py-16 text-center text-sm text-slate-500">Bu kategoride ürün yok</div>
-                ) : stockLeftPanelGridList.length === 0 ? (
-                  <div className="py-16 text-center text-sm text-slate-500">Aramanızla eşleşen ürün yok</div>
+                ) : stockSidebarProductList.length === 0 ? (
+                  <div className="py-16 text-center text-sm text-slate-500">Bu kategorilerde ürün yok</div>
                 ) : (
                   <ul className="flex flex-col gap-1.5">
-                    {stockLeftPanelGridList.map((product) => {
+                    {stockSidebarProductList.map((product) => {
                       const category = categories.find((c) => c.id === product.category_id);
                       const trackStock = product.trackStock === true;
                       const sessionBr = stockGeceSessionBranch;
@@ -2372,7 +2302,6 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                             : null;
                       const selected = stockFilterProduct?.id === product.id;
                       const selectRow = () => {
-                        setStockFilterCategory(category || null);
                         setStockFilterProduct(product);
                         setStockAdjustmentAmount('');
                         setStockAdjustmentType('add');

@@ -168,14 +168,23 @@ export async function adjustBranchStocksBulk({
   const db = getGeceDonercisiMasalarDb();
 
   const results = await runTransaction(db, async (tx) => {
-    const out = {}; // productId -> { before, after, delta }
-    for (const it of mergedItems) {
+    const refs = mergedItems.map((it) => {
       const pid = String(it.productId);
       const docId = `${branch}_${pid}`;
-      const ref = doc(db, 'branchStocks', docId);
-      const snap = await tx.get(ref);
+      return {
+        ref: doc(db, 'branchStocks', docId),
+        pid,
+        delta: Number(it.delta),
+      };
+    });
+    const snaps = await Promise.all(refs.map((r) => tx.get(r.ref)));
+
+    const out = {};
+    for (let i = 0; i < refs.length; i++) {
+      const { ref, pid, delta } = refs[i];
+      const snap = snaps[i];
       const before = snap.exists() ? Number((snap.data() || {}).stock || 0) : 0;
-      const after = before + Number(it.delta);
+      const after = before + delta;
 
       tx.set(
         ref,
@@ -190,7 +199,7 @@ export async function adjustBranchStocksBulk({
         { merge: true }
       );
 
-      out[pid] = { before, after, delta: Number(it.delta) };
+      out[pid] = { before, after, delta };
     }
     return out;
   });
