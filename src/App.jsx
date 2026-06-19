@@ -1255,15 +1255,35 @@ function App() {
                 )}
               </div>
               {userType === 'Admin' && (
-                <button
-                  onClick={() => setShowExpenseModal(true)}
-                  className="px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-semibold rounded-lg shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-2 whitespace-nowrap"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                  </svg>
-                  <span>Masraf Ekle</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.dispatchEvent(
+                        new CustomEvent('open-settings-product-sort', {
+                          detail: { categoryId: selectedCategory?.id ?? null },
+                        })
+                      );
+                    }}
+                    className="px-4 py-2 bg-white border-2 text-slate-800 font-semibold rounded-lg shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-2 whitespace-nowrap"
+                    style={{ borderColor: theme.primary500 }}
+                    title="Ürün sıralamasını ayarlarda düzenle"
+                  >
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                    </svg>
+                    <span>Sıralamayı Düzenle</span>
+                  </button>
+                  <button
+                    onClick={() => setShowExpenseModal(true)}
+                    className="px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-semibold rounded-lg shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-2 whitespace-nowrap"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                    <span>Masraf Ekle</span>
+                  </button>
+                </>
               )}
             </div>
             {searchQuery && (

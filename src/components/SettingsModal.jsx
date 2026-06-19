@@ -5,13 +5,61 @@ import { isGeceDonercisi, isYakasGrill, isLacromisa } from '../utils/sultanSomat
 import { GECE_BRANCHES, getGeceSelectedBranch, getOrCreateGeceDeviceId, setGeceSelectedBranch } from '../utils/geceDonercisiBranchSelection';
 import { fetchBranchStockMap, upsertDeviceBranchSelection, adjustBranchStock } from '../utils/geceDonercisiMasalarFirestore';
 
-const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', tenantId = null }) => {
+/** Kategori içi ürün sırası — belirgin yukarı/aşağı kontrolleri */
+function ProductReorderControls({ onMoveUp, onMoveDown, accentColor = '#0f172a' }) {
+  const btnBase =
+    'flex h-10 w-10 items-center justify-center rounded-xl border-2 shadow-md transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2';
+
+  return (
+    <div className="flex flex-col items-center gap-1.5 py-0.5" role="group" aria-label="Ürün sırası">
+      <button
+        type="button"
+        title="Yukarı taşı"
+        aria-label="Yukarı taşı"
+        onClick={onMoveUp}
+        className={`${btnBase} text-white hover:brightness-110`}
+        style={{
+          backgroundColor: accentColor,
+          borderColor: accentColor,
+        }}
+      >
+        <svg className="h-6 w-6 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M6 15l6-6 6 6" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        title="Aşağı taşı"
+        aria-label="Aşağı taşı"
+        onClick={onMoveDown}
+        className={`${btnBase} bg-white hover:bg-slate-50`}
+        style={{
+          color: accentColor,
+          borderColor: accentColor,
+        }}
+      >
+        <svg className="h-6 w-6 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+const SettingsModal = ({
+  onClose,
+  onProductsUpdated,
+  themeColor = '#f97316',
+  tenantId = null,
+  initialTab = null,
+  initialCategoryId = null,
+}) => {
   // Tema renklerini hesapla
   const theme = useMemo(() => getThemeColors(themeColor), [themeColor]);
   const isYakasGrillMode = tenantId && isYakasGrill(tenantId);
   const isGeceDonercisiMode = tenantId && isGeceDonercisi(tenantId);
   const isLacromisaMode = tenantId && isLacromisa(tenantId);
-  const [activeTab, setActiveTab] = useState('password'); // 'password', 'products', 'printers', or 'stock'
+  const [activeTab, setActiveTab] = useState(initialTab || 'password'); // 'password', 'products', 'printers', or 'stock'
   const [showPlatformPriceModal, setShowPlatformPriceModal] = useState(false);
   const [platformPriceType, setPlatformPriceType] = useState(null); // 'yemeksepeti' or 'trendyolgo'
   const [printerSubTab, setPrinterSubTab] = useState('usb'); // 'usb' or 'network'
@@ -133,6 +181,17 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
       geceStockNoticeTimerRef.current = null;
     }, 4200);
   };
+
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (initialCategoryId != null && categories.length > 0) {
+      const cat = categories.find((c) => c.id === initialCategoryId);
+      if (cat) setSelectedCategory(cat);
+    }
+  }, [initialCategoryId, categories]);
 
   useEffect(() => {
     loadCategories();
@@ -1122,9 +1181,21 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
     }
   };
 
-  const filteredProducts = selectedCategory
-    ? products.filter(p => p.category_id === selectedCategory.id)
-    : products;
+  const sortProductsByOrder = (list) => {
+    return [...list].sort((a, b) => {
+      const oa = a.order_index !== undefined && a.order_index !== null ? a.order_index : 0;
+      const ob = b.order_index !== undefined && b.order_index !== null ? b.order_index : 0;
+      if (oa !== ob) return oa - ob;
+      return a.id - b.id;
+    });
+  };
+
+  const filteredProducts = useMemo(() => {
+    const base = selectedCategory
+      ? products.filter((p) => p.category_id === selectedCategory.id)
+      : products;
+    return sortProductsByOrder(base);
+  }, [products, selectedCategory]);
 
   /** Ürün sekmesi: kategori + arama (Lacromisa ve varsayılan ortak) */
   const productsForManagementList = useMemo(() => {
@@ -1261,6 +1332,66 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
       alert('Kategori sıralaması kaydedilemedi: ' + error.message);
     }
   };
+
+  const handleMoveProduct = async (productId, direction) => {
+    if (!selectedCategory) {
+      alert('Ürün sıralaması için önce bir kategori seçin.');
+      return;
+    }
+
+    const categoryProducts = filteredProducts;
+    const currentIndex = categoryProducts.findIndex((p) => p.id === productId);
+    if (currentIndex === -1) return;
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= categoryProducts.length) return;
+
+    const reordered = [...categoryProducts];
+    const temp = reordered[currentIndex];
+    reordered[currentIndex] = reordered[targetIndex];
+    reordered[targetIndex] = temp;
+
+    setProducts((prev) => {
+      const orderedIds = new Set(reordered.map((p) => p.id));
+      const others = prev.filter((p) => !orderedIds.has(p.id));
+      const withNewOrder = reordered.map((p, idx) => ({ ...p, order_index: idx }));
+      return [...others, ...withNewOrder];
+    });
+
+    try {
+      if (!window.electronAPI || typeof window.electronAPI.reorderProductsInCategory !== 'function') {
+        alert('Ürün sıralama özelliği yüklenemedi. Lütfen uygulamayı yeniden başlatın.');
+        return;
+      }
+
+      const orderedIds = reordered.map((p) => p.id);
+      const result = await window.electronAPI.reorderProductsInCategory(
+        selectedCategory.id,
+        orderedIds
+      );
+
+      if (!result || !result.success) {
+        alert(result?.error || 'Ürün sıralaması kaydedilemedi');
+        await loadAllProducts();
+        return;
+      }
+
+      if (Array.isArray(result.products)) {
+        setProducts((prev) => {
+          const others = prev.filter((p) => p.category_id !== selectedCategory.id);
+          return [...others, ...result.products];
+        });
+      }
+
+      if (onProductsUpdated) onProductsUpdated();
+    } catch (error) {
+      console.error('Ürün sıralama API hatası:', error);
+      alert('Ürün sıralaması kaydedilemedi: ' + error.message);
+      await loadAllProducts();
+    }
+  };
+
+  const canReorderProductsInCategory = Boolean(selectedCategory);
 
   return createPortal(
     <div className="fixed inset-0 bg-black/80 backdrop-blur-lg flex items-center justify-center z-[999] animate-fade-in px-4">
@@ -1584,9 +1715,10 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                   <div className="max-h-[min(68vh,720px)] overflow-auto">
                     <div className="sticky top-0 z-10 bg-slate-100/95 backdrop-blur border-b border-slate-200">
                       <div className="grid grid-cols-12 gap-2 px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                        <div className="col-span-1">#</div>
-                        <div className="col-span-4">Ürün</div>
-                        <div className="col-span-3">Kategori</div>
+                        {canReorderProductsInCategory && <div className="col-span-1">Sıra</div>}
+                        <div className={canReorderProductsInCategory ? 'col-span-1' : 'col-span-1'}>#</div>
+                        <div className={canReorderProductsInCategory ? 'col-span-3' : 'col-span-4'}>Ürün</div>
+                        <div className={canReorderProductsInCategory ? 'col-span-2' : 'col-span-3'}>Kategori</div>
                         <div className="col-span-2 text-right">Fiyat</div>
                         <div className="col-span-2 text-right">İşlem</div>
                       </div>
@@ -1600,8 +1732,17 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                         return (
                           <div key={product.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                             <div className="grid grid-cols-12 gap-2 px-4 py-2 items-center">
+                              {canReorderProductsInCategory && (
+                                <div className="col-span-1 flex justify-center">
+                                  <ProductReorderControls
+                                    accentColor={theme.primary700 || theme.primary600 || '#0f172a'}
+                                    onMoveUp={() => handleMoveProduct(product.id, 'up')}
+                                    onMoveDown={() => handleMoveProduct(product.id, 'down')}
+                                  />
+                                </div>
+                              )}
                               <div className="col-span-1 text-[11px] font-mono text-slate-400 tabular-nums">{product.id}</div>
-                              <div className="col-span-4 min-w-0">
+                              <div className={`${canReorderProductsInCategory ? 'col-span-3' : 'col-span-4'} min-w-0`}>
                                 {isInline ? (
                                   <input
                                     type="text"
@@ -1616,7 +1757,7 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                                 )}
                               </div>
 
-                              <div className="col-span-3 min-w-0">
+                              <div className={`${canReorderProductsInCategory ? 'col-span-2' : 'col-span-3'} min-w-0`}>
                                 {isInline ? (
                                   <select
                                     value={draft?.category_id || ''}
@@ -1855,6 +1996,11 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                         </div>
                       ))}
                     </div>
+                    {canReorderProductsInCategory && (
+                      <p className="mt-2 text-xs text-slate-500">
+                        <span className="font-semibold text-slate-700">{selectedCategory.name}</span> kategorisindeki ürün sırası satış ve mobil personel ekranında uygulanır.
+                      </p>
+                    )}
                   </div>
 
                   {(editingProduct || showCreateProductPanel) && (
@@ -1988,6 +2134,9 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                     <table className="w-full min-w-[520px] border-collapse text-sm">
                       <thead className="sticky top-0 z-[1] border-b border-slate-200 bg-slate-100">
                         <tr className="text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                          {canReorderProductsInCategory && (
+                            <th className="whitespace-nowrap px-2 py-2.5 w-[4.5rem] text-center">Sıra</th>
+                          )}
                           <th className="whitespace-nowrap px-2 py-2.5 sm:px-3 w-12">#</th>
                           <th className="whitespace-nowrap px-2 py-2.5 sm:px-3">Ürün</th>
                           <th className="hidden md:table-cell whitespace-nowrap px-3 py-2.5">Kategori</th>
@@ -2003,6 +2152,15 @@ const SettingsModal = ({ onClose, onProductsUpdated, themeColor = '#f97316', ten
                           const st = product.stock !== undefined ? product.stock : null;
                           return (
                             <tr key={product.id} className="border-b border-slate-100 hover:bg-slate-50/90">
+                              {canReorderProductsInCategory && (
+                                <td className="px-2 py-2 align-middle">
+                                  <ProductReorderControls
+                                    accentColor={theme.primary700 || theme.primary600 || '#0f172a'}
+                                    onMoveUp={() => handleMoveProduct(product.id, 'up')}
+                                    onMoveDown={() => handleMoveProduct(product.id, 'down')}
+                                  />
+                                </td>
+                              )}
                               <td className="px-2 py-2 font-mono text-xs text-slate-400 sm:px-3">{product.id}</td>
                               <td className="px-2 py-2 font-medium text-slate-900 sm:px-3">
                                 <div className="max-w-[220px] truncate sm:max-w-none" title={product.name}>{product.name}</div>

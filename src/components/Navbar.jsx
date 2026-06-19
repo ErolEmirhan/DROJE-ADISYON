@@ -20,6 +20,8 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
   const [showPinModal, setShowPinModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showSettingsSplash, setShowSettingsSplash] = useState(false);
+  /** Satış ekranından doğrudan ürün sıralama ayarlarına gitmek için */
+  const [settingsDirectOpen, setSettingsDirectOpen] = useState(null); // { tab, categoryId } | null
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [showMobileModal, setShowMobileModal] = useState(false);
   const [qrCode, setQrCode] = useState(null);
@@ -53,6 +55,22 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Satış ekranı: "Sıralamayı düzenle" → Ayarlar / Ürün Yönetimi (splash atlanır)
+  useEffect(() => {
+    const onOpenProductSort = (event) => {
+      const categoryId = event.detail?.categoryId ?? null;
+      setSettingsDirectOpen({
+        tab: 'products',
+        categoryId,
+        key: Date.now(),
+      });
+      setShowSettingsSplash(false);
+      setShowSettingsModal(true);
+    };
+    window.addEventListener('open-settings-product-sort', onOpenProductSort);
+    return () => window.removeEventListener('open-settings-product-sort', onOpenProductSort);
   }, []);
 
   const handleUserTypeChange = (type) => {
@@ -334,7 +352,7 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
         </div>
         <div>
           <h1 className="text-lg font-bold bg-clip-text text-transparent" style={{ backgroundImage: theme.gradient.main }}>{businessName} Satış Sistemi</h1>
-          <p className="text-xs text-gray-500 font-medium">v9.0.0 VIP MODEL</p>
+          <p className="text-xs text-gray-500 font-medium">v10.0.0 VIP MODEL</p>
         </div>
         <div className="ml-4 pl-4 border-l border-gray-300">
           <DateTimeDisplay />
@@ -587,10 +605,16 @@ const Navbar = ({ currentView, setCurrentView, totalItems, userType, setUserType
       {/* Settings Modal */}
       {showSettingsModal && (
         <SettingsModal
-          onClose={() => setShowSettingsModal(false)}
+          key={settingsDirectOpen?.key ? `product-sort-${settingsDirectOpen.key}` : 'settings-default'}
+          onClose={() => {
+            setShowSettingsModal(false);
+            setSettingsDirectOpen(null);
+          }}
           onProductsUpdated={onProductsUpdated}
           themeColor={themeColor}
           tenantId={tenantId}
+          initialTab={settingsDirectOpen?.tab || null}
+          initialCategoryId={settingsDirectOpen?.categoryId ?? null}
         />
       )}
 

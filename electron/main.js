@@ -693,6 +693,7 @@ function initDatabase(tenantId = null) {
       if (!db.tableOrders) db.tableOrders = [];
       if (!db.tableOrderItems) db.tableOrderItems = [];
       if (!db.printerAssignments) db.printerAssignments = [];
+      ensureProductOrderIndexes();
     } catch (error) {
       console.error('Veritabanı yüklenemedi, yeni oluşturuluyor:', error);
       initEmptyData();
@@ -792,6 +793,92 @@ function saveDatabase() {
   }
 }
 
+/** Kategori içi ürün sırası — eksik order_index değerlerini doldurur */
+function ensureProductOrderIndexes() {
+  if (!db.products || db.products.length === 0) return;
+
+  const byCategory = {};
+  for (const product of db.products) {
+    const cid = product.category_id;
+    if (!byCategory[cid]) byCategory[cid] = [];
+    byCategory[cid].push(product);
+  }
+
+  let changed = false;
+  for (const list of Object.values(byCategory)) {
+    list.sort((a, b) => {
+      const oa = a.order_index !== undefined && a.order_index !== null ? a.order_index : a.id;
+      const ob = b.order_index !== undefined && b.order_index !== null ? b.order_index : b.id;
+      if (oa !== ob) return oa - ob;
+      return a.id - b.id;
+    });
+    list.forEach((product, index) => {
+      if (product.order_index === undefined || product.order_index === null) {
+        const idx = db.products.findIndex((p) => p.id === product.id);
+        if (idx !== -1) {
+          db.products[idx].order_index = index;
+          changed = true;
+        }
+      }
+    });
+  }
+
+  if (changed) {
+    saveDatabase();
+    for (const product of db.products) {
+      saveProductToFirebase(product).catch((err) => {
+        console.error(`Ürün sırası Firebase'e yazılamadı (ID: ${product.id}):`, err);
+      });
+    }
+  }
+}
+
+function getCategoryOrderMap() {
+  const map = {};
+  for (const cat of db.categories || []) {
+    map[cat.id] = cat.order_index !== undefined && cat.order_index !== null ? cat.order_index : 0;
+  }
+  return map;
+}
+
+function sortProductsForDisplay(products, categoryId = null) {
+  const list = [...products];
+  if (categoryId != null && categoryId !== '') {
+    const cid = typeof categoryId === 'string' ? parseInt(categoryId, 10) : categoryId;
+    return list
+      .filter((p) => p.category_id === cid)
+      .sort((a, b) => {
+        const oa = a.order_index !== undefined && a.order_index !== null ? a.order_index : 0;
+        const ob = b.order_index !== undefined && b.order_index !== null ? b.order_index : 0;
+        if (oa !== ob) return oa - ob;
+        return a.id - b.id;
+      });
+  }
+
+  const catOrder = getCategoryOrderMap();
+  return list.sort((a, b) => {
+    const ca = catOrder[a.category_id] ?? 0;
+    const cb = catOrder[b.category_id] ?? 0;
+    if (ca !== cb) return ca - cb;
+    const oa = a.order_index !== undefined && a.order_index !== null ? a.order_index : 0;
+    const ob = b.order_index !== undefined && b.order_index !== null ? b.order_index : 0;
+    if (oa !== ob) return oa - ob;
+    return a.id - b.id;
+  });
+}
+
+function getNextProductOrderIndex(categoryId) {
+  const cid = typeof categoryId === 'string' ? parseInt(categoryId, 10) : categoryId;
+  const inCategory = db.products.filter((p) => p.category_id === cid);
+  if (inCategory.length === 0) return 0;
+  const max = Math.max(
+    ...inCategory.map((p) =>
+      p.order_index !== undefined && p.order_index !== null ? p.order_index : 0
+    )
+  );
+  return max + 1;
+}
+
 // Firebase'e kategori kaydetme fonksiyonu
 async function saveCategoryToFirebase(category) {
   if (!firestore || !firebaseCollection || !firebaseDoc || !firebaseSetDoc) {
@@ -826,6 +913,7 @@ async function saveProductToFirebase(product) {
       price: parseFloat(product.price) || 0,
       image: product.image || null,
       unit: product.unit || null,
+      order_index: product.order_index !== undefined && product.order_index !== null ? product.order_index : 0,
       yemeksepeti_price: product.yemeksepeti_price !== undefined ? parseFloat(product.yemeksepeti_price) : null,
       trendyolgo_price: product.trendyolgo_price !== undefined ? parseFloat(product.trendyolgo_price) : null
     }, { merge: true });
@@ -1168,28 +1256,37 @@ async function syncProductsFromFirebase() {
       // Local database'de bu ürün var mı kontrol et
       const existingProductIndex = db.products.findIndex(p => p.id === productId);
       
+      const categoryIdParsed = typeof firebaseProduct.category_id === 'string'
+        ? parseInt(firebaseProduct.category_id, 10)
+        : firebaseProduct.category_id;
+      const firebaseOrderIndex = firebaseProduct.order_index !== undefined && firebaseProduct.order_index !== null
+        ? Number(firebaseProduct.order_index)
+        : null;
+
       if (existingProductIndex !== -1) {
-        // Ürün mevcut, güncelle
+        const existing = db.products[existingProductIndex];
         db.products[existingProductIndex] = {
+          ...existing,
           id: productId,
           name: firebaseProduct.name || '',
-          category_id: typeof firebaseProduct.category_id === 'string' ? parseInt(firebaseProduct.category_id) : firebaseProduct.category_id,
+          category_id: categoryIdParsed,
           price: parseFloat(firebaseProduct.price) || 0,
           image: firebaseProduct.image || null,
           unit: firebaseProduct.unit || null,
+          order_index: firebaseOrderIndex !== null ? firebaseOrderIndex : (existing.order_index ?? 0),
           yemeksepeti_price: firebaseProduct.yemeksepeti_price !== undefined && firebaseProduct.yemeksepeti_price !== null ? parseFloat(firebaseProduct.yemeksepeti_price) : undefined,
           trendyolgo_price: firebaseProduct.trendyolgo_price !== undefined && firebaseProduct.trendyolgo_price !== null ? parseFloat(firebaseProduct.trendyolgo_price) : undefined
         };
         updatedCount++;
       } else {
-        // Yeni ürün, ekle
         db.products.push({
           id: productId,
           name: firebaseProduct.name || '',
-          category_id: typeof firebaseProduct.category_id === 'string' ? parseInt(firebaseProduct.category_id) : firebaseProduct.category_id,
+          category_id: categoryIdParsed,
           price: parseFloat(firebaseProduct.price) || 0,
           image: firebaseProduct.image || null,
           unit: firebaseProduct.unit || null,
+          order_index: firebaseOrderIndex !== null ? firebaseOrderIndex : getNextProductOrderIndex(categoryIdParsed),
           yemeksepeti_price: firebaseProduct.yemeksepeti_price !== undefined && firebaseProduct.yemeksepeti_price !== null ? parseFloat(firebaseProduct.yemeksepeti_price) : undefined,
           trendyolgo_price: firebaseProduct.trendyolgo_price !== undefined && firebaseProduct.trendyolgo_price !== null ? parseFloat(firebaseProduct.trendyolgo_price) : undefined
         });
@@ -1197,6 +1294,7 @@ async function syncProductsFromFirebase() {
       }
     });
     
+    ensureProductOrderIndexes();
     saveDatabase();
     console.log(`✅ Firebase'den ${snapshot.size} ürün çekildi (${addedCount} yeni, ${updatedCount} güncellendi)`);
   } catch (error) {
@@ -1344,31 +1442,47 @@ function setupProductsRealtimeListener() {
           // Ürün eklendi veya güncellendi
           const existingProductIndex = db.products.findIndex(p => p.id === productId);
           
-          const productData = {
-            id: productId,
-            name: firebaseProduct.name || '',
-            category_id: typeof firebaseProduct.category_id === 'string' ? parseInt(firebaseProduct.category_id) : firebaseProduct.category_id,
-            price: parseFloat(firebaseProduct.price) || 0,
-            image: firebaseProduct.image || null,
-            unit: firebaseProduct.unit || null,
-          };
-          
+          const categoryIdParsed = typeof firebaseProduct.category_id === 'string'
+            ? parseInt(firebaseProduct.category_id, 10)
+            : firebaseProduct.category_id;
+          const firebaseOrderIndex = firebaseProduct.order_index !== undefined && firebaseProduct.order_index !== null
+            ? Number(firebaseProduct.order_index)
+            : null;
+
           if (existingProductIndex !== -1) {
-            // Güncelle - sadece gerçekten değiştiyse
             const oldProduct = db.products[existingProductIndex];
-            const hasRealChange = oldProduct.name !== productData.name || 
+            const productData = {
+              ...oldProduct,
+              id: productId,
+              name: firebaseProduct.name || '',
+              category_id: categoryIdParsed,
+              price: parseFloat(firebaseProduct.price) || 0,
+              image: firebaseProduct.image || null,
+              unit: firebaseProduct.unit || null,
+              order_index: firebaseOrderIndex !== null ? firebaseOrderIndex : (oldProduct.order_index ?? 0),
+            };
+            const hasRealChange = oldProduct.name !== productData.name ||
                                  oldProduct.category_id !== productData.category_id ||
                                  oldProduct.price !== productData.price ||
                                  oldProduct.image !== productData.image ||
-                                 oldProduct.unit !== productData.unit;
-            
+                                 oldProduct.unit !== productData.unit ||
+                                 oldProduct.order_index !== productData.order_index;
+
             if (hasRealChange) {
               db.products[existingProductIndex] = productData;
               console.log(`🔄 Ürün güncellendi: ${productData.name} (ID: ${productId})`);
               hasChanges = true;
             }
           } else {
-            // Yeni ekle
+            const productData = {
+              id: productId,
+              name: firebaseProduct.name || '',
+              category_id: categoryIdParsed,
+              price: parseFloat(firebaseProduct.price) || 0,
+              image: firebaseProduct.image || null,
+              unit: firebaseProduct.unit || null,
+              order_index: firebaseOrderIndex !== null ? firebaseOrderIndex : getNextProductOrderIndex(categoryIdParsed),
+            };
             db.products.push(productData);
             console.log(`➕ Yeni ürün eklendi: ${productData.name} (ID: ${productId})`);
             hasChanges = true;
@@ -1841,6 +1955,72 @@ ipcMain.handle('delete-category', async (event, categoryId) => {
   return { success: false, error: 'Kategori silinemedi' };
 });
 
+ipcMain.handle('reorder-categories', async (event, orderedCategoryIds) => {
+  try {
+    if (!Array.isArray(orderedCategoryIds) || orderedCategoryIds.length === 0) {
+      return { success: false, error: 'Geçersiz kategori sırası' };
+    }
+
+    orderedCategoryIds.forEach((categoryId, index) => {
+      const cat = db.categories.find((c) => c.id === categoryId);
+      if (cat) {
+        cat.order_index = index;
+      }
+    });
+
+    db.categories.sort((a, b) => {
+      if (a.order_index !== b.order_index) return a.order_index - b.order_index;
+      return a.id - b.id;
+    });
+
+    saveDatabase();
+
+    for (const cat of db.categories) {
+      await saveCategoryToFirebase(cat);
+    }
+
+    return { success: true, categories: db.categories };
+  } catch (error) {
+    console.error('reorder-categories hatası:', error);
+    return { success: false, error: error.message || 'Kategori sıralaması kaydedilemedi' };
+  }
+});
+
+ipcMain.handle('reorder-products-in-category', async (event, payload) => {
+  try {
+    const categoryId = typeof payload?.categoryId === 'string'
+      ? parseInt(payload.categoryId, 10)
+      : payload?.categoryId;
+    const orderedProductIds = payload?.orderedProductIds;
+
+    if (!categoryId || !Array.isArray(orderedProductIds) || orderedProductIds.length === 0) {
+      return { success: false, error: 'Geçersiz ürün sırası' };
+    }
+
+    orderedProductIds.forEach((productId, index) => {
+      const product = db.products.find((p) => p.id === productId && p.category_id === categoryId);
+      if (product) {
+        product.order_index = index;
+      }
+    });
+
+    saveDatabase();
+
+    const updatedInCategory = db.products.filter((p) => p.category_id === categoryId);
+    for (const product of updatedInCategory) {
+      await saveProductToFirebase(product);
+    }
+
+    return {
+      success: true,
+      products: sortProductsForDisplay(updatedInCategory, categoryId),
+    };
+  } catch (error) {
+    console.error('reorder-products-in-category hatası:', error);
+    return { success: false, error: error.message || 'Ürün sıralaması kaydedilemedi' };
+  }
+});
+
 ipcMain.handle('get-products', async (event, categoryId) => {
   let products = categoryId 
     ? db.products.filter(p => p.category_id === categoryId)
@@ -1880,7 +2060,7 @@ ipcMain.handle('get-products', async (event, categoryId) => {
   // Database'i kaydet (stok bilgileri güncellendi)
   saveDatabase();
   
-  return productsWithStock;
+  return sortProductsForDisplay(productsWithStock, categoryId);
 });
 
 ipcMain.handle('create-sale', async (event, saleData) => {
@@ -3671,12 +3851,14 @@ ipcMain.handle('create-product', (event, productData) => {
     ? Math.max(...db.products.map(p => p.id)) + 1 
     : 1;
   
+  const categoryIdNum = typeof category_id === 'string' ? parseInt(category_id, 10) : category_id;
   const newProduct = {
     id: newId,
     name,
-    category_id,
+    category_id: categoryIdNum,
     price: parseFloat(price),
-    image: image || null
+    image: image || null,
+    order_index: getNextProductOrderIndex(categoryIdNum),
   };
   
   db.products.push(newProduct);
@@ -3747,12 +3929,22 @@ ipcMain.handle('update-product', async (event, productData) => {
       : null;
   }
   
+  const categoryIdNum = typeof category_id === 'string' ? parseInt(category_id, 10) : category_id;
+  const prevCategoryId = db.products[productIndex].category_id;
+  let orderIndex = db.products[productIndex].order_index;
+  if (prevCategoryId !== categoryIdNum) {
+    orderIndex = getNextProductOrderIndex(categoryIdNum);
+  } else if (orderIndex === undefined || orderIndex === null) {
+    orderIndex = getNextProductOrderIndex(categoryIdNum) - 1;
+  }
+
   db.products[productIndex] = {
     ...db.products[productIndex],
     name,
-    category_id,
+    category_id: categoryIdNum,
     price: parseFloat(price),
     image: image || null,
+    order_index: orderIndex,
     yemeksepeti_price: updatedYemeksepetiPrice,
     trendyolgo_price: updatedTrendyolgoPrice
   };
@@ -10981,6 +11173,13 @@ function generateMobileHTML(serverURL) {
         // Arama yoksa sadece seçili kategoriden göster
         filtered = products.filter(p => p.category_id === selectedCategoryId);
       }
+
+      filtered = filtered.slice().sort((a, b) => {
+        const oa = a.order_index !== undefined && a.order_index !== null ? a.order_index : 0;
+        const ob = b.order_index !== undefined && b.order_index !== null ? b.order_index : 0;
+        if (oa !== ob) return oa - ob;
+        return a.id - b.id;
+      });
       
       const grid = document.getElementById('productsGrid');
       if (filtered.length === 0) {
@@ -12208,7 +12407,10 @@ function startAPIServer() {
             category_id: typeof firebaseProduct.category_id === 'string' ? parseInt(firebaseProduct.category_id) : firebaseProduct.category_id,
             price: parseFloat(firebaseProduct.price) || 0,
             image: firebaseProduct.image || null,
-            unit: firebaseProduct.unit || firebaseProduct.unitLabel || firebaseProduct.unit_name || null
+            unit: firebaseProduct.unit || firebaseProduct.unitLabel || firebaseProduct.unit_name || null,
+            order_index: firebaseProduct.order_index !== undefined && firebaseProduct.order_index !== null
+              ? Number(firebaseProduct.order_index)
+              : 0
           };
           
           // Kategori filtresi varsa uygula
@@ -12259,14 +12461,16 @@ function startAPIServer() {
           }
         }
         
+        const localOrder = localProduct?.order_index;
         return {
           ...product,
+          order_index: localOrder !== undefined && localOrder !== null ? localOrder : (product.order_index ?? 0),
           trackStock: trackStock,
           stock: trackStock ? (stock !== null ? stock : 0) : undefined
         };
       }));
       
-      res.json(productsWithStock);
+      res.json(sortProductsForDisplay(productsWithStock, categoryId || null));
     } catch (error) {
       console.error('❌ Ürünler çekilirken hata:', error);
       // Hata durumunda local database'den çek
@@ -12284,7 +12488,7 @@ function startAPIServer() {
         stock: product.trackStock ? (product.stock !== undefined ? product.stock : 0) : undefined
       }));
       
-      res.json(productsWithStock);
+      res.json(sortProductsForDisplay(productsWithStock, categoryId || null));
     }
   });
 

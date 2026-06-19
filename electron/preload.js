@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateCategory: (categoryId, categoryData) => ipcRenderer.invoke('update-category', categoryId, categoryData),
   deleteCategory: (categoryId) => ipcRenderer.invoke('delete-category', categoryId),
   reorderCategories: (orderedCategoryIds) => ipcRenderer.invoke('reorder-categories', orderedCategoryIds),
+  reorderProductsInCategory: (categoryId, orderedProductIds) =>
+    ipcRenderer.invoke('reorder-products-in-category', { categoryId, orderedProductIds }),
   getProducts: (categoryId) => ipcRenderer.invoke('get-products', categoryId),
   createSale: (saleData) => ipcRenderer.invoke('create-sale', saleData),
   getSales: () => ipcRenderer.invoke('get-sales'),
