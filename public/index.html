@@ -222,9 +222,19 @@
         // URL'den veya localStorage'dan tenant ID'yi al
         const urlParams = new URLSearchParams(window.location.search);
         let tenantId = urlParams.get('tenantId') || localStorage.getItem('admin_tenant_id');
-        // Veriler Gece Dönercisi tenant'ı ile çekilsin
-        tenantId = 'TENANT-1769602125250';
-        isGeceDonercisi = true;
+        // Aynı public/ klasörü birden fazla siteye deploy ediliyor (yakasgrll, gecedonercisi, lacromisa...).
+        // Eskiden burada Gece Dönercisi tenant'ı HERKES için sabitlenmişti -> yakasgrll.web.app
+        // Yaka's Grill yerine Gece Dönercisi verisine/PIN'ine bağlanıyordu. Artık hostname'e göre seçiliyor.
+        const host = (window.location.hostname || '').toLowerCase();
+        const isYakasHost = host.indexOf('yakasgrll') !== -1 || host.indexOf('yakasgrill') !== -1;
+        if (isYakasHost) {
+          // Yaka's Grill: URL'de açıkça tenantId verilmediyse isimle bulunacak (aşağıdaki "yaka/grill" araması)
+          tenantId = urlParams.get('tenantId') || null;
+        } else if (!urlParams.get('tenantId')) {
+          // Diğer siteler: önceki davranış korunuyor (Gece Dönercisi)
+          tenantId = GECE_TENANT_ID;
+        }
+        isGeceDonercisi = (tenantId === GECE_TENANT_ID);
         
         console.log('🔍 Tenant ID kaynakları:', {
           url: urlParams.get('tenantId'),
@@ -302,7 +312,8 @@
             }
             
             // Eğer "Yaka" içeren bulunamadıysa, ilk tenant'ı kullan
-            if (!selectedDoc && allTenantsSnapshot.docs.length > 0) {
+            // (Yaka's Grill sitesinde başka işletmenin verisine düşmesin -> varsayılan makara config kullanılacak)
+            if (!selectedDoc && !isYakasHost && allTenantsSnapshot.docs.length > 0) {
               selectedDoc = allTenantsSnapshot.docs[0];
               console.log('⚠️ "Yaka" içeren tenant bulunamadı, ilk tenant kullanılıyor:', selectedDoc.id);
             }
@@ -319,6 +330,7 @@
 
         if (tenantData) {
           currentTenantInfo = tenantData;
+          isGeceDonercisi = (tenantDoc && tenantDoc.id === GECE_TENANT_ID) || tenantData.tenantId === GECE_TENANT_ID;
           businessName = tenantData.businessName || tenantData.name || 'Yaka\'s Grill';
           
           // Masa sayılarını al
@@ -420,6 +432,10 @@
           }).catch(e => console.error('❌ Tenant listesi alınamadı:', e));
           
           // Varsayılan Firebase config (Yaka's Grill için)
+          if (isYakasHost) {
+            businessName = 'Yaka\'s Grill';
+            try { updateUIWithTenantInfo(); } catch (e) {}
+          }
           firebaseConfig = {
             apiKey: "AIzaSyCdf-c13e0wCafRYHXhIls1epJgD1RjPUA",
             authDomain: "makara-16344.firebaseapp.com",
@@ -1346,6 +1362,7 @@
 
       function fadeOutLoader() {
         if (!loader) return;
+        loader.style.pointerEvents = 'none'; // kaybolurken bile tıklamaları yutmasın
         loader.style.opacity = '0';
         loader.style.transition = 'opacity 0.45s ease';
         setTimeout(() => { loader.style.display = 'none'; }, 460);
@@ -1379,7 +1396,10 @@
             if (pctEl) pctEl.textContent = '0%';
             if (label) label.textContent = 'Satış verileri yükleniyor…';
             try {
-              await loadSales({
+              // Firestore yanıt vermezse (kota/ağ) splash sonsuza kadar ekranı kilitlemesin: en fazla 12 sn bekle
+              await Promise.race([
+                new Promise((resolve) => setTimeout(resolve, 12000)),
+                loadSales({
                 quiet: true,
                 onProgress: function (info) {
                   const p = typeof info.percent === 'number' ? Math.min(100, Math.max(0, Math.round(info.percent))) : null;
@@ -1390,7 +1410,8 @@
                     else if (p != null) label.textContent = 'Veriler hazırlanıyor…';
                   }
                 }
-              });
+                })
+              ]);
             } catch (err) {
               console.warn('Ön yükleme:', err);
             }
@@ -1431,6 +1452,17 @@
       }
 
       setTimeout(finishSplashAndAuth, 280);
+
+      // Son emniyet: ne olursa olsun 20 sn sonra splash kalksın, butonlar kilitli kalmasın
+      setTimeout(() => {
+        if (loader && loader.style.display !== 'none') {
+          console.warn('⚠️ Splash zaman aşımı - zorla kapatılıyor');
+          fadeOutLoader();
+          if (!isAuthenticated && sessionStorage.getItem('adminAuthenticated') !== 'true') {
+            try { showLogin(); } catch (e) {}
+          }
+        }
+      }, 20000);
     });
 
     /** Firestore satış dokümanını liste öğesine çevir (loadSales + canlı dinleyici ortak) */
@@ -1884,7 +1916,11 @@
             <div class="error-card">
               <div class="error-icon">⚠️</div>
               <h3>Bağlantı Hatası</h3>
-              <p>${error.message || 'Firebase\'e bağlanılamadı'}</p>
+              <p>${(error && error.code === 'resource-exhausted')
+                ? 'Firebase günlük okuma kotası doldu (Spark/ücretsiz plan). Firebase Console &gt; Usage kısmını kontrol edin veya Blaze plana geçin.'
+                : (error && error.code === 'permission-denied')
+                  ? 'Firebase erişim izni reddedildi (Firestore Rules / proje kilitli olabilir).'
+                  : (error.message || 'Firebase\'e bağlanılamadı')}</p>
               <button onclick="location.reload()" class="retry-btn">🔄 Yeniden Dene</button>
             </div>
           `;
