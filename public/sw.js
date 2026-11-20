@@ -1,5 +1,5 @@
 // Service Worker - Cache kontrolü için
-const CACHE_NAME = 'yakasgrill-admin-v2.5.2';
+const CACHE_NAME = 'yakasgrill-admin-v2.5.3';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -10,7 +10,7 @@ const urlsToCache = [
 
 // Install event - Cache'e ekle
 self.addEventListener('install', (event) => {
-  console.log('[SW] Installing service worker v2.5.2...');
+  console.log('[SW] Installing service worker v2.5.3...');
   // Yeni service worker'ı hemen aktif et (beklemeden)
   self.skipWaiting();
   
@@ -32,7 +32,7 @@ self.addEventListener('install', (event) => {
 
 // Activate event - Eski cache'leri temizle
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activating service worker v2.5.2...');
+  console.log('[SW] Activating service worker v2.5.3...');
   event.waitUntil(
     Promise.all([
       // Sadece eski cache'leri temizle (yeni versiyon için)

@@ -127,7 +127,9 @@
 
     // Tenant bilgileri (dinamik olarak yüklenecek)
     let currentTenantInfo = null;
-    let businessName = 'Gece Dönercisi'; // Varsayılan
+    // Yaka's Grill sitesi mi? (yakasgrll.web.app) -> kendi logosu, PIN ekranı yok
+    const IS_YAKAS_HOST = /yakasgrll|yakasgrill/i.test(window.location.hostname || '');
+    let businessName = IS_YAKAS_HOST ? 'Yaka\'s Grill' : 'Gece Dönercisi'; // Varsayılan
     let firebaseConfig = null;
     let tablesFirebaseConfig = null;
     let insideTablesCount = 20; // Varsayılan
@@ -477,6 +479,12 @@
       const navbarTitle = document.getElementById('navbarBusinessName') || document.querySelector('.navbar-title');
       if (navbarTitle) {
         navbarTitle.textContent = `${businessName} Admin Dashboard`;
+      }
+
+      // Yaka's Grill: Gece Dönercisi logosu (tenant.png) yerine Yaka's Grill logosu
+      if (IS_YAKAS_HOST) {
+        document.querySelectorAll('img[src="tenant.png"]').forEach(img => { img.src = 'logo.png'; img.style.display = ''; });
+        document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]').forEach(l => l.setAttribute('href', 'logo.png'));
       }
 
       // Splash screen title güncelle
@@ -883,6 +891,13 @@
     }
 
     function showLogin() {
+      if (IS_YAKAS_HOST) {
+        // Yaka's Grill: giriş ekranı hiç gösterilmez
+        isAuthenticated = true;
+        sessionStorage.setItem('adminAuthenticated', 'true');
+        showDashboard();
+        return;
+      }
       try {
         closeNavAppDrawer();
       } catch (e) {}
@@ -1379,7 +1394,12 @@
           }
 
           let goDash = false;
-          if (sessionStorage.getItem('adminAuthenticated') === 'true') goDash = true;
+          if (IS_YAKAS_HOST) {
+            // Yaka's Grill: PIN/giriş ekranı yok, direkt panele
+            isAuthenticated = true;
+            sessionStorage.setItem('adminAuthenticated', 'true');
+            goDash = true;
+          } else if (sessionStorage.getItem('adminAuthenticated') === 'true') goDash = true;
           else if (tryRememberAutoLogin()) goDash = true;
 
           if (goDash) {
@@ -1458,7 +1478,9 @@
         if (loader && loader.style.display !== 'none') {
           console.warn('⚠️ Splash zaman aşımı - zorla kapatılıyor');
           fadeOutLoader();
-          if (!isAuthenticated && sessionStorage.getItem('adminAuthenticated') !== 'true') {
+          if (IS_YAKAS_HOST) {
+            try { isAuthenticated = true; sessionStorage.setItem('adminAuthenticated', 'true'); showDashboard(); } catch (e) {}
+          } else if (!isAuthenticated && sessionStorage.getItem('adminAuthenticated') !== 'true') {
             try { showLogin(); } catch (e) {}
           }
         }
@@ -15602,6 +15624,16 @@
     <div class="splash-content">
       <img src="tenant.png" alt="" class="splash-logo" onerror="this.style.display='none';">
       <h1 class="splash-main-text" id="splashBusinessName">Gece Dönercisi</h1>
+      <script>
+        if (/yakasgrll|yakasgrill/i.test(location.hostname || '')) {
+          (function () {
+            var c = document.currentScript.parentNode;
+            var im = c.querySelector('.splash-logo'); if (im) im.src = 'logo.png';
+            var h = c.querySelector('#splashBusinessName'); if (h) h.textContent = "Yaka's Grill";
+            document.title = "Yaka's Grill - Admin Dashboard";
+          })();
+        }
+      </script>
       <p class="splash-subtitle-text">Yönetim paneli</p>
       <div class="splash-data-progress" aria-hidden="true">
         <div class="splash-progress-pct-wrap">
