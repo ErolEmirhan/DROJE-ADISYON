@@ -1,0 +1,78 @@
+{
+  "name": "droje-pos",
+  "version": "100.0.1",
+  "description": "Modern POS Uygulaması - Multi-tenant Restaurant Management System",
+  "main": "electron/main.js",
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.955.0",
+    "@aws-sdk/s3-request-presigner": "^3.955.0",
+    "cors": "^2.8.5",
+    "electron-updater": "^6.6.2",
+    "express": "^5.1.0",
+    "firebase": "^10.14.1",
+    "qrcode": "^1.5.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "sharp": "^0.33.5",
+    "socket.io": "^4.8.1",
+    "xlsx": "^0.18.5"
+  },
+  "build": {
+    "appId": "com.droje.pos",
+    "productName": "DROJE POS",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "sign": null,
+      "signingHashAlgorithms": null,
+      "certificateFile": null,
+      "certificatePassword": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DROJE POS",
+      "warningsAsErrors": false,
+      "displayLanguageSelector": true,
+      "multiLanguageInstaller": true,
+      "runAfterFinish": true,
+      "menuCategory": "Business",
+      "artifactName": "DROJE-POS-Setup-${version}.${ext}",
+      "differentialPackage": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "ErolEmirhan",
+      "repo": "DROJE-ADISYON",
+      "releaseType": "release"
+    },
+    "releaseInfo": {
+      "releaseNotes": "Mobil personel giriş düzeltmesi (Gece Dönercisi Sancak/Şeker)"
+    }
+  },
+  "devDependencies": {
+    "electron": "28.3.3",
+    "electron-builder": "24.13.3"
+  },
+  "scripts": {
+    "dist": "electron-builder --win --publish always"
+  }
+}
