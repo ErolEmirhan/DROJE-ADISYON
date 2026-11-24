@@ -1,0 +1,68 @@
+
+Auto-updater yapılandırıldı: ErolEmirhan/DROJE-ADISYON
+Update URL: https://github.com/ErolEmirhan/DROJE-ADISYON/releases/latest/download/latest.yml
+Mevcut uygulama versiyonu: 100.0.2
+🌐 Ağ adaptörleri: Ethernet 3=10.1.0.45(18)
+Uygulama başlatıldı - Versiyon: 100.0.2
+Güncelleme kontrolü başlatılıyor...
+
+🚀 API Server başlatıldı: http://10.1.0.45:3000
+📱 Mobil cihazlardan erişim için: http://10.1.0.45:3000/mobile
+
+Güncelleme kontrolü başlatılıyor...
+Checking for update
+Güncelleme kontrol ediliyor... (Mevcut: 100.0.2)
+🔍 Güncelleme kontrol ediliyor...
+Generated new staging user ID: bd9b12f9-9264-5db4-a8db-24a5606e482d
+Update for version 100.0.2 is not available (latest version: 100.0.2, downgrade is disallowed).
+Güncelleme yok - Mevcut versiyon: 100.0.2, En son sürüm: 100.0.2
+✅ En güncel versiyonu kullanıyorsunuz: 100.0.2
+📋 Güncelleme bilgisi: {
+  "tag": "v100.0.2",
+  "version": "100.0.2",
+  "files": [
+    {
+      "url": "DROJE-POS-Setup-100.0.2.exe",
+      "sha512": "V+FwUYDIK4IhN9U6UUqy9NBBBPgUL/pcmN+vn83HgCvaPAQru2Mfhdnp04OJ4fXpkvhLwl9ZkRzMA/bS8KfWxA==",
+      "size": 116840590
+    }
+  ],
+  "path": "DROJE-POS-Setup-100.0.2.exe",
+  "sha512": "V+FwUYDIK4IhN9U6UUqy9NBBBPgUL/pcmN+vn83HgCvaPAQru2Mfhdnp04OJ4fXpkvhLwl9ZkRzMA/bS8KfWxA==",
+  "releaseNotes": "Mobil personel bağlantı düzeltmesi: doğru ağ IP seçimi, sayfa her zaman telefonun girdiği adresi kullanır, socket.io yerelden, güvenlik duvarı izni",
+  "releaseDate": "2026-11-24T15:18:32.078Z",
+  "releaseName": "100.0.2"
+}
+📤 1 pencere bulundu, güncelleme yok bildirimi gönderiliyor...
+✅ Pencere 1'e güncelleme yok bildirimi gönderildi
+Güncelleme kontrolü tamamlandı. Result: {"isUpdateAvailable":false,"versionInfo":{"tag":"v100.0.2","version":"100.0.2","files":[{"url":"DROJE-POS-Setup-100.0.2.exe","sha512":"V+FwUYDIK4IhN9U6UUqy9NBBBPgUL/pcmN+vn83HgCvaPAQru2Mfhdnp04OJ4fXpkvhLwl9ZkRzMA/bS8KfWxA==","size":116840590}],"path":"DROJE-POS-Setup-100.0.2.exe","sha512":"V+FwUYDIK4IhN9U6UUqy9NBBBPgUL/pcmN+vn83HgCvaPAQru2Mfhdnp04OJ4fXpkvhLwl9ZkRzMA/bS8KfWxA==","releaseNotes":"Mobil personel bağlantı düzeltmesi: doğru ağ IP seçimi, sayfa her zaman telefonun girdiği adresi kullanır, socket.io yerelden, güvenlik duvarı izni","releaseDate":"2026-11-24T15:18:32.078Z","releaseName":"100.0.2"},"updateInfo":{"tag":"v100.0.2","version":"100.0.2","files":[{"url":"DROJE-POS-Setup-100.0.2.exe","sha512":"V+FwUYDIK4IhN9U6UUqy9NBBBPgUL/pcmN+vn83HgCvaPAQru2Mfhdnp04OJ4fXpkvhLwl9ZkRzMA/bS8KfWxA==","size":116840590}],"path":"DROJE-POS-Setup-100.0.2.exe","sha512":"V+FwUYDIK4IhN9U6UUqy9NBBBPgUL/pcmN+vn83HgCvaPAQru2Mfhdnp04OJ4fXpkvhLwl9ZkRzMA/bS8KfWxA==","releaseNotes":"Mobil personel bağlantı düzeltmesi: doğru ağ IP seçimi, sayfa her zaman telefonun girdiği adresi kullanır, socket.io yerelden, güvenlik duvarı izni","releaseDate":"2026-11-24T15:18:32.078Z","releaseName":"100.0.2"}}
+Güncelleme kontrolü yapılıyor...
+Checking for update
+Güncelleme kontrol ediliyor... (Mevcut: 100.0.2)
+🔍 Güncelleme kontrol ediliyor...
+Update for version 100.0.2 is not available (latest version: 100.0.2, downgrade is disallowed).
+Güncelleme yok - Mevcut versiyon: 100.0.2, En son sürüm: 100.0.2
+✅ En güncel versiyonu kullanıyorsunuz: 100.0.2
+📋 Güncelleme bilgisi: {
+  "tag": "v100.0.2",
+  "version": "100.0.2",
+  "files": [
+    {
+      "url": "DROJE-POS-Setup-100.0.2.exe",
+      "sha512": "V+FwUYDIK4IhN9U6UUqy9NBBBPgUL/pcmN+vn83HgCvaPAQru2Mfhdnp04OJ4fXpkvhLwl9ZkRzMA/bS8KfWxA==",
+      "size": 116840590
+    }
+  ],
+  "path": "DROJE-POS-Setup-100.0.2.exe",
+  "sha512": "V+FwUYDIK4IhN9U6UUqy9NBBBPgUL/pcmN+vn83HgCvaPAQru2Mfhdnp04OJ4fXpkvhLwl9ZkRzMA/bS8KfWxA==",
+  "releaseNotes": "Mobil personel bağlantı düzeltmesi: doğru ağ IP seçimi, sayfa her zaman telefonun girdiği adresi kullanır, socket.io yerelden, güvenlik duvarı izni",
+  "releaseDate": "2026-11-24T15:18:32.078Z",
+  "releaseName": "100.0.2"
+}
+📤 1 pencere bulundu, güncelleme yok bildirimi gönderiliyor...
+✅ Pencere 1'e güncelleme yok bildirimi gönderildi
+🔐 Mobil personel giriş denemesi: BAŞARILI Test (kayıtlı personel: 2)
+🔐 Mobil personel giriş denemesi: BAŞARILI Bosluk (kayıtlı personel: 2)
+🔐 Mobil personel giriş denemesi: BAŞARILI Test (kayıtlı personel: 2)
+🔐 Mobil personel giriş denemesi: BAŞARISIZ (kayıtlı personel: 2)
+🔐 Mobil personel giriş denemesi: BAŞARILI Test (kayıtlı personel: 2)

@@ -1,0 +1,18 @@
+Adaptorler: Ethernet 3=10.1.0.45
+Uygulamanin sectigi adres: http://10.1.0.45:3000
+Ağ adaptörleri: Ethernet 3=10.1.0.45(18)
+PASS http://10.1.0.45:3000/mobile sayfasi geliyor (status 200)
+PASS API_URL telefonun girdigi adres: http://10.1.0.45:3000/api
+PASS http://127.0.0.1:3000/mobile sayfasi geliyor (status 200)
+PASS API_URL telefonun girdigi adres: http://127.0.0.1:3000/api
+PASS socket.io istemcisi kasadan geliyor (status 200)
+PASS login "1234" -> {"success":true,"staff":{"id":1,"name":"Test","surname":"Garson","is_manager":fa (beklenen true)
+PASS login "5555" -> {"success":true,"staff":{"id":2,"name":"Bosluk","surname":"Sifre","is_manager":f (beklenen true)
+PASS login " 1234 " -> {"success":true,"staff":{"id":1,"name":"Test","surname":"Garson","is_manager":fa (beklenen true)
+PASS login "9999" -> {"success":false,"error":"Şifre hatalı"} (beklenen false)
+PASS login "" -> {"success":false,"error":"Şifre girin"} (beklenen false)
+Sayfa yuklenme ms: 708
+PASS Giris ekrani gorunuyor (internet yokken)
+PASS Sifre 1234 ile giris yapildi, ana ekran acildi
+Sayfa hatalari: []
+SONUC: HEPSI GECTI
