@@ -775,6 +775,43 @@ function initDefaultData() {
   saveDatabase();
 }
 
+// Doğru yerel ağ IP'sini seç: sanal/VPN adaptörlerini (VirtualBox, Hyper-V, Hamachi, Radmin, ZeroTier, Tailscale, WSL...) ATLA
+function pickLanIP() {
+  const interfaces = os.networkInterfaces();
+  const badName = /(vEthernet|virtual|vmware|vbox|hyper-v|hamachi|radmin|zerotier|tailscale|wsl|loopback|bluetooth|npcap|tap|tun|vpn|docker|default switch)/i;
+  const candidates = [];
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.family !== 'IPv4' && iface.family !== 4) continue;
+      if (iface.internal) continue;
+      const ip = iface.address;
+      if (ip.startsWith('169.254.')) continue; // APIPA
+      let score = 0;
+      if (!badName.test(name)) score += 10;
+      if (/^(wi-?fi|wlan|ethernet|eth|en|kablosuz|yerel)/i.test(name)) score += 5;
+      if (ip.startsWith('192.168.')) score += 4;
+      else if (ip.startsWith('10.')) score += 3;
+      else if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) score += 2;
+      if (ip.startsWith('192.168.56.') || ip.startsWith('192.168.99.')) score -= 8; // VirtualBox/Docker varsayılanları
+      candidates.push({ name, ip, score });
+    }
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  if (candidates.length) {
+    try { console.log('🌐 Ağ adaptörleri:', candidates.map(c => `${c.name}=${c.ip}(${c.score})`).join(', ')); } catch (e) {}
+    return candidates[0].ip;
+  }
+  return 'localhost';
+}
+
+// API isteklerinde Firebase takılırsa mobil bekletilmesin: zaman aşımı ile yerel veriye düş
+function getDocsWithTimeout(ref, ms = 4000) {
+  return Promise.race([
+    firebaseGetDocs(ref),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('Firebase zaman aşımı')), ms))
+  ]);
+}
+
 function saveDatabase() {
   try {
     fs.writeFileSync(dbPath, JSON.stringify(db, null, 2), 'utf8');
@@ -9741,7 +9778,7 @@ function generateMobileHTML(serverURL) {
     </div>
   </div>
   
-  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <script src="/socket.io/socket.io.min.js"></script>
   <script>
     const API_URL = '${serverURL}/api';
     const SOCKET_URL = '${serverURL}';
@@ -12474,15 +12511,7 @@ function startAPIServer() {
   });
 
   function getLocalIP() {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-      for (const iface of interfaces[name]) {
-        if (iface.family === 'IPv4' && !iface.internal) {
-          return iface.address;
-        }
-      }
-    }
-    return 'localhost';
+    return pickLanIP();
   }
 
   const localIP = getLocalIP();
@@ -12494,7 +12523,7 @@ function startAPIServer() {
       // Firebase'den direkt çek
       if (firestore && firebaseCollection && firebaseGetDocs) {
         const categoriesRef = firebaseCollection(firestore, 'categories');
-        const snapshot = await firebaseGetDocs(categoriesRef);
+        const snapshot = await getDocsWithTimeout(categoriesRef);
         
         const categories = [];
         snapshot.forEach((doc) => {
@@ -12535,7 +12564,7 @@ function startAPIServer() {
       // Firebase'den direkt çek
       if (firestore && firebaseCollection && firebaseGetDocs) {
         const productsRef = firebaseCollection(firestore, 'products');
-        const snapshot = await firebaseGetDocs(productsRef);
+        const snapshot = await getDocsWithTimeout(productsRef);
         
         snapshot.forEach((doc) => {
           const firebaseProduct = doc.data();
@@ -13619,7 +13648,16 @@ function startAPIServer() {
   });
 
   appExpress.get('/mobile', (req, res) => {
-    res.send(generateMobileHTML(serverURL));
+    // Telefon hangi adresle geldiyse API/socket/resim adresleri de o olsun (yanlış adaptör IP'si gömülmesin)
+    const reqHost = req.headers && req.headers.host ? String(req.headers.host) : '';
+    const pageURL = reqHost ? `http://${reqHost}` : serverURL;
+    res.set('Cache-Control', 'no-store');
+    try {
+      res.send(generateMobileHTML(pageURL));
+    } catch (e) {
+      console.error('❌ Mobil sayfa üretilemedi:', e);
+      res.status(500).send('<h2 style="font-family:sans-serif;padding:24px">Mobil sayfa hatası: ' + String(e && e.message) + '</h2>');
+    }
   });
 
   // Mesaj gönderme API endpoint'i
@@ -13965,7 +14003,15 @@ function startAPIServer() {
     }
   });
 
-  server.listen(serverPort, () => {
+  let listenRetries = 0;
+  server.on('error', (err) => {
+    console.error('❌ API Server hatası:', err && err.code, err && err.message);
+    if (err && err.code === 'EADDRINUSE' && listenRetries < 15) {
+      listenRetries++;
+      setTimeout(() => { try { server.listen(serverPort, '0.0.0.0'); } catch (e) {} }, 2000);
+    }
+  });
+  server.listen(serverPort, '0.0.0.0', () => {
     console.log(`\n🚀 API Server başlatıldı: ${serverURL}`);
     console.log(`📱 Mobil cihazlardan erişim için: ${serverURL}/mobile\n`);
   });
@@ -14008,34 +14054,14 @@ ipcMain.handle('get-server-url', () => {
   if (!apiServer) {
     return { success: false, error: 'Server başlatılmadı' };
   }
-  const interfaces = os.networkInterfaces();
-  let localIP = 'localhost';
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        localIP = iface.address;
-        break;
-      }
-    }
-    if (localIP !== 'localhost') break;
-  }
+  const localIP = pickLanIP();
   const serverURL = `http://${localIP}:${serverPort}`;
   return { success: true, url: serverURL, ip: localIP, port: serverPort };
 });
 
 ipcMain.handle('generate-qr-code', async () => {
   try {
-    const interfaces = os.networkInterfaces();
-    let localIP = 'localhost';
-    for (const name of Object.keys(interfaces)) {
-      for (const iface of interfaces[name]) {
-        if (iface.family === 'IPv4' && !iface.internal) {
-          localIP = iface.address;
-          break;
-        }
-      }
-      if (localIP !== 'localhost') break;
-    }
+    const localIP = pickLanIP();
     const serverURL = `http://${localIP}:${serverPort}/mobile`;
     const qrCodeDataURL = await QRCode.toDataURL(serverURL, {
       width: 400,
