@@ -37,14 +37,14 @@ let fail=false;const check=(c,m)=>{log((c?'PASS ':'FAIL ')+m); if(!c) fail=true;
   const t0=Date.now();
   await pg.goto(base+'/mobile',{waitUntil:'domcontentloaded',timeout:20000}).catch(e=>log('goto hata '+e.message));
   log('Sayfa yuklenme ms:',Date.now()-t0);
-  await pg.screenshot({path:'1-giris.png'});
+  await pg.screenshot({path:'1-giris.png'}).catch(()=>{});
   const pinVis=await pg.evaluate(()=>{const e=document.getElementById('pinSection');return e&&getComputedStyle(e).display!=='none'});
   check(pinVis,'Giris ekrani gorunuyor (internet yokken)');
   const inp=await pg.$('#pinSection input');
   if(inp){await inp.type('1234');}
   await pg.evaluate(()=>{const btn=[...document.querySelectorAll('#pinSection button')].find(b=>/Giriş/.test(b.textContent)); btn&&btn.click();});
   await new Promise(r=>setTimeout(r,4500));
-  await pg.screenshot({path:'2-sonra.png'});
+  await pg.screenshot({path:'2-sonra.png'}).catch(()=>{});
   const mainVis=await pg.evaluate(()=>{const e=document.getElementById('mainSection');return e&&getComputedStyle(e).display!=='none'});
   check(mainVis,'Sifre 1234 ile giris yapildi, ana ekran acildi');
   log('Sayfa hatalari:',JSON.stringify(errs.slice(0,10)));

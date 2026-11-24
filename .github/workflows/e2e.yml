@@ -33,16 +33,14 @@ jobs:
           New-NetAdapter -Name "Hamachi" -ErrorAction SilentlyContinue
           Get-NetIPAddress -AddressFamily IPv4 | Format-Table InterfaceAlias,IPAddress
       - run: npm i puppeteer-core@22 --no-save --no-audit --no-fund
-      - name: Uygulamayi baslat
+      - name: Uygulamayi baslat ve test et (ayni adimda, yoksa runner sureci oldurur)
         shell: pwsh
         run: |
           $exe = (Get-ChildItem "$env:LOCALAPPDATA\Programs","C:\Program Files" -Recurse -Depth 3 -Filter "DROJE POS.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
           Write-Host "EXE: $exe"
           Start-Process -FilePath $exe -RedirectStandardOutput app-out.txt -RedirectStandardError app-err.txt
           Start-Sleep -Seconds 25
-      - name: E2E test
-        shell: pwsh
-        run: node test.js
+          node test.js
       - name: Sonuclari yayinla
         if: always()
         shell: pwsh
